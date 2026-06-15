@@ -218,6 +218,19 @@ export default function DashboardToday({
         return false
     }
 
+    function visibleStaff(viewerRole: UserRole, viewerId: string) {
+        if (viewerRole === 'admin') return staff
+        if (viewerRole === 'lead') return staff.filter(s => s.role === 'cleaner')
+        if (viewerRole === 'cleaner') return staff.filter(s => s.id === viewerId)
+        if (viewerRole === 'maintenance') return staff.filter(s => s.id === viewerId)
+        return []
+    }
+
+    function shortNames(names: string[]) {
+        if (names.length <= 2) return names.join(', ')
+        return `${names.slice(0, 2).join(', ')}…`
+    }
+
     function taskAssigneeHint(roleToAssign: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>) {
         const candidates = staff.filter(s => s.role === roleToAssign)
         if (candidates.length === 0) return ''
@@ -259,18 +272,34 @@ export default function DashboardToday({
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button className="btn" style={{ padding: '6px 8px' }} onClick={() => setShowStaff(s => !s)}>{showStaff ? 'Skrýt přehled' : 'Zobrazit přehled'}</button>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    {staff.map((s) => (
-                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, border: '1px solid #e6edf3', borderRadius: 8, minWidth: 140 }}>
-                            <div style={{ width: 10, height: 10, borderRadius: 10, background: availabilityColor(s.availability) }} />
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 700 }}>{s.name}</div>
-                                <div style={{ fontSize: 12, color: '#475569' }}>{roleLabel(s.role)}</div>
+                {showStaff ? (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        {visibleStaff(role, currentUserId).map((s) => (
+                            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, border: '1px solid #e6edf3', borderRadius: 8, minWidth: 140 }}>
+                                <div style={{ width: 10, height: 10, borderRadius: 10, background: availabilityColor(s.availability) }} />
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 700 }}>{s.name}</div>
+                                    <div style={{ fontSize: 12, color: '#475569' }}>{roleLabel(s.role)}</div>
+                                </div>
+                                <div style={{ fontSize: 12, color: '#475569' }}>{availabilityLabel(s.availability)}</div>
                             </div>
-                            <div style={{ fontSize: 12, color: '#475569' }}>{availabilityLabel(s.availability)}</div>
-                        </div>
-                    ))}
-                </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div style={{ fontSize: 13, color: '#475569', marginTop: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {(() => {
+                            const visible = visibleStaff(role, currentUserId)
+                            const working = visible.filter(s => s.availability === 'dnes_pracuji').map(s => s.name)
+                            const notWorking = visible.filter(s => s.availability === 'dnes_nepracuji' || s.availability === undefined).map(s => s.name)
+                            const urgent = visible.filter(s => s.availability === 'jen_urgentni').map(s => s.name)
+                            const parts: string[] = []
+                            if (working.length) parts.push(`V práci: ${shortNames(working)}`)
+                            if (urgent.length) parts.push(`Urgentní: ${shortNames(urgent)}`)
+                            if (notWorking.length) parts.push(`Nepracují: ${shortNames(notWorking)}`)
+                            return parts.join(' • ')
+                        })()}
+                    </div>
+                )}
                 {showStaff && (
                     <div style={{ marginTop: 8, display: 'flex', gap: 8, flexDirection: 'column' }}>
                         {staff.map((s) => (
