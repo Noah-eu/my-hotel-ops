@@ -41,6 +41,13 @@ export function createLocalOpsStore(): OpsStore {
         loadInitialState() {
             return readState()
         },
+        async initializeState(_defaultState) {
+            // Demo mode uses local storage and does not require bootstrap.
+        },
+        subscribeState(_onState, _onError) {
+            // Demo mode is local-only; no realtime cross-device listener.
+            return null
+        },
         saveState(state) {
             writeState(state)
         },
@@ -55,7 +62,7 @@ export function createLocalOpsStore(): OpsStore {
         },
         createTask(input: CreateTaskInput) {
             const task: Task = {
-                id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                id: input.id || `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 roomNumber: input.roomNumber,
                 title: input.title,
                 category: input.category,
@@ -77,7 +84,7 @@ export function createLocalOpsStore(): OpsStore {
         },
         createSupplyRequest(input: CreateSupplyRequestInput) {
             const request: SupplyRequest = {
-                id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                id: input.id || `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 itemName: input.itemName,
                 category: input.category,
                 quantityLevel: input.quantityLevel,
@@ -107,7 +114,7 @@ export function createLocalOpsStore(): OpsStore {
         },
         createMaintenanceItem(input: CreateMaintenanceItemInput) {
             const item: MaintenanceItem = {
-                id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                id: input.id || `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 roomNumber: input.roomNumber,
                 title: input.title,
                 category: input.category,
@@ -132,7 +139,7 @@ export function createLocalOpsStore(): OpsStore {
                 staff: state.staff.map((person) => (person.id === id ? { ...person, availability } : person))
             }))
         },
-        resetDemoState() {
+        resetDemoState(_defaultState) {
             try {
                 localStorage.removeItem(STORAGE_KEY)
             } catch (e) {

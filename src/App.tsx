@@ -7,7 +7,8 @@ import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
 import { appMode } from './lib/firebase'
-import { createOpsStore } from './services'
+import { createFirebaseOpsStore, createLocalOpsStore } from './services'
+import { OpsPersistedState } from './services/opsStore'
 
 type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception'
 
@@ -54,9 +55,27 @@ function defaultAssigneeName(role: Task['assignedToRole']) {
 }
 
 export default function App() {
-    const opsStore = useMemo(() => createOpsStore(), [])
+    const localStore = useMemo(() => createLocalOpsStore(), [])
+    const onlineStore = useMemo(() => createFirebaseOpsStore(), [])
+    const [runtimeMode, setRuntimeMode] = useState<'demo' | 'online'>(appMode)
+    const [onlineLoading, setOnlineLoading] = useState(appMode === 'online')
+    const [onlineError, setOnlineError] = useState<string | null>(null)
 
-    const saved = typeof window !== 'undefined' ? opsStore.loadInitialState() : null
+    const defaultState: OpsPersistedState = useMemo(() => ({
+        userId: 'david',
+        tab: 'Dnes',
+        view: 'today',
+        roomsByDay: roomPlansByDay,
+        tasks: [],
+        supplyRequests: initialSupplyRequests,
+        maintenanceItems: initialMaintenanceItems,
+        customSupplyChips: [],
+        staff: users
+    }), [])
+
+    const saved = typeof window !== 'undefined'
+        ? (appMode === 'online' ? null : localStore.loadInitialState())
+        : null
 
     const [userId, setUserId] = useState<string>(saved?.userId ?? 'david')
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>(saved?.tab ?? 'Dnes')
@@ -68,6 +87,8 @@ export default function App() {
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
     const [staff, setStaff] = useState(() => saved?.staff ?? users)
     const [resetConfirm, setResetConfirm] = useState(false)
+
+    const activeStore = runtimeMode === 'online' ? onlineStore : localStore
 
     const currentUser = users.find((u) => u.id === userId)
 
@@ -126,6 +147,17 @@ export default function App() {
             : typeof payload?.relativeMinutes === 'number'
                 ? addMinutes(now, payload.relativeMinutes)
                 : undefined
+
+        let patch: Partial<any> = {}
+        if (action === 'hotovo') patch = { status: 'hotovo' }
+        if (action === 'prevzit') patch = { status: 'prevzato', assigned: assignedName }
+        if (action === 'odhad') patch = { status: 'odhad', estimatedReady: computedEstimate || '12:30', estimateSetAt: setAt, assigned: assignedName }
+        if (action === 'problem') patch = { status: 'problem', statusNote: 'Problém nahlášen' }
+        if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true }
+        if (action === 'clear_exception') patch = { checkoutException: false, statusNote: undefined, status: 'ceka' }
+        if (runtimeMode === 'online') {
+            activeStore.updateRoomPlan(tab, id, patch)
+        }
 
         setRoomsByDay((prev) => ({
             ...prev,
@@ -187,6 +219,9 @@ export default function App() {
     }
 
     function handleUpdateTaskStatus(taskId: string, status: Task['status']) {
+        if (runtimeMode === 'online') {
+            activeStore.updateTaskStatus(taskId, status)
+        }
         setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, status } : task)))
     }
 
@@ -209,10 +244,27 @@ export default function App() {
             createdAt
         }
 
+        if (runtimeMode === 'online') {
+            activeStore.createTask({
+                id: newTask.id,
+                roomNumber: newTask.roomNumber,
+                title: newTask.title,
+                category: newTask.category,
+                priority: newTask.priority,
+                assignedToRole: newTask.assignedToRole,
+                note: newTask.note,
+                createdBy: newTask.createdBy,
+                createdAt: newTask.createdAt
+            })
+        }
+
         setTasks((prev) => [newTask, ...prev])
     }
 
     function handleMaintenanceTaskAction(taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') {
+        if (runtimeMode === 'online') {
+            activeStore.updateTaskStatus(taskId, action)
+        }
         setTasks((prev) =>
             prev.map((task) => {
                 if (task.id !== taskId) return task
@@ -238,10 +290,25 @@ export default function App() {
             reportedBy: currentUser.name,
             createdAt: formatNowHHmm(new Date())
         }
+        if (runtimeMode === 'online') {
+            activeStore.createMaintenanceItem({
+                id: newItem.id,
+                roomNumber: newItem.roomNumber,
+                title: newItem.title,
+                category: newItem.category,
+                priority: newItem.priority,
+                note: newItem.note,
+                reportedBy: newItem.reportedBy,
+                createdAt: newItem.createdAt
+            })
+        }
         setMaintenanceItems((prev) => [newItem, ...prev])
     }
 
     function handleUpdateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>) {
+        if (runtimeMode === 'online') {
+            activeStore.updateMaintenanceItem(itemId, patch)
+        }
         setMaintenanceItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch, updatedAt: formatNowHHmm(new Date()) } : it)))
     }
 
@@ -268,6 +335,22 @@ export default function App() {
             createdAt: formatNowHHmm(new Date()),
             status: 'new',
             priority: item.priority
+        }
+
+        if (runtimeMode === 'online') {
+            activeStore.createSupplyRequest({
+                id: newRequest.id,
+                itemName: newRequest.itemName,
+                category: newRequest.category,
+                quantityLevel: newRequest.quantityLevel,
+                customQuantity: newRequest.customQuantity,
+                roomNumber: newRequest.roomNumber,
+                note: newRequest.note,
+                priority: newRequest.priority,
+                requestedBy: newRequest.requestedBy,
+                requestedByRole: newRequest.requestedByRole,
+                createdAt: newRequest.createdAt
+            })
         }
 
         setSupplyRequests((prev) => [newRequest, ...prev])
@@ -305,11 +388,17 @@ export default function App() {
     }
 
     function setStaffAvailability(id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
+        if (runtimeMode === 'online') {
+            activeStore.setStaffAvailability(id, availability)
+        }
         setStaff((prev: any) => prev.map((s: any) => (s.id === id ? { ...s, availability } : s)))
     }
 
     function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
         if (!currentUser || currentUser.role !== 'admin') return
+        if (runtimeMode === 'online') {
+            supplyRequests.filter((s) => s.itemName === itemName).forEach((s) => activeStore.updateSupplyStatus(s.id, status))
+        }
         setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
     }
 
@@ -335,6 +424,9 @@ export default function App() {
     }
 
     function handleCancelSupplyRequest(requestId: string) {
+        if (runtimeMode === 'online') {
+            activeStore.cancelSupplyRequest(requestId)
+        }
         setSupplyRequests((prev) => {
             const idx = prev.findIndex((r) => r.id === requestId)
             if (idx === -1) return prev
@@ -358,10 +450,66 @@ export default function App() {
             customSupplyChips,
             staff
         }
-        opsStore.saveState(toSave)
-    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, opsStore])
+        activeStore.saveState(toSave)
+    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
 
-    function resetDemoData() {
+    useEffect(() => {
+        let unsub: (() => void) | null = null
+        let cancelled = false
+
+        if (runtimeMode !== 'online') {
+            setOnlineLoading(false)
+            return
+        }
+
+        setOnlineLoading(true)
+        setOnlineError(null)
+
+        onlineStore.initializeState(defaultState)
+            .then(() => {
+                if (cancelled) return
+                unsub = onlineStore.subscribeState(
+                    (state) => {
+                        if (state.roomsByDay) setRoomsByDay(state.roomsByDay)
+                        if (state.tasks) setTasks(state.tasks)
+                        if (state.supplyRequests) setSupplyRequests(state.supplyRequests)
+                        if (state.maintenanceItems) setMaintenanceItems(state.maintenanceItems)
+                        if (state.staff) setStaff(state.staff)
+                        setOnlineLoading(false)
+                    },
+                    (message) => {
+                        setOnlineError(message)
+                        setOnlineLoading(false)
+                    }
+                )
+            })
+            .catch((err: any) => {
+                if (cancelled) return
+                console.warn('Online initialization failed, falling back to demo mode', err)
+                setOnlineError('Online připojení selhalo, přepínám do demo režimu.')
+                const localSaved = localStore.loadInitialState()
+                if (localSaved) {
+                    setUserId(localSaved.userId)
+                    setTab(localSaved.tab)
+                    setView(localSaved.view)
+                    setRoomsByDay(localSaved.roomsByDay)
+                    setTasks(localSaved.tasks)
+                    setSupplyRequests(localSaved.supplyRequests)
+                    setMaintenanceItems(localSaved.maintenanceItems)
+                    setCustomSupplyChips(localSaved.customSupplyChips)
+                    setStaff(localSaved.staff)
+                }
+                setRuntimeMode('demo')
+                setOnlineLoading(false)
+            })
+
+        return () => {
+            cancelled = true
+            if (unsub) unsub()
+        }
+    }, [runtimeMode, onlineStore, localStore, defaultState])
+
+    async function resetDemoData() {
         // restore mock data and clear saved state
         setRoomsByDay(roomPlansByDay)
         setTasks([])
@@ -372,7 +520,7 @@ export default function App() {
         setTab('Dnes')
         setUserId('david')
         setView('today')
-        opsStore.resetDemoState()
+        await activeStore.resetDemoState(defaultState)
         setResetConfirm(false)
     }
 
@@ -382,11 +530,17 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div className="title">My Hotel Ops</div>
                     <div style={{ fontSize: 11, color: '#64748b', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px' }}>
-                        {appMode === 'online' ? 'Online režim' : 'Demo režim'}
+                        {runtimeMode === 'online' ? 'Online režim' : 'Demo režim'}
                     </div>
                 </div>
                 <RoleSwitch current={userId} onChange={handleRoleChange} />
             </div>
+
+            {runtimeMode === 'online' && (onlineLoading || onlineError) && (
+                <div style={{ padding: '4px 12px', fontSize: 12, color: onlineError ? '#b91c1c' : '#475569' }}>
+                    {onlineError || 'Připojuji k online datům...'}
+                </div>
+            )}
 
             <div style={{ padding: 12 }}>
                 <div className="tabs">
@@ -405,7 +559,7 @@ export default function App() {
                 {(currentUser?.id === 'david' || currentUser?.role === 'admin') && (
                     <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
                         {!resetConfirm ? (
-                            <button className="btn danger" onClick={() => setResetConfirm(true)}>Reset demo dat</button>
+                            <button className="btn danger" onClick={() => setResetConfirm(true)}>{runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}</button>
                         ) : (
                             <>
                                 <button className="btn danger" onClick={() => resetDemoData()}>Opravdu resetovat?</button>

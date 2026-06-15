@@ -16,6 +16,7 @@ export interface OpsPersistedState {
 }
 
 export interface CreateTaskInput {
+    id?: string
     roomNumber: string
     title: string
     category: Task['category']
@@ -27,6 +28,7 @@ export interface CreateTaskInput {
 }
 
 export interface CreateSupplyRequestInput {
+    id?: string
     itemName: string
     category: SupplyRequest['category']
     quantityLevel: SupplyRequest['quantityLevel']
@@ -40,6 +42,7 @@ export interface CreateSupplyRequestInput {
 }
 
 export interface CreateMaintenanceItemInput {
+    id?: string
     roomNumber?: string
     title: string
     category: MaintenanceItem['category']
@@ -52,6 +55,8 @@ export interface CreateMaintenanceItemInput {
 export interface OpsStore {
     mode: 'demo' | 'online'
     loadInitialState(): OpsPersistedState | null
+    initializeState(defaultState: OpsPersistedState): Promise<void>
+    subscribeState(onState: (state: Partial<OpsPersistedState>) => void, onError: (message: string) => void): (() => void) | null
     saveState(state: OpsPersistedState): void
     updateRoomPlan(day: OpsTab, roomId: string, patch: Partial<RoomPlan>): void
     createTask(input: CreateTaskInput): Task | null
@@ -62,5 +67,5 @@ export interface OpsStore {
     createMaintenanceItem(input: CreateMaintenanceItemInput): MaintenanceItem | null
     updateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>): void
     setStaffAvailability(id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'): void
-    resetDemoState(): void
+    resetDemoState(defaultState: OpsPersistedState): Promise<void> | void
 }
