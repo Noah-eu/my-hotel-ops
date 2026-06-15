@@ -3,6 +3,11 @@ import { MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../typ
 export type OpsTab = 'Dnes' | 'Zitra' | 'Pozitri'
 export type OpsView = 'today' | 'admin' | 'maintenance' | 'supplies'
 
+export interface OpsStoreError {
+    code?: string
+    message: string
+}
+
 export interface OpsPersistedState {
     userId: string
     tab: OpsTab
@@ -56,7 +61,7 @@ export interface OpsStore {
     mode: 'demo' | 'online'
     loadInitialState(): OpsPersistedState | null
     initializeState(defaultState: OpsPersistedState): Promise<void>
-    subscribeState(onState: (state: Partial<OpsPersistedState>) => void, onError: (message: string) => void): (() => void) | null
+    subscribeState(onState: (state: Partial<OpsPersistedState>) => void, onError: (error: OpsStoreError) => void): (() => void) | null
     saveState(state: OpsPersistedState): void
     updateRoomPlan(day: OpsTab, roomId: string, patch: Partial<RoomPlan>): void
     createTask(input: CreateTaskInput): Task | null

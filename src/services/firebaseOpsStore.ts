@@ -16,12 +16,44 @@ import {
     CreateMaintenanceItemInput,
     CreateSupplyRequestInput,
     CreateTaskInput,
+    OpsStoreError,
     OpsPersistedState,
     OpsStore,
     OpsTab
 } from './opsStore'
 
-const DEFAULT_HOTEL_ID = 'chill-apartments'
+const DEV = import.meta.env.DEV
+
+function devLog(message: string, payload?: unknown) {
+    if (!DEV) return
+    if (typeof payload === 'undefined') {
+        console.info(`[FirestoreStore] ${message}`)
+        return
+    }
+    console.info(`[FirestoreStore] ${message}`, payload)
+}
+
+function toStoreError(error: any, fallbackMessage: string): OpsStoreError {
+    return {
+        code: error?.code,
+        message: error?.message || fallbackMessage
+    }
+}
+
+async function runWrite(label: string, operation: () => Promise<void>) {
+    try {
+        await ensureAnonymousAuth()
+        await operation()
+        devLog(`write success: ${label}`)
+    } catch (error: any) {
+        devLog(`write failure: ${label}`, {
+            code: error?.code || null,
+            message: error?.message || 'Unknown write error'
+        })
+    }
+}
+
+export const ONLINE_HOTEL_ID = 'chill-apartments'
 
 function roomPlanId(day: OpsTab, roomId: string) {
     return `${day}-${roomId}`
@@ -30,37 +62,42 @@ function roomPlanId(day: OpsTab, roomId: string) {
 async function ensureSeeded(defaultState: OpsPersistedState) {
     if (!firestoreDb) return
 
-    const metaRef = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'meta', 'appState')
+    const metaRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'meta', 'appState')
     const metaSnap = await getDoc(metaRef)
-    if (metaSnap.exists() && metaSnap.data()?.seeded) return
+    if (metaSnap.exists() && metaSnap.data()?.seeded) {
+        devLog('Seed skipped - already seeded')
+        return
+    }
+
+    devLog('Seed started')
 
     const batch = writeBatch(firestoreDb)
 
-    ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-        defaultState.roomsByDay[day].forEach((room) => {
-            const ref = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'roomPlans', roomPlanId(day, room.id))
-            batch.set(ref, { ...room, day })
+        ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+            defaultState.roomsByDay[day].forEach((room) => {
+                const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', roomPlanId(day, room.id))
+                batch.set(ref, { ...room, day })
+            })
         })
-    })
 
     defaultState.tasks.forEach((task) => {
-        const ref = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'tasks', task.id)
+        const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id)
         batch.set(ref, task)
     })
 
     defaultState.supplyRequests.forEach((request) => {
-        const ref = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'supplyRequests', request.id)
+        const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id)
         batch.set(ref, request)
     })
 
     defaultState.maintenanceItems.forEach((item) => {
-        const ref = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'maintenanceItems', item.id)
+        const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id)
         batch.set(ref, item)
     })
 
     defaultState.staff.forEach((member) => {
-        const staffRef = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'staff', member.id)
-        const availabilityRef = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'dailyAvailability', member.id)
+        const staffRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', member.id)
+        const availabilityRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', member.id)
         batch.set(staffRef, member)
         batch.set(availabilityRef, {
             staffId: member.id,
@@ -75,6 +112,7 @@ async function ensureSeeded(defaultState: OpsPersistedState) {
     })
 
     await batch.commit()
+    devLog('Seed completed')
 }
 
 async function clearCollection(path: string[]) {
@@ -136,7 +174,7 @@ export function createFirebaseOpsStore(): OpsStore {
             }
 
             unsubs.push(onSnapshot(
-                collection(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'roomPlans'),
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans'),
                 (snap) => {
                     const docs = snap.docs.map((d) => d.data() as Record<string, any>)
                     const grouped = toRoomPlansByDay(docs)
@@ -145,53 +183,77 @@ export function createFirebaseOpsStore(): OpsStore {
                     roomPlansByDay.Pozitri = grouped.Pozitri
                     emitState()
                 },
-                (err) => onError(`Firestore roomPlans listener failed: ${err.message}`)
+                (err) => {
+                    devLog('Listener error: roomPlans', toStoreError(err, 'roomPlans listener failed'))
+                    onError(toStoreError(err, 'roomPlans listener failed'))
+                }
             ))
+            devLog('Listener attached: roomPlans')
 
             unsubs.push(onSnapshot(
-                collection(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'tasks'),
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks'),
                 (snap) => {
                     tasks = snap.docs.map((d) => d.data() as Task)
                     emitState()
                 },
-                (err) => onError(`Firestore tasks listener failed: ${err.message}`)
+                (err) => {
+                    devLog('Listener error: tasks', toStoreError(err, 'tasks listener failed'))
+                    onError(toStoreError(err, 'tasks listener failed'))
+                }
             ))
+            devLog('Listener attached: tasks')
 
             unsubs.push(onSnapshot(
-                collection(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'supplyRequests'),
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests'),
                 (snap) => {
                     supplyRequests = snap.docs.map((d) => d.data() as SupplyRequest)
                     emitState()
                 },
-                (err) => onError(`Firestore supplyRequests listener failed: ${err.message}`)
+                (err) => {
+                    devLog('Listener error: supplyRequests', toStoreError(err, 'supplyRequests listener failed'))
+                    onError(toStoreError(err, 'supplyRequests listener failed'))
+                }
             ))
+            devLog('Listener attached: supplyRequests')
 
             unsubs.push(onSnapshot(
-                collection(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'maintenanceItems'),
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems'),
                 (snap) => {
                     maintenanceItems = snap.docs.map((d) => d.data() as MaintenanceItem)
                     emitState()
                 },
-                (err) => onError(`Firestore maintenanceItems listener failed: ${err.message}`)
+                (err) => {
+                    devLog('Listener error: maintenanceItems', toStoreError(err, 'maintenanceItems listener failed'))
+                    onError(toStoreError(err, 'maintenanceItems listener failed'))
+                }
             ))
+            devLog('Listener attached: maintenanceItems')
 
             unsubs.push(onSnapshot(
-                collection(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'staff'),
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff'),
                 (snap) => {
                     staffDocs = snap.docs.map((d) => d.data())
                     emitState()
                 },
-                (err) => onError(`Firestore staff listener failed: ${err.message}`)
+                (err) => {
+                    devLog('Listener error: staff', toStoreError(err, 'staff listener failed'))
+                    onError(toStoreError(err, 'staff listener failed'))
+                }
             ))
+            devLog('Listener attached: staff')
 
             unsubs.push(onSnapshot(
-                collection(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'dailyAvailability'),
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability'),
                 (snap) => {
                     availabilityDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
                     emitState()
                 },
-                (err) => onError(`Firestore dailyAvailability listener failed: ${err.message}`)
+                (err) => {
+                    devLog('Listener error: dailyAvailability', toStoreError(err, 'dailyAvailability listener failed'))
+                    onError(toStoreError(err, 'dailyAvailability listener failed'))
+                }
             ))
+            devLog('Listener attached: dailyAvailability')
 
             return () => {
                 unsubs.forEach((u) => u())
@@ -202,10 +264,8 @@ export function createFirebaseOpsStore(): OpsStore {
         },
         updateRoomPlan(day: OpsTab, roomId: string, patch) {
             if (!firestoreDb) return
-            const ref = doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'roomPlans', `${day}-${roomId}`)
-            updateDoc(ref, patch as Record<string, unknown>).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${roomId}`)
+            void runWrite('updateRoomPlan', () => updateDoc(ref, patch as Record<string, unknown>))
         },
         createTask(input: CreateTaskInput) {
             if (!firestoreDb) return null
@@ -221,16 +281,12 @@ export function createFirebaseOpsStore(): OpsStore {
                 createdBy: input.createdBy,
                 createdAt: input.createdAt
             }
-            setDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'tasks', task.id), task).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), task))
             return task
         },
         updateTaskStatus(taskId: string, status: Task['status']) {
             if (!firestoreDb) return
-            updateDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'tasks', taskId), { status }).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('updateTaskStatus', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', taskId), { status }))
         },
         createSupplyRequest(input: CreateSupplyRequestInput) {
             if (!firestoreDb) return null
@@ -248,22 +304,16 @@ export function createFirebaseOpsStore(): OpsStore {
                 status: 'new',
                 priority: input.priority
             }
-            setDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'supplyRequests', request.id), request).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('createSupplyRequest', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id), request))
             return request
         },
         cancelSupplyRequest(requestId: string) {
             if (!firestoreDb) return
-            deleteDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'supplyRequests', requestId)).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('cancelSupplyRequest', () => deleteDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', requestId)))
         },
         updateSupplyStatus(requestId: string, status: SupplyRequest['status']) {
             if (!firestoreDb) return
-            updateDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'supplyRequests', requestId), { status }).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('updateSupplyStatus', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', requestId), { status }))
         },
         createMaintenanceItem(input: CreateMaintenanceItemInput) {
             if (!firestoreDb) return null
@@ -278,39 +328,33 @@ export function createFirebaseOpsStore(): OpsStore {
                 reportedBy: input.reportedBy,
                 createdAt: input.createdAt
             }
-            setDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'maintenanceItems', item.id), item).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('createMaintenanceItem', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id), item))
             return item
         },
         updateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>) {
             if (!firestoreDb) return
-            updateDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'maintenanceItems', itemId), patch as Record<string, unknown>).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
+            void runWrite('updateMaintenanceItem', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', itemId), patch as Record<string, unknown>))
         },
         setStaffAvailability(id: string, availability) {
             if (!firestoreDb) return
-            setDoc(
-                doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'dailyAvailability', id),
-                { staffId: id, availability, updatedAt: serverTimestamp() },
-                { merge: true }
-            ).catch(() => {
-                // Safe no-op in skeleton mode.
-            })
-            updateDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'staff', id), { availability }).catch(() => {
-                // Staff doc may not be writable in some environments.
+            void runWrite('setStaffAvailability', async () => {
+                await setDoc(
+                    doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', id),
+                    { staffId: id, availability, updatedAt: serverTimestamp() },
+                    { merge: true }
+                )
+                await updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', id), { availability })
             })
         },
         async resetDemoState(defaultState) {
             if (!firestoreDb) return
-            await clearCollection(['hotels', DEFAULT_HOTEL_ID, 'roomPlans'])
-            await clearCollection(['hotels', DEFAULT_HOTEL_ID, 'tasks'])
-            await clearCollection(['hotels', DEFAULT_HOTEL_ID, 'supplyRequests'])
-            await clearCollection(['hotels', DEFAULT_HOTEL_ID, 'maintenanceItems'])
-            await clearCollection(['hotels', DEFAULT_HOTEL_ID, 'dailyAvailability'])
-            await clearCollection(['hotels', DEFAULT_HOTEL_ID, 'staff'])
-            await setDoc(doc(firestoreDb, 'hotels', DEFAULT_HOTEL_ID, 'meta', 'appState'), {
+            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'roomPlans'])
+            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'tasks'])
+            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'supplyRequests'])
+            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'maintenanceItems'])
+            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'dailyAvailability'])
+            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'staff'])
+            await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'meta', 'appState'), {
                 seeded: false,
                 resetAt: serverTimestamp()
             }, { merge: true })

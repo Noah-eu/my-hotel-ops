@@ -6,9 +6,30 @@ import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
-import { appMode } from './lib/firebase'
+import { appMode, ensureAnonymousAuth, firebaseEnvDiagnostics } from './lib/firebase'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState } from './services/opsStore'
+import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
+
+type AppDiagnostics = {
+    firebaseConfigured: boolean
+    missingEnvVars: string[]
+    intendedMode: 'demo' | 'online'
+    activeMode: 'demo' | 'online' | 'fallback'
+    authStatus: 'not_started' | 'signing_in' | 'signed_in_anonymous' | 'error'
+    authUid?: string
+    firestoreStatus: 'not_started' | 'seeding' | 'listening' | 'connected' | 'permission_denied' | 'error'
+    hotelId: string
+    lastErrorCode?: string
+    lastErrorMessage?: string
+}
+
+function extractErrorInfo(error: any): { code?: string; message: string } {
+    return {
+        code: error?.code,
+        message: error?.message || 'Neznámá chyba'
+    }
+}
 
 type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception'
 
@@ -60,6 +81,16 @@ export default function App() {
     const [runtimeMode, setRuntimeMode] = useState<'demo' | 'online'>(appMode)
     const [onlineLoading, setOnlineLoading] = useState(appMode === 'online')
     const [onlineError, setOnlineError] = useState<string | null>(null)
+    const [diagOpen, setDiagOpen] = useState(false)
+    const [diagnostics, setDiagnostics] = useState<AppDiagnostics>({
+        firebaseConfigured: firebaseEnvDiagnostics.firebaseConfigured,
+        missingEnvVars: firebaseEnvDiagnostics.missingEnvVars,
+        intendedMode: appMode,
+        activeMode: appMode,
+        authStatus: appMode === 'online' ? 'not_started' : 'not_started',
+        firestoreStatus: 'not_started',
+        hotelId: ONLINE_HOTEL_ID
+    })
 
     const defaultState: OpsPersistedState = useMemo(() => ({
         userId: 'david',
@@ -457,6 +488,45 @@ export default function App() {
         let unsub: (() => void) | null = null
         let cancelled = false
 
+        function switchToDemoWithFallback(code: string | undefined, message: string) {
+            setDiagnostics((prev) => ({
+                ...prev,
+                activeMode: 'fallback',
+                lastErrorCode: code,
+                lastErrorMessage: message
+            }))
+            setOnlineError(`Online režim se nepodařilo spustit – používám demo data. ${code ? `${code}: ` : ''}${message}`)
+
+            const localSaved = localStore.loadInitialState()
+            if (localSaved) {
+                setUserId(localSaved.userId)
+                setTab(localSaved.tab)
+                setView(localSaved.view)
+                setRoomsByDay(localSaved.roomsByDay)
+                setTasks(localSaved.tasks)
+                setSupplyRequests(localSaved.supplyRequests)
+                setMaintenanceItems(localSaved.maintenanceItems)
+                setCustomSupplyChips(localSaved.customSupplyChips)
+                setStaff(localSaved.staff)
+            }
+            setRuntimeMode('demo')
+            setOnlineLoading(false)
+        }
+
+        if (!firebaseEnvDiagnostics.firebaseConfigured) {
+            setDiagnostics((prev) => ({
+                ...prev,
+                activeMode: 'demo',
+                authStatus: 'not_started',
+                firestoreStatus: 'not_started',
+                lastErrorCode: undefined,
+                lastErrorMessage: undefined
+            }))
+            setOnlineLoading(false)
+            setOnlineError(null)
+            return
+        }
+
         if (runtimeMode !== 'online') {
             setOnlineLoading(false)
             return
@@ -464,10 +534,33 @@ export default function App() {
 
         setOnlineLoading(true)
         setOnlineError(null)
+        setDiagnostics((prev) => ({
+            ...prev,
+            activeMode: 'online',
+            authStatus: 'signing_in',
+            firestoreStatus: 'not_started',
+            lastErrorCode: undefined,
+            lastErrorMessage: undefined
+        }))
 
-        onlineStore.initializeState(defaultState)
+        ensureAnonymousAuth()
+            .then((user) => {
+                if (cancelled) return null
+                setDiagnostics((prev) => ({
+                    ...prev,
+                    authStatus: 'signed_in_anonymous',
+                    authUid: user?.uid || undefined,
+                    firestoreStatus: 'seeding'
+                }))
+                return onlineStore.initializeState(defaultState)
+            })
             .then(() => {
                 if (cancelled) return
+                setDiagnostics((prev) => ({
+                    ...prev,
+                    firestoreStatus: 'listening'
+                }))
+
                 unsub = onlineStore.subscribeState(
                     (state) => {
                         if (state.roomsByDay) setRoomsByDay(state.roomsByDay)
@@ -475,32 +568,39 @@ export default function App() {
                         if (state.supplyRequests) setSupplyRequests(state.supplyRequests)
                         if (state.maintenanceItems) setMaintenanceItems(state.maintenanceItems)
                         if (state.staff) setStaff(state.staff)
+                        setDiagnostics((prev) => ({
+                            ...prev,
+                            firestoreStatus: 'connected'
+                        }))
                         setOnlineLoading(false)
                     },
-                    (message) => {
-                        setOnlineError(message)
-                        setOnlineLoading(false)
+                    (error) => {
+                        const code = error.code
+                        const message = error.message
+                        setDiagnostics((prev) => ({
+                            ...prev,
+                            firestoreStatus: code === 'permission-denied' ? 'permission_denied' : 'error',
+                            lastErrorCode: code,
+                            lastErrorMessage: message
+                        }))
+                        switchToDemoWithFallback(code, message)
                     }
                 )
             })
             .catch((err: any) => {
                 if (cancelled) return
-                console.warn('Online initialization failed, falling back to demo mode', err)
-                setOnlineError('Online připojení selhalo, přepínám do demo režimu.')
-                const localSaved = localStore.loadInitialState()
-                if (localSaved) {
-                    setUserId(localSaved.userId)
-                    setTab(localSaved.tab)
-                    setView(localSaved.view)
-                    setRoomsByDay(localSaved.roomsByDay)
-                    setTasks(localSaved.tasks)
-                    setSupplyRequests(localSaved.supplyRequests)
-                    setMaintenanceItems(localSaved.maintenanceItems)
-                    setCustomSupplyChips(localSaved.customSupplyChips)
-                    setStaff(localSaved.staff)
-                }
-                setRuntimeMode('demo')
-                setOnlineLoading(false)
+                const errorInfo = extractErrorInfo(err)
+                const isAuthError = Boolean(errorInfo.code && String(errorInfo.code).startsWith('auth/'))
+                setDiagnostics((prev) => ({
+                    ...prev,
+                    authStatus: isAuthError ? 'error' : prev.authStatus,
+                    firestoreStatus: isAuthError
+                        ? prev.firestoreStatus
+                        : (errorInfo.code === 'permission-denied' ? 'permission_denied' : 'error'),
+                    lastErrorCode: errorInfo.code,
+                    lastErrorMessage: errorInfo.message
+                }))
+                switchToDemoWithFallback(errorInfo.code, errorInfo.message)
             })
 
         return () => {
@@ -530,15 +630,43 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div className="title">My Hotel Ops</div>
                     <div style={{ fontSize: 11, color: '#64748b', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px' }}>
-                        {runtimeMode === 'online' ? 'Online režim' : 'Demo režim'}
+                        {diagnostics.activeMode === 'online' ? 'Online režim' : diagnostics.activeMode === 'fallback' ? 'Fallback režim' : 'Demo režim'}
+                    </div>
+                    <div style={{ position: 'relative' }}>
+                        <button
+                            className="btn"
+                            style={{ padding: '2px 8px', fontSize: 11, minHeight: 'unset' }}
+                            onClick={() => setDiagOpen((prev) => !prev)}
+                        >
+                            Diagnostika
+                        </button>
+                        {diagOpen && (
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, width: 320, marginTop: 6, padding: 10, borderRadius: 10, border: '1px solid #cbd5e1', background: '#ffffff', boxShadow: '0 8px 24px rgba(15,23,42,0.12)', fontSize: 12, color: '#334155' }}>
+                                <div><strong>Mode:</strong> intended {diagnostics.intendedMode}, active {diagnostics.activeMode}</div>
+                                <div><strong>Firebase configured:</strong> {diagnostics.firebaseConfigured ? 'ano' : 'ne'}</div>
+                                <div><strong>Missing env vars:</strong> {diagnostics.missingEnvVars.length ? diagnostics.missingEnvVars.join(', ') : 'žádné'}</div>
+                                <div><strong>Auth status:</strong> {diagnostics.authStatus}{diagnostics.authUid ? ` (${diagnostics.authUid})` : ''}</div>
+                                <div><strong>Firestore status:</strong> {diagnostics.firestoreStatus}</div>
+                                <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
+                                <div><strong>Last error code:</strong> {diagnostics.lastErrorCode || '—'}</div>
+                                <div><strong>Last error message:</strong> {diagnostics.lastErrorMessage || '—'}</div>
+                            </div>
+                        )}
                     </div>
                 </div>
                 <RoleSwitch current={userId} onChange={handleRoleChange} />
             </div>
 
-            {runtimeMode === 'online' && (onlineLoading || onlineError) && (
+            {(runtimeMode === 'online' && (onlineLoading || onlineError)) && (
                 <div style={{ padding: '4px 12px', fontSize: 12, color: onlineError ? '#b91c1c' : '#475569' }}>
                     {onlineError || 'Připojuji k online datům...'}
+                </div>
+            )}
+
+            {diagnostics.activeMode === 'fallback' && (
+                <div style={{ padding: '4px 12px', fontSize: 12, color: '#b91c1c' }}>
+                    Online režim se nepodařilo spustit – používám demo data
+                    <div>{diagnostics.lastErrorCode ? `${diagnostics.lastErrorCode}: ` : ''}{diagnostics.lastErrorMessage || 'Neznámá chyba'}</div>
                 </div>
             )}
 
