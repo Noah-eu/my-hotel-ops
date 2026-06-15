@@ -300,6 +300,13 @@ export function createFirebaseOpsStore(): OpsStore {
                 collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests'),
                 (snap) => {
                     supplyRequests = snap.docs.map((d) => d.data() as SupplyRequest)
+                    if (DEV) {
+                        console.info('Firestore supply snapshot', {
+                            path: PATHS.supplyRequests,
+                            count: supplyRequests.length,
+                            ids: supplyRequests.map((s) => s.id)
+                        })
+                    }
                     emitState()
                 },
                 (err) => {
@@ -404,7 +411,16 @@ export function createFirebaseOpsStore(): OpsStore {
                 priority: input.priority
             }
             const { cleaned } = sanitizeForFirestore(request, `supplyRequests.${request.id}`)
-            void runWrite('createSupplyRequest', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id), cleaned))
+            void runWrite('createSupplyRequest', async () => {
+                await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id), cleaned)
+                if (DEV) {
+                    console.info('Firestore supply write success', {
+                        id: request.id,
+                        path: `${PATHS.supplyRequests}/${request.id}`,
+                        itemName: request.itemName
+                    })
+                }
+            })
             return request
         },
         cancelSupplyRequest(requestId: string) {

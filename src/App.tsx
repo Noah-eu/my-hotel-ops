@@ -19,6 +19,7 @@ type AppDiagnostics = {
     authStatus: 'not_started' | 'signing_in' | 'signed_in_anonymous' | 'error'
     authUid?: string
     firestoreStatus: 'not_started' | 'seeding' | 'listening' | 'connected' | 'permission_denied' | 'error'
+    supplySyncCount?: number
     hotelId: string
     lastErrorCode?: string
     lastErrorMessage?: string
@@ -415,6 +416,22 @@ export default function App() {
             priority: input.priority
         }
 
+        if (runtimeMode === 'online') {
+            activeStore.createSupplyRequest({
+                id: newRequest.id,
+                itemName: newRequest.itemName,
+                category: newRequest.category,
+                quantityLevel: newRequest.quantityLevel,
+                customQuantity: newRequest.customQuantity,
+                roomNumber: newRequest.roomNumber,
+                note: newRequest.note,
+                priority: newRequest.priority,
+                requestedBy: newRequest.requestedBy,
+                requestedByRole: newRequest.requestedByRole,
+                createdAt: newRequest.createdAt
+            })
+        }
+
         setSupplyRequests((prev) => [newRequest, ...prev])
     }
 
@@ -565,7 +582,10 @@ export default function App() {
                     (state) => {
                         if (state.roomsByDay) setRoomsByDay(state.roomsByDay)
                         if (state.tasks) setTasks(state.tasks)
-                        if (state.supplyRequests) setSupplyRequests(state.supplyRequests)
+                        if (state.supplyRequests) {
+                            setSupplyRequests(state.supplyRequests)
+                            setDiagnostics((prev) => ({ ...prev, supplySyncCount: state.supplyRequests?.length || 0 }))
+                        }
                         if (state.maintenanceItems) setMaintenanceItems(state.maintenanceItems)
                         if (state.staff) setStaff(state.staff)
                         setDiagnostics((prev) => ({
@@ -651,6 +671,7 @@ export default function App() {
                                 <div><strong>Missing env vars:</strong> {diagnostics.missingEnvVars.length ? diagnostics.missingEnvVars.join(', ') : 'žádné'}</div>
                                 <div><strong>Auth status:</strong> {diagnostics.authStatus}{diagnostics.authUid ? ` (${diagnostics.authUid})` : ''}</div>
                                 <div><strong>Firestore status:</strong> {diagnostics.firestoreStatus}</div>
+                                <div><strong>Supply sync count:</strong> {typeof diagnostics.supplySyncCount === 'number' ? diagnostics.supplySyncCount : '—'}</div>
                                 <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
                                 <div><strong>Last error code:</strong> {diagnostics.lastErrorCode || '—'}</div>
                                 <div><strong>Last error message:</strong> {diagnostics.lastErrorMessage || '—'}</div>
