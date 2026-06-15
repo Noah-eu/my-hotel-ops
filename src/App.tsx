@@ -1,16 +1,40 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users } from './mockData'
+import { Task, UserRole } from './types'
 
-type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'add_task'
+type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava'
 
-type ActionPayload = {
+type RoomActionPayload = {
     estimateTime?: string
     relativeMinutes?: number
+}
+
+type CreateTaskInput = {
+    title: string
+    category: Task['category']
+    priority: Task['priority']
+    assignedToRole: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>
+    note?: string
+}
+
+function canViewTask(role: UserRole, task: Task) {
+    if (role === 'admin') return true
+    if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
+    if (role === 'cleaner') return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
+    if (role === 'maintenance') return task.assignedToRole === 'maintenance'
+    return false
+}
+
+function defaultAssigneeName(role: Task['assignedToRole']) {
+    if (role === 'lead') return 'Iryna'
+    if (role === 'cleaner') return 'Uklízečka'
+    if (role === 'maintenance') return 'Údržbář'
+    return undefined
 }
 
 export default function App() {
@@ -18,11 +42,22 @@ export default function App() {
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>('Dnes')
     const [view, setView] = useState<'today' | 'admin' | 'maintenance' | 'supplies'>('today')
     const [roomsByDay, setRoomsByDay] = useState(roomPlansByDay)
+    const [tasks, setTasks] = useState<Task[]>([])
 
-    const currentUser = users.find(u => u.id === userId)
+    const currentUser = users.find((u) => u.id === userId)
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const dayLabel = `${dayTitle} • ${new Date().toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
+
+    const visibleTodayTasks = useMemo(
+        () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
+        [tasks, currentUser?.role]
+    )
+
+    const maintenanceTasks = useMemo(
+        () => tasks.filter((task) => task.assignedToRole === 'maintenance'),
+        [tasks]
+    )
 
     function handleRoleChange(nextUserId: string) {
         const nextUser = users.find((u) => u.id === nextUserId)
@@ -44,7 +79,7 @@ export default function App() {
         return formatNowHHmm(next)
     }
 
-    function handleAction(id: string, action: RoomAction, payload?: ActionPayload) {
+    function handleAction(id: string, action: RoomAction, payload?: RoomActionPayload) {
         const assignedName = currentUser?.name
         const now = new Date()
         const setAt = formatNowHHmm(now)
@@ -54,9 +89,9 @@ export default function App() {
                 ? addMinutes(now, payload.relativeMinutes)
                 : undefined
 
-        setRoomsByDay(prev => ({
+        setRoomsByDay((prev) => ({
             ...prev,
-            [tab]: prev[tab].map(r => {
+            [tab]: prev[tab].map((r) => {
                 if (r.id !== id) return r
 
                 if (action === 'hotovo') {
@@ -102,6 +137,41 @@ export default function App() {
         }))
     }
 
+    function handleCreateTask(roomId: string, input: CreateTaskInput) {
+        const room = roomsByDay[tab].find((r) => r.id === roomId)
+        if (!room || !currentUser) return
+
+        const createdAt = formatNowHHmm(new Date())
+        const newTask: Task = {
+            id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            roomNumber: room.number,
+            title: input.title,
+            category: input.category,
+            priority: input.priority,
+            assignedToRole: input.assignedToRole,
+            assignedToName: defaultAssigneeName(input.assignedToRole),
+            status: 'new',
+            note: input.note,
+            createdBy: currentUser.name,
+            createdAt
+        }
+
+        setTasks((prev) => [newTask, ...prev])
+    }
+
+    function handleMaintenanceTaskAction(taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') {
+        setTasks((prev) =>
+            prev.map((task) => {
+                if (task.id !== taskId) return task
+                return {
+                    ...task,
+                    status: action,
+                    assignedToName: currentUser?.name || task.assignedToName
+                }
+            })
+        )
+    }
+
     return (
         <div className="app">
             <div className="topbar">
@@ -128,14 +198,23 @@ export default function App() {
                 )}
 
                 <div style={{ marginTop: 12 }}>
-                    {view === 'today' && <DashboardToday rooms={roomsByDay[tab]} onAction={handleAction} role={currentUser?.role || 'cleaner'} dayLabel={dayLabel} />}
-                    {view === 'admin' && <AdminDashboard rooms={roomsByDay[tab]} />}
-                    {view === 'maintenance' && <MaintenanceView />}
+                    {view === 'today' && (
+                        <DashboardToday
+                            rooms={roomsByDay[tab]}
+                            tasks={visibleTodayTasks}
+                            onAction={handleAction}
+                            onCreateTask={handleCreateTask}
+                            role={(currentUser?.role || 'cleaner') as UserRole}
+                            dayLabel={dayLabel}
+                        />
+                    )}
+                    {view === 'admin' && <AdminDashboard rooms={roomsByDay[tab]} tasks={tasks} />}
+                    {view === 'maintenance' && (
+                        <MaintenanceView tasks={maintenanceTasks} onTaskAction={handleMaintenanceTaskAction} />
+                    )}
                     {view === 'supplies' && <SuppliesView />}
                 </div>
             </div>
-
-            {/* Footer removed to save vertical space on mobile */}
         </div>
     )
 }

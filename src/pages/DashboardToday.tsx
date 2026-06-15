@@ -1,17 +1,150 @@
 import React, { useState } from 'react'
-import { RoomPlan } from '../types'
+import { RoomPlan, Task, UserRole } from '../types'
 
-type ActionPayload = {
+type RoomActionPayload = {
     estimateTime?: string
     relativeMinutes?: number
 }
 
-export default function DashboardToday({ rooms, onAction, role, dayLabel }: { rooms: RoomPlan[]; onAction: (id: string, action: string, payload?: ActionPayload) => void; role: string; dayLabel: string }) {
+type CreateTaskInput = {
+    title: string
+    category: Task['category']
+    priority: Task['priority']
+    assignedToRole: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>
+    note?: string
+}
+
+const quickTaskOptions: { label: string; category: Task['category'] }[] = [
+    { label: 'Připravit postýlku', category: 'cleaning' },
+    { label: 'Připravit gauč', category: 'cleaning' },
+    { label: 'Vyměnit ručníky', category: 'cleaning' },
+    { label: 'Doplnit toaletní papír', category: 'supplies' },
+    { label: 'Najít zapomenutou věc', category: 'guest_request' },
+    { label: 'Zkontrolovat sejf', category: 'maintenance' },
+    { label: 'Zkontrolovat klíč / box', category: 'guest_request' },
+    { label: 'Poslat údržbáře', category: 'maintenance' },
+    { label: 'Zkontrolovat závadu', category: 'maintenance' },
+    { label: 'Vlastní úkol', category: 'other' }
+]
+
+function canSeeTask(role: UserRole, task: Task) {
+    if (role === 'admin') return true
+    if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
+    if (role === 'cleaner') return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
+    if (role === 'maintenance') return task.assignedToRole === 'maintenance'
+    return false
+}
+
+function roleLabel(role: UserRole) {
+    switch (role) {
+        case 'admin':
+            return 'Admin'
+        case 'lead':
+            return 'Iryna'
+        case 'cleaner':
+            return 'Úklid'
+        case 'maintenance':
+            return 'Údržba'
+        default:
+            return role
+    }
+}
+
+function taskStatusLabel(status: Task['status']) {
+    switch (status) {
+        case 'new':
+            return 'Nový'
+        case 'read':
+            return 'Přečteno'
+        case 'accepted':
+            return 'Převzato'
+        case 'in_progress':
+            return 'Probíhá'
+        case 'done':
+            return 'Hotovo'
+        case 'problem':
+            return 'Problém'
+        case 'cancelled':
+            return 'Zrušeno'
+        default:
+            return status
+    }
+}
+
+export default function DashboardToday({
+    rooms,
+    tasks,
+    onAction,
+    onCreateTask,
+    role,
+    dayLabel
+}: {
+    rooms: RoomPlan[]
+    tasks: Task[]
+    onAction: (id: string, action: string, payload?: RoomActionPayload) => void
+    onCreateTask: (roomId: string, input: CreateTaskInput) => void
+    role: UserRole
+    dayLabel: string
+}) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
     const [estimatingRoom, setEstimatingRoom] = useState<string | null>(null)
+    const [taskPanelRoom, setTaskPanelRoom] = useState<string | null>(null)
+    const [selectedQuickTask, setSelectedQuickTask] = useState<string>('')
+    const [taskTitle, setTaskTitle] = useState<string>('')
+    const [taskCategory, setTaskCategory] = useState<Task['category']>('cleaning')
+    const [taskAssignedRole, setTaskAssignedRole] = useState<Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>>('cleaner')
+    const [taskPriority, setTaskPriority] = useState<Task['priority']>('normal')
+    const [taskNote, setTaskNote] = useState<string>('')
+
     const isCleaningRole = role === 'cleaner' || role === 'lead'
+    const canCreateTask = role === 'admin' || role === 'lead'
     const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
     const relativeEstimateOptions = [30, 45, 60]
+
+    function openTaskPanel(roomId: string) {
+        if (taskPanelRoom === roomId) {
+            setTaskPanelRoom(null)
+            return
+        }
+
+        setTaskPanelRoom(roomId)
+        setSelectedQuickTask('')
+        setTaskTitle('')
+        setTaskCategory('cleaning')
+        setTaskAssignedRole('cleaner')
+        setTaskPriority('normal')
+        setTaskNote('')
+    }
+
+    function pickQuickTask(label: string, category: Task['category']) {
+        setSelectedQuickTask(label)
+        setTaskCategory(category)
+        if (label === 'Vlastní úkol') {
+            setTaskTitle('')
+        } else {
+            setTaskTitle(label)
+        }
+    }
+
+    function submitTask(roomId: string) {
+        if (!taskTitle.trim()) return
+
+        onCreateTask(roomId, {
+            title: taskTitle.trim(),
+            category: taskCategory,
+            priority: taskPriority,
+            assignedToRole: taskAssignedRole,
+            note: taskNote.trim() || undefined
+        })
+
+        setTaskPanelRoom(null)
+        setSelectedQuickTask('')
+        setTaskTitle('')
+        setTaskCategory('cleaning')
+        setTaskAssignedRole('cleaner')
+        setTaskPriority('normal')
+        setTaskNote('')
+    }
 
     function statusClass(status: RoomPlan['status']) {
         switch (status) {
@@ -52,8 +185,8 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
 
     function nextArrivalText(room: RoomPlan) {
         if (!room.nextArrivalPreview) return null
-        const dayLabel = room.nextArrivalPreview.day === 'zitra' ? 'zítra' : 'pozítří'
-        return `Další příjezd: ${dayLabel} ${room.nextArrivalPreview.time}`
+        const nextDayLabel = room.nextArrivalPreview.day === 'zitra' ? 'zítra' : 'pozítří'
+        return `Další příjezd: ${nextDayLabel} ${room.nextArrivalPreview.time}`
     }
 
     return (
@@ -69,6 +202,7 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
 
                 {rooms.map((room, index) => {
                     const isExpanded = expandedRoom === room.id
+                    const roomTasks = tasks.filter((t) => t.roomNumber === room.number && canSeeTask(role, t))
 
                     return (
                         <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
@@ -125,6 +259,28 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                 </div>
                             </div>
 
+                            {roomTasks.length > 0 && (
+                                <div style={{ padding: '8px 10px', borderTop: '1px solid rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {roomTasks.map((task) => (
+                                        <div
+                                            key={task.id}
+                                            style={{
+                                                border: task.priority === 'urgent' ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(148,163,184,0.35)',
+                                                background: task.priority === 'urgent' ? 'rgba(254,242,242,0.8)' : 'rgba(248,250,252,0.85)',
+                                                borderRadius: 8,
+                                                padding: '6px 8px',
+                                                fontSize: 12
+                                            }}
+                                        >
+                                            <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                            <div style={{ color: '#475569' }}>
+                                                {roleLabel(task.assignedToRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
                             {isExpanded && (
                                 <div className="expanded-actions">
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
@@ -146,7 +302,7 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                     </button>
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
                                     <button className="action-secondary" onClick={() => onAction(room.id, 'host_zustava')}>Host je ještě na pokoji</button>
-                                    {role === 'admin' && <button className="chip" onClick={() => onAction(room.id, 'add_task')}>Přidat úkol</button>}
+                                    {canCreateTask && <button className="chip" onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
 
                                     {estimatingRoom === room.id && (
                                         <div style={{ width: '100%', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
@@ -174,6 +330,75 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                                     +{mins} min
                                                 </button>
                                             ))}
+                                        </div>
+                                    )}
+
+                                    {taskPanelRoom === room.id && (
+                                        <div style={{ width: '100%', marginTop: 8, padding: 10, border: '1px solid rgba(148,163,184,0.35)', borderRadius: 10, background: 'rgba(248,250,252,0.9)' }}>
+                                            <div style={{ fontWeight: 800, marginBottom: 8 }}>Nový úkol pro pokoj {room.number}</div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                                                {quickTaskOptions.map((option) => (
+                                                    <button
+                                                        key={option.label}
+                                                        className="chip"
+                                                        style={selectedQuickTask === option.label ? { background: '#dbeafe' } : {}}
+                                                        onClick={() => pickQuickTask(option.label, option.category)}
+                                                    >
+                                                        {option.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            {selectedQuickTask === 'Vlastní úkol' && (
+                                                <input
+                                                    value={taskTitle}
+                                                    onChange={(e) => setTaskTitle(e.target.value)}
+                                                    placeholder="Název úkolu"
+                                                    style={{ width: '100%', marginBottom: 8, minHeight: 38, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px' }}
+                                                />
+                                            )}
+
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                                <label style={{ fontSize: 12 }}>
+                                                    Komu
+                                                    <select
+                                                        value={taskAssignedRole}
+                                                        onChange={(e) => setTaskAssignedRole(e.target.value as Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>)}
+                                                        style={{ width: '100%', marginTop: 4, minHeight: 36, borderRadius: 8, border: '1px solid #cbd5e1' }}
+                                                    >
+                                                        <option value="cleaner">Úklid</option>
+                                                        <option value="maintenance">Údržba</option>
+                                                        <option value="lead">Iryna</option>
+                                                    </select>
+                                                </label>
+                                                <label style={{ fontSize: 12 }}>
+                                                    Priorita
+                                                    <select
+                                                        value={taskPriority}
+                                                        onChange={(e) => setTaskPriority(e.target.value as Task['priority'])}
+                                                        style={{ width: '100%', marginTop: 4, minHeight: 36, borderRadius: 8, border: '1px solid #cbd5e1' }}
+                                                    >
+                                                        <option value="normal">Normální</option>
+                                                        <option value="urgent">Urgentní</option>
+                                                    </select>
+                                                </label>
+                                            </div>
+
+                                            <textarea
+                                                value={taskNote}
+                                                onChange={(e) => setTaskNote(e.target.value)}
+                                                placeholder="Poznámka (volitelné)"
+                                                style={{ width: '100%', marginTop: 8, minHeight: 64, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical' }}
+                                            />
+
+                                            <button
+                                                className="action-large"
+                                                style={{ width: '100%', marginTop: 8 }}
+                                                onClick={() => submitTask(room.id)}
+                                                disabled={!taskTitle.trim()}
+                                            >
+                                                Vytvořit úkol
+                                            </button>
                                         </div>
                                     )}
                                 </div>

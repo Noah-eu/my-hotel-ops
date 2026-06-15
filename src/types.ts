@@ -46,9 +46,16 @@ export interface RoomPlan {
 
 export interface Task {
     id: string
+    roomNumber: string
     title: string
-    roomId?: string
-    assignedTo?: string
+    category: 'cleaning' | 'maintenance' | 'guest_request' | 'supplies' | 'other'
+    priority: 'normal' | 'urgent'
+    assignedToRole: UserRole
+    assignedToName?: string
+    status: 'new' | 'read' | 'accepted' | 'in_progress' | 'done' | 'problem' | 'cancelled'
+    note?: string
+    createdBy: string
+    createdAt: string
 }
 
 export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'

@@ -1,12 +1,16 @@
 import React from 'react'
-import { RoomPlan } from '../types'
+import { RoomPlan, Task } from '../types'
 import { supplyRequests } from '../mockData'
 
-export default function AdminDashboard({ rooms }: { rooms: RoomPlan[] }) {
+export default function AdminDashboard({ rooms, tasks }: { rooms: RoomPlan[]; tasks: Task[] }) {
     const hotove = rooms.filter(r => r.status === 'hotovo')
     const ceka = rooms.filter(r => r.status === 'ceka' || r.status === 'prevzato' || r.status === 'probihá')
     const problemy = rooms.filter(r => r.status === 'problem')
     const odhad = rooms.filter(r => r.status === 'odhad')
+    const noveUkoly = tasks.filter((t) => t.status === 'new' || t.status === 'read')
+    const urgentniUkoly = tasks.filter((t) => t.priority === 'urgent' && t.status !== 'done' && t.status !== 'cancelled')
+    const udrzbaUkoly = tasks.filter((t) => t.assignedToRole === 'maintenance' && t.status !== 'done' && t.status !== 'cancelled')
+    const uklidUkoly = tasks.filter((t) => (t.assignedToRole === 'cleaner' || t.assignedToRole === 'lead') && t.status !== 'done' && t.status !== 'cancelled')
     const nakupy = supplyRequests.filter(s => s.status === 'open')
 
     return (
@@ -18,6 +22,15 @@ export default function AdminDashboard({ rooms }: { rooms: RoomPlan[] }) {
                     <div className="room-card"><div className="room-number">Čeká na úklid</div><div className="room-meta">{ceka.length}</div></div>
                     <div className="room-card"><div className="room-number">Problémy</div><div className="room-meta">{problemy.length}</div></div>
                     <div className="room-card"><div className="room-number">Odhad</div><div className="room-meta">{odhad.length}</div></div>
+                </div>
+            </div>
+            <div className="section">
+                <h3>Úkoly</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <div className="room-card"><div className="room-number">Nové úkoly</div><div className="room-meta">{noveUkoly.length}</div></div>
+                    <div className="room-card"><div className="room-number">Urgentní úkoly</div><div className="room-meta">{urgentniUkoly.length}</div></div>
+                    <div className="room-card"><div className="room-number">Údržba</div><div className="room-meta">{udrzbaUkoly.length}</div></div>
+                    <div className="room-card"><div className="room-number">Úklid</div><div className="room-meta">{uklidUkoly.length}</div></div>
                 </div>
             </div>
             <div className="section">
@@ -40,6 +53,7 @@ export default function AdminDashboard({ rooms }: { rooms: RoomPlan[] }) {
                     <div className="room-card">David - Admin</div>
                     <div className="room-card">Iryna - Vedoucí úklidu</div>
                     <div className="room-card">Karla - Uklízečka</div>
+                    <div className="room-card">Petr - Údržbář</div>
                 </div>
             </div>
         </div>
