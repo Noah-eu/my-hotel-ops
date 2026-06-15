@@ -577,9 +577,13 @@ export default function App() {
                     (error) => {
                         const code = error.code
                         const message = error.message
+                        const isAuthError = Boolean(code && String(code).startsWith('auth/'))
                         setDiagnostics((prev) => ({
                             ...prev,
-                            firestoreStatus: code === 'permission-denied' ? 'permission_denied' : 'error',
+                            authStatus: isAuthError ? 'error' : prev.authStatus,
+                            firestoreStatus: isAuthError
+                                ? prev.firestoreStatus
+                                : (code === 'permission-denied' ? 'permission_denied' : 'error'),
                             lastErrorCode: code,
                             lastErrorMessage: message
                         }))

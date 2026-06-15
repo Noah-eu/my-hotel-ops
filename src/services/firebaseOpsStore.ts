@@ -5,12 +5,13 @@ import {
     getDocs,
     getDoc,
     onSnapshot,
+    type FirestoreError,
     serverTimestamp,
     setDoc,
     updateDoc,
     writeBatch
 } from 'firebase/firestore'
-import { ensureAnonymousAuth, firestoreDb } from '../lib/firebase'
+import { ensureAnonymousAuth, firebaseAuth, firestoreDb } from '../lib/firebase'
 import { MaintenanceItem, SupplyRequest, Task } from '../types'
 import {
     CreateMaintenanceItemInput,
@@ -40,6 +41,29 @@ function toStoreError(error: any, fallbackMessage: string): OpsStoreError {
     }
 }
 
+function formatAuthContext() {
+    const hasAuthUser = Boolean(firebaseAuth?.currentUser)
+    const uid = firebaseAuth?.currentUser?.uid || 'none'
+    return { hasAuthUser, uid }
+}
+
+function buildListenerError(error: FirestoreError, path: string): OpsStoreError {
+    const authCtx = formatAuthContext()
+    return {
+        code: error.code,
+        message: `${path} listener failed: ${error.message} (authUser=${authCtx.hasAuthUser}, uid=${authCtx.uid})`
+    }
+}
+
+function buildFirestoreOperationError(error: any, path: string, operation: string): Error {
+    const authCtx = formatAuthContext()
+    const code = error?.code
+    const message = `${path} ${operation} failed: ${error?.message || 'Unknown Firestore error'} (authUser=${authCtx.hasAuthUser}, uid=${authCtx.uid})`
+    const wrapped = new Error(message) as Error & { code?: string }
+    wrapped.code = code
+    return wrapped
+}
+
 async function runWrite(label: string, operation: () => Promise<void>) {
     try {
         await ensureAnonymousAuth()
@@ -54,6 +78,15 @@ async function runWrite(label: string, operation: () => Promise<void>) {
 }
 
 export const ONLINE_HOTEL_ID = 'chill-apartments'
+const PATHS = {
+    meta: `hotels/${ONLINE_HOTEL_ID}/meta/appState`,
+    roomPlans: `hotels/${ONLINE_HOTEL_ID}/roomPlans`,
+    tasks: `hotels/${ONLINE_HOTEL_ID}/tasks`,
+    supplyRequests: `hotels/${ONLINE_HOTEL_ID}/supplyRequests`,
+    maintenanceItems: `hotels/${ONLINE_HOTEL_ID}/maintenanceItems`,
+    staff: `hotels/${ONLINE_HOTEL_ID}/staff`,
+    dailyAvailability: `hotels/${ONLINE_HOTEL_ID}/dailyAvailability`
+}
 
 function roomPlanId(day: OpsTab, roomId: string) {
     return `${day}-${roomId}`
@@ -70,6 +103,7 @@ async function ensureSeeded(defaultState: OpsPersistedState) {
     }
 
     devLog('Seed started')
+    devLog('Path audit', PATHS)
 
     const batch = writeBatch(firestoreDb)
 
@@ -136,6 +170,8 @@ function toRoomPlansByDay(docs: Array<Record<string, any>>) {
 }
 
 export function createFirebaseOpsStore(): OpsStore {
+    let authReadyUid: string | null = null
+
     return {
         mode: 'online',
         loadInitialState() {
@@ -143,11 +179,26 @@ export function createFirebaseOpsStore(): OpsStore {
         },
         async initializeState(defaultState) {
             if (!firestoreDb) return
-            await ensureAnonymousAuth()
-            await ensureSeeded(defaultState)
+            const authUser = await ensureAnonymousAuth()
+            authReadyUid = authUser?.uid || null
+            devLog('Auth ready before seed/listeners', { uid: authReadyUid })
+            try {
+                await ensureSeeded(defaultState)
+            } catch (error: any) {
+                throw buildFirestoreOperationError(error, PATHS.meta, 'seed/check')
+            }
         },
         subscribeState(onState, onError) {
             if (!firestoreDb) return null
+            if (!firebaseAuth?.currentUser || !authReadyUid) {
+                const authCtx = formatAuthContext()
+                const authError: OpsStoreError = {
+                    code: 'auth/not-ready',
+                    message: `Refusing to attach listeners before auth is ready (authUser=${authCtx.hasAuthUser}, uid=${authCtx.uid})`
+                }
+                onError(authError)
+                return null
+            }
 
             const unsubs: Array<() => void> = []
             const roomPlansByDay: OpsPersistedState['roomsByDay'] = { Dnes: [], Zitra: [], Pozitri: [] }
@@ -184,8 +235,9 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
-                    devLog('Listener error: roomPlans', toStoreError(err, 'roomPlans listener failed'))
-                    onError(toStoreError(err, 'roomPlans listener failed'))
+                    const fullError = buildListenerError(err, PATHS.roomPlans)
+                    devLog('Listener error: roomPlans', fullError)
+                    onError(fullError)
                 }
             ))
             devLog('Listener attached: roomPlans')
@@ -197,8 +249,9 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
-                    devLog('Listener error: tasks', toStoreError(err, 'tasks listener failed'))
-                    onError(toStoreError(err, 'tasks listener failed'))
+                    const fullError = buildListenerError(err, PATHS.tasks)
+                    devLog('Listener error: tasks', fullError)
+                    onError(fullError)
                 }
             ))
             devLog('Listener attached: tasks')
@@ -210,8 +263,9 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
-                    devLog('Listener error: supplyRequests', toStoreError(err, 'supplyRequests listener failed'))
-                    onError(toStoreError(err, 'supplyRequests listener failed'))
+                    const fullError = buildListenerError(err, PATHS.supplyRequests)
+                    devLog('Listener error: supplyRequests', fullError)
+                    onError(fullError)
                 }
             ))
             devLog('Listener attached: supplyRequests')
@@ -223,8 +277,9 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
-                    devLog('Listener error: maintenanceItems', toStoreError(err, 'maintenanceItems listener failed'))
-                    onError(toStoreError(err, 'maintenanceItems listener failed'))
+                    const fullError = buildListenerError(err, PATHS.maintenanceItems)
+                    devLog('Listener error: maintenanceItems', fullError)
+                    onError(fullError)
                 }
             ))
             devLog('Listener attached: maintenanceItems')
@@ -236,8 +291,9 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
-                    devLog('Listener error: staff', toStoreError(err, 'staff listener failed'))
-                    onError(toStoreError(err, 'staff listener failed'))
+                    const fullError = buildListenerError(err, PATHS.staff)
+                    devLog('Listener error: staff', fullError)
+                    onError(fullError)
                 }
             ))
             devLog('Listener attached: staff')
@@ -249,8 +305,9 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
-                    devLog('Listener error: dailyAvailability', toStoreError(err, 'dailyAvailability listener failed'))
-                    onError(toStoreError(err, 'dailyAvailability listener failed'))
+                    const fullError = buildListenerError(err, PATHS.dailyAvailability)
+                    devLog('Listener error: dailyAvailability', fullError)
+                    onError(fullError)
                 }
             ))
             devLog('Listener attached: dailyAvailability')
@@ -348,6 +405,7 @@ export function createFirebaseOpsStore(): OpsStore {
         },
         async resetDemoState(defaultState) {
             if (!firestoreDb) return
+            await ensureAnonymousAuth()
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'roomPlans'])
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'tasks'])
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'supplyRequests'])

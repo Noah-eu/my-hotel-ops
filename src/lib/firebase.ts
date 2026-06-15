@@ -66,19 +66,66 @@ export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null
 export type AppMode = 'demo' | 'online'
 export const appMode: AppMode = hasFirebaseConfig ? 'online' : 'demo'
 
+let pendingAnonymousAuthPromise: Promise<User | null> | null = null
+
+function waitForAuthUser(timeoutMs = 15000): Promise<User> {
+    return new Promise((resolve, reject) => {
+        if (!firebaseAuth) {
+            reject(new Error('Firebase auth not initialized'))
+            return
+        }
+
+        const timeout = setTimeout(() => {
+            unsubscribe()
+            reject(new Error('Timed out waiting for anonymous auth user'))
+        }, timeoutMs)
+
+        const unsubscribe = onAuthStateChanged(
+            firebaseAuth,
+            (user) => {
+                if (!user) return
+                clearTimeout(timeout)
+                unsubscribe()
+                resolve(user)
+            },
+            (error) => {
+                clearTimeout(timeout)
+                unsubscribe()
+                reject(error)
+            }
+        )
+    })
+}
+
 export async function ensureAnonymousAuth(): Promise<User | null> {
     if (!firebaseAuth) return null
-    if (firebaseAuth.currentUser) return firebaseAuth.currentUser
+    if (firebaseAuth.currentUser) {
+        await firebaseAuth.currentUser.getIdToken()
+        return firebaseAuth.currentUser
+    }
+
+    if (pendingAnonymousAuthPromise) {
+        return pendingAnonymousAuthPromise
+    }
+
     try {
-        const cred = await signInAnonymously(firebaseAuth)
-        devLog('Anonymous auth success', { uid: cred.user?.uid || null })
-        return cred.user
+        pendingAnonymousAuthPromise = (async () => {
+            await signInAnonymously(firebaseAuth)
+            const user = firebaseAuth.currentUser || await waitForAuthUser()
+            await user.getIdToken()
+            devLog('Anonymous auth success', { uid: user?.uid || null })
+            return user
+        })()
+
+        return await pendingAnonymousAuthPromise
     } catch (error: any) {
         devLog('Anonymous auth failed', {
             code: error?.code || null,
             message: error?.message || 'Unknown auth error'
         })
         throw error
+    } finally {
+        pendingAnonymousAuthPromise = null
     }
 }
 
