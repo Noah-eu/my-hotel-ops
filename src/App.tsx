@@ -6,6 +6,8 @@ import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
+import { appMode } from './lib/firebase'
+import { createOpsStore } from './services'
 
 type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception'
 
@@ -52,21 +54,9 @@ function defaultAssigneeName(role: Task['assignedToRole']) {
 }
 
 export default function App() {
-    const STORAGE_KEY = 'mho_demo_state_v1'
+    const opsStore = useMemo(() => createOpsStore(), [])
 
-    function loadInitialState() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY)
-            if (!raw) return null
-            const parsed = JSON.parse(raw)
-            return parsed
-        } catch (e) {
-            console.warn('Failed to parse saved demo state, falling back to defaults', e)
-            return null
-        }
-    }
-
-    const saved = typeof window !== 'undefined' ? loadInitialState() : null
+    const saved = typeof window !== 'undefined' ? opsStore.loadInitialState() : null
 
     const [userId, setUserId] = useState<string>(saved?.userId ?? 'david')
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>(saved?.tab ?? 'Dnes')
@@ -357,23 +347,19 @@ export default function App() {
 
     // save to localStorage whenever key pieces of state change
     useEffect(() => {
-        try {
-            const toSave = {
-                userId,
-                tab,
-                view,
-                roomsByDay,
-                tasks,
-                supplyRequests,
-                maintenanceItems,
-                customSupplyChips,
-                staff
-            }
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
-        } catch (e) {
-            console.warn('Failed to save demo state', e)
+        const toSave = {
+            userId,
+            tab,
+            view,
+            roomsByDay,
+            tasks,
+            supplyRequests,
+            maintenanceItems,
+            customSupplyChips,
+            staff
         }
-    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff])
+        opsStore.saveState(toSave)
+    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, opsStore])
 
     function resetDemoData() {
         // restore mock data and clear saved state
@@ -386,18 +372,19 @@ export default function App() {
         setTab('Dnes')
         setUserId('david')
         setView('today')
-        try {
-            localStorage.removeItem(STORAGE_KEY)
-        } catch (e) {
-            console.warn('Failed to clear demo state', e)
-        }
+        opsStore.resetDemoState()
         setResetConfirm(false)
     }
 
     return (
         <div className="app">
             <div className="topbar">
-                <div className="title">My Hotel Ops</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="title">My Hotel Ops</div>
+                    <div style={{ fontSize: 11, color: '#64748b', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px' }}>
+                        {appMode === 'online' ? 'Online režim' : 'Demo režim'}
+                    </div>
+                </div>
                 <RoleSwitch current={userId} onChange={handleRoleChange} />
             </div>
 
