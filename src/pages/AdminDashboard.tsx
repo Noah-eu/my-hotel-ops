@@ -15,11 +15,13 @@ export default function AdminDashboard({
     tasks,
     supplyRequests,
     canManageSupplies,
-    onSetSupplyGroupStatus
+    onSetSupplyGroupStatus,
+    staff
 }: {
     rooms: RoomPlan[]
     tasks: Task[]
     supplyRequests: SupplyRequest[]
+    staff: { id: string; name: string; role: string; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[]
     canManageSupplies: boolean
     onSetSupplyGroupStatus: (itemName: string, status: SupplyRequest['status']) => void
 }) {
@@ -130,11 +132,21 @@ export default function AdminDashboard({
             </div>
             <div className="section">
                 <h3>Kdo je dnes v práci</h3>
-                <div className="room-list">
-                    <div className="room-card">David - Admin</div>
-                    <div className="room-card">Iryna - Vedoucí úklidu</div>
-                    <div className="room-card">Karla - Uklízečka</div>
-                    <div className="room-card">Petr - Údržbář</div>
+                <div className="room-card">
+                    <div style={{ display: 'flex', gap: 12 }}>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700 }}>Pracuje</div>
+                            <div className="room-meta">{staff.filter(s => s.availability === 'dnes_pracuji').map(s => s.name).join(', ') || '—'}</div>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700 }}>Nepracuje</div>
+                            <div className="room-meta">{staff.filter(s => s.availability === 'dnes_nepracuji').map(s => s.name).join(', ') || '—'}</div>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700 }}>Jen urgentní</div>
+                            <div className="room-meta">{staff.filter(s => s.availability === 'jen_urgentni').map(s => s.name).join(', ') || '—'}</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

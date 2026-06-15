@@ -75,6 +75,7 @@ export default function App() {
     const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
+    const [staff, setStaff] = useState(() => saved?.staff ?? users)
     const [resetConfirm, setResetConfirm] = useState(false)
 
     const currentUser = users.find((u) => u.id === userId)
@@ -249,6 +250,10 @@ export default function App() {
         setSupplyRequests((prev) => [newRequest, ...prev])
     }
 
+    function setStaffAvailability(id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
+        setStaff((prev: any) => prev.map((s: any) => (s.id === id ? { ...s, availability } : s)))
+    }
+
     function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
         if (!currentUser || currentUser.role !== 'admin') return
         setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
@@ -296,13 +301,14 @@ export default function App() {
                 roomsByDay,
                 tasks,
                 supplyRequests,
-                customSupplyChips
+                customSupplyChips,
+                staff
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
         } catch (e) {
             console.warn('Failed to save demo state', e)
         }
-    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, customSupplyChips])
+    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, customSupplyChips, staff])
 
     function resetDemoData() {
         // restore mock data and clear saved state
@@ -310,6 +316,7 @@ export default function App() {
         setTasks([])
         setSupplyRequests(initialSupplyRequests)
         setCustomSupplyChips([])
+        setStaff(users)
         setTab('Dnes')
         setUserId('david')
         setView('today')
@@ -368,6 +375,9 @@ export default function App() {
                             onCreateTask={handleCreateTask}
                             role={(currentUser?.role || 'cleaner') as UserRole}
                             dayLabel={dayLabel}
+                            staff={staff}
+                            onSetAvailability={setStaffAvailability}
+                            currentUserId={userId}
                         />
                     )}
                     {view === 'admin' && (
@@ -375,6 +385,7 @@ export default function App() {
                             rooms={roomsByDay[tab]}
                             tasks={tasks}
                             supplyRequests={supplyRequests}
+                            staff={staff}
                             canManageSupplies={currentUser?.role === 'admin'}
                             onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
                         />

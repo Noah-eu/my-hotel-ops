@@ -77,7 +77,10 @@ export default function DashboardToday({
     onAction,
     onCreateTask,
     role,
-    dayLabel
+    dayLabel,
+    staff,
+    onSetAvailability,
+    currentUserId
 }: {
     rooms: RoomPlan[]
     tasks: Task[]
@@ -85,6 +88,9 @@ export default function DashboardToday({
     onCreateTask: (roomId: string, input: CreateTaskInput) => void
     role: UserRole
     dayLabel: string
+    staff: { id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[]
+    onSetAvailability: (id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') => void
+    currentUserId: string
 }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
     const [estimatingRoom, setEstimatingRoom] = useState<string | null>(null)
@@ -95,6 +101,7 @@ export default function DashboardToday({
     const [taskAssignedRole, setTaskAssignedRole] = useState<Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>>('cleaner')
     const [taskPriority, setTaskPriority] = useState<Task['priority']>('normal')
     const [taskNote, setTaskNote] = useState<string>('')
+    const [showStaff, setShowStaff] = useState(false)
 
     const isCleaningRole = role === 'cleaner' || role === 'lead'
     const canCreateTask = role === 'admin' || role === 'lead'
@@ -189,10 +196,75 @@ export default function DashboardToday({
         return `Další příjezd: ${nextDayLabel} ${room.nextArrivalPreview.time}`
     }
 
+    function availabilityLabel(a?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
+        if (a === 'dnes_pracuji') return 'Pracuji dnes'
+        if (a === 'dnes_nepracuji') return 'Nepracuji dnes'
+        if (a === 'jen_urgentni') return 'Jen urgentní'
+        return 'Neurčeno'
+    }
+
+    function availabilityColor(a?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
+        if (a === 'dnes_pracuji') return '#10b981'
+        if (a === 'dnes_nepracuji') return '#94a3b8'
+        if (a === 'jen_urgentni') return '#f97316'
+        return '#cbd5e1'
+    }
+
+    function canEditAvailability(viewerRole: UserRole, viewerId: string, staffMember: any) {
+        if (viewerRole === 'admin') return true
+        if (viewerRole === 'lead') return staffMember.role === 'cleaner'
+        if (viewerRole === 'cleaner') return staffMember.id === viewerId
+        if (viewerRole === 'maintenance') return staffMember.id === viewerId
+        return false
+    }
+
+    function taskAssigneeHint(roleToAssign: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>) {
+        const candidates = staff.filter(s => s.role === roleToAssign)
+        if (candidates.length === 0) return ''
+        const working = candidates.filter(c => c.availability === 'dnes_pracuji')
+        if (working.length > 0) return `Dostupní: ${working.map(w => w.name).join(', ')}`
+        const urgentOnly = candidates.filter(c => c.availability === 'jen_urgentni')
+        if (urgentOnly.length > 0) return `Pouze urgentní: ${urgentOnly.map(w => w.name).join(', ')}`
+        return `${candidates.map(c => c.name).join(', ')} dnes nepracuje`
+    }
+
     return (
         <div className="section">
             <h3>Denní plán pokojů</h3>
             <div className="room-meta" style={{ marginBottom: 8, fontSize: 13 }}>{dayLabel}</div>
+
+            <div className="section" style={{ marginBottom: 10 }}>
+                <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>Kdo je dnes v práci
+                    <button className="btn" style={{ padding: '6px 8px' }} onClick={() => setShowStaff(s => !s)}>{showStaff ? 'Skrýt' : 'Zobrazit'}</button>
+                </h3>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {staff.map((s) => (
+                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, border: '1px solid #e6edf3', borderRadius: 8, minWidth: 140 }}>
+                            <div style={{ width: 10, height: 10, borderRadius: 10, background: availabilityColor(s.availability) }} />
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 700 }}>{s.name}</div>
+                                <div style={{ fontSize: 12, color: '#475569' }}>{roleLabel(s.role)}</div>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#475569' }}>{availabilityLabel(s.availability)}</div>
+                        </div>
+                    ))}
+                </div>
+                {showStaff && (
+                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexDirection: 'column' }}>
+                        {staff.map((s) => (
+                            <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                <div style={{ flex: 1 }}>{s.name} • {roleLabel(s.role)}</div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                    <button className="chip" onClick={() => onSetAvailability(s.id, 'dnes_pracuji')} disabled={!canEditAvailability(role, currentUserId, s)}>Pracuji</button>
+                                    <button className="chip" onClick={() => onSetAvailability(s.id, 'dnes_nepracuji')} disabled={!canEditAvailability(role, currentUserId, s)}>Nepracuji</button>
+                                    <button className="chip" onClick={() => onSetAvailability(s.id, 'jen_urgentni')} disabled={!canEditAvailability(role, currentUserId, s)}>Jen urgentní</button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
             <div className="daily-table">
                 <div className="daily-table-header">
                     <div>Pokoj</div>
@@ -383,6 +455,8 @@ export default function DashboardToday({
                                                     </select>
                                                 </label>
                                             </div>
+
+                                            <div style={{ fontSize: 13, color: '#334155', marginTop: 8 }}>{taskAssigneeHint(taskAssignedRole)}</div>
 
                                             <textarea
                                                 value={taskNote}

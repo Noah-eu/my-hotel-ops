@@ -1,10 +1,11 @@
 import { RoomPlan, UserRole, SupplyRequest } from './types'
 
-export const users: { id: string; name: string; role: UserRole }[] = [
-    { id: 'david', name: 'David', role: 'admin' },
-    { id: 'iryna', name: 'Iryna', role: 'lead' },
-    { id: 'karla', name: 'Uklízečka', role: 'cleaner' },
-    { id: 'petr', name: 'Údržbář', role: 'maintenance' }
+export const users: { id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[] = [
+    { id: 'david', name: 'David', role: 'admin', availability: 'dnes_pracuji' },
+    { id: 'iryna', name: 'Iryna', role: 'lead', availability: 'dnes_pracuji' },
+    { id: 'ukl2', name: 'Uklízečka 2', role: 'cleaner', availability: 'dnes_nepracuji' },
+    { id: 'ukl3', name: 'Uklízečka 3', role: 'cleaner', availability: 'dnes_nepracuji' },
+    { id: 'serhii', name: 'Serhii', role: 'maintenance', availability: 'dnes_nepracuji' }
 ]
 
 const todayPlans: RoomPlan[] = [
@@ -45,7 +46,7 @@ const todayPlans: RoomPlan[] = [
         notes: ['late arrival'],
         status: 'odhad',
         estimatedReady: '12:30',
-        assigned: 'karla'
+        assigned: 'ukl2'
     },
     {
         id: 'r103',
@@ -65,7 +66,7 @@ const todayPlans: RoomPlan[] = [
         box: 'BOX D',
         notes: [],
         status: 'probihá',
-        assigned: 'karla'
+        assigned: 'ukl2'
     },
     {
         id: 'r105',
