@@ -276,16 +276,14 @@ export default function App() {
     }
 
     function handleCancelSupplyRequest(requestId: string) {
-        setSupplyRequests((prev) =>
-            prev.map((request) => {
-                if (request.id !== requestId) return request
-                if (!canCancelSupplyRequest(request)) return request
-                return {
-                    ...request,
-                    status: 'cancelled'
-                }
-            })
-        )
+        setSupplyRequests((prev) => {
+            const idx = prev.findIndex((r) => r.id === requestId)
+            if (idx === -1) return prev
+            const target = prev[idx]
+            if (!canCancelSupplyRequest(target)) return prev
+            // remove the single request by id so other identical items remain
+            return prev.filter((r) => r.id !== requestId)
+        })
     }
 
     // save to localStorage whenever key pieces of state change
