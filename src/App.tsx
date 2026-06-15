@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
@@ -38,11 +38,28 @@ function defaultAssigneeName(role: Task['assignedToRole']) {
 }
 
 export default function App() {
-    const [userId, setUserId] = useState('david')
-    const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>('Dnes')
-    const [view, setView] = useState<'today' | 'admin' | 'maintenance' | 'supplies'>('today')
-    const [roomsByDay, setRoomsByDay] = useState(roomPlansByDay)
-    const [tasks, setTasks] = useState<Task[]>([])
+    const STORAGE_KEY = 'mho_demo_state_v1'
+
+    function loadInitialState() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY)
+            if (!raw) return null
+            const parsed = JSON.parse(raw)
+            return parsed
+        } catch (e) {
+            console.warn('Failed to parse saved demo state, falling back to defaults', e)
+            return null
+        }
+    }
+
+    const saved = typeof window !== 'undefined' ? loadInitialState() : null
+
+    const [userId, setUserId] = useState<string>(saved?.userId ?? 'david')
+    const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>(saved?.tab ?? 'Dnes')
+    const [view, setView] = useState<'today' | 'admin' | 'maintenance' | 'supplies'>(saved?.view ?? 'today')
+    const [roomsByDay, setRoomsByDay] = useState(() => saved?.roomsByDay ?? roomPlansByDay)
+    const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
+    const [resetConfirm, setResetConfirm] = useState(false)
 
     const currentUser = users.find((u) => u.id === userId)
 
@@ -172,6 +189,37 @@ export default function App() {
         )
     }
 
+    // save to localStorage whenever key pieces of state change
+    useEffect(() => {
+        try {
+            const toSave = {
+                userId,
+                tab,
+                view,
+                roomsByDay,
+                tasks
+            }
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+        } catch (e) {
+            console.warn('Failed to save demo state', e)
+        }
+    }, [userId, tab, view, roomsByDay, tasks])
+
+    function resetDemoData() {
+        // restore mock data and clear saved state
+        setRoomsByDay(roomPlansByDay)
+        setTasks([])
+        setTab('Dnes')
+        setUserId('david')
+        setView('today')
+        try {
+            localStorage.removeItem(STORAGE_KEY)
+        } catch (e) {
+            console.warn('Failed to clear demo state', e)
+        }
+        setResetConfirm(false)
+    }
+
     return (
         <div className="app">
             <div className="topbar">
@@ -192,6 +240,19 @@ export default function App() {
                     <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
                     <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
                 </div>
+
+                {(currentUser?.id === 'david' || currentUser?.role === 'admin') && (
+                    <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                        {!resetConfirm ? (
+                            <button className="btn danger" onClick={() => setResetConfirm(true)}>Reset demo dat</button>
+                        ) : (
+                            <>
+                                <button className="btn danger" onClick={() => resetDemoData()}>Opravdu resetovat?</button>
+                                <button className="btn" onClick={() => setResetConfirm(false)}>Zrušit</button>
+                            </>
+                        )}
+                    </div>
+                )}
 
                 {tab !== 'Dnes' && (
                     <div style={{ marginTop: 10, padding: 10, background: '#fff', borderRadius: 10 }}>Orientační plán – může se změnit novou rezervací.</div>
