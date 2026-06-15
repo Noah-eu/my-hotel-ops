@@ -120,6 +120,7 @@ export default function SuppliesView({
     onCancelRequest
 }: Props) {
     const [feedback, setFeedback] = useState('')
+    const [selectedCategory, setSelectedCategory] = useState<'uklid' | 'vybaveni' | 'ostatni'>('uklid')
 
     const [customItem, setCustomItem] = useState('')
     const [customPriority, setCustomPriority] = useState<SupplyRequest['priority']>('normal')
@@ -149,6 +150,14 @@ export default function SuppliesView({
 
     function inferCategory(itemName: string): SupplyRequest['category'] {
         return categoryByItem[itemName] || 'other'
+    }
+
+    function itemToUiCategory(itemName: string) {
+        const cat = inferCategory(itemName)
+        if (cat === 'equipment') return 'vybaveni'
+        if (cat === 'maintenance' || cat === 'other') return 'ostatni'
+        // cleaning, bathroom, kitchen, laundry map to úklid
+        return 'uklid'
     }
 
     function handleQuickAdd(item: string) {
@@ -223,82 +232,84 @@ export default function SuppliesView({
             {shouldShowCleaningChips && (
                 <>
                     <div className="section">
-                        <h3>Úklid</h3>
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                            <button
+                                className={`btn ${selectedCategory === 'uklid' ? 'active' : ''}`}
+                                onClick={() => setSelectedCategory('uklid')}
+                            >Úklid</button>
+                            <button
+                                className={`btn ${selectedCategory === 'vybaveni' ? 'active' : ''}`}
+                                onClick={() => setSelectedCategory('vybaveni')}
+                            >Vybavení</button>
+                            <button
+                                className={`btn ${selectedCategory === 'ostatni' ? 'active' : ''}`}
+                                onClick={() => setSelectedCategory('ostatni')}
+                            >Ostatní</button>
+                        </div>
+
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {uklidChips.map((chip) => (
+                            {(selectedCategory === 'uklid' ? uklidChips : selectedCategory === 'vybaveni' ? vybaveniChips : ostatniChips).map((chip) => (
                                 <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
                             ))}
-                        </div>
-                    </div>
 
-                    <div className="section">
-                        <h3>Vybavení</h3>
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {vybaveniChips.map((chip) => (
-                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                            {/* include custom chips that map to this category */}
+                            {visibleCustomChips.filter(c => itemToUiCategory(c) === selectedCategory).map((chip) => (
+                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
                             ))}
                         </div>
-                    </div>
 
-                    <div className="section">
-                        <h3>Ostatní</h3>
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {ostatniChips.map((chip) => (
-                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {visibleCustomChips.length > 0 && (
-                        <div className="section">
-                            <h3>Vlastní</h3>
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                {visibleCustomChips.map((chip) => (
-                                    <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
-                                ))}
+                        {/* Vlastní row for custom chips that don't map to selected category */}
+                        {visibleCustomChips.filter(c => itemToUiCategory(c) !== selectedCategory).length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                                <div style={{ fontSize: 13, color: '#334155', marginBottom: 6 }}>Vlastní</div>
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                    {visibleCustomChips.filter(c => itemToUiCategory(c) !== selectedCategory).map((chip) => (
+                                        <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    <div className="section" style={{ background: '#fff', border: '1px solid #dbe7f3', borderRadius: 12, padding: 12 }}>
-                        <h3 style={{ marginBottom: 8 }}>Jiný požadavek</h3>
-                        <input
-                            value={customItem}
-                            onChange={(e) => setCustomItem(e.target.value)}
-                            placeholder="Např. rukavice, nový mop, vůně do koupelny…"
-                            style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
-                        />
-                        <input
-                            value={customNote}
-                            onChange={(e) => setCustomNote(e.target.value)}
-                            placeholder="Poznámka (volitelně)"
-                            style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
-                        />
-                        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                            <button
-                                className="btn"
-                                style={{ border: customPriority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: customPriority === 'normal' ? '#ecfeff' : '#fff' }}
-                                onClick={() => setCustomPriority('normal')}
-                            >
-                                Normální
-                            </button>
-                            <button
-                                className="btn"
-                                style={{ border: customPriority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: customPriority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
-                                onClick={() => setCustomPriority('urgent')}
-                            >
-                                Urgentní
-                            </button>
-                        </div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: '#334155' }}>
+                        <div style={{ marginTop: 12 }} className="section" >
+                            <h3 style={{ marginBottom: 8 }}>Jiný požadavek</h3>
                             <input
-                                type="checkbox"
-                                checked={saveCustomChip}
-                                onChange={(e) => setSaveCustomChip(e.target.checked)}
+                                value={customItem}
+                                onChange={(e) => setCustomItem(e.target.value)}
+                                placeholder="Např. rukavice, nový mop, vůně do koupelny…"
+                                style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                             />
-                            Uložit jako chip pro příště
-                        </label>
-                        <button className="action-large" style={{ width: '100%' }} onClick={handleAddCustomRequest}>Přidat požadavek</button>
+                            <input
+                                value={customNote}
+                                onChange={(e) => setCustomNote(e.target.value)}
+                                placeholder="Poznámka (volitelně)"
+                                style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                            />
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                <button
+                                    className="btn"
+                                    style={{ border: customPriority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: customPriority === 'normal' ? '#ecfeff' : '#fff' }}
+                                    onClick={() => setCustomPriority('normal')}
+                                >
+                                    Normální
+                                </button>
+                                <button
+                                    className="btn"
+                                    style={{ border: customPriority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: customPriority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
+                                    onClick={() => setCustomPriority('urgent')}
+                                >
+                                    Urgentní
+                                </button>
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: '#334155' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={saveCustomChip}
+                                    onChange={(e) => setSaveCustomChip(e.target.checked)}
+                                />
+                                Uložit jako chip pro příště
+                            </label>
+                            <button className="action-large" style={{ width: '100%' }} onClick={handleAddCustomRequest}>Přidat požadavek</button>
+                        </div>
                     </div>
                 </>
             )}
