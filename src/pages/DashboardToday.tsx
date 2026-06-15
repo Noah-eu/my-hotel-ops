@@ -234,9 +234,31 @@ export default function DashboardToday({
             <div className="room-meta" style={{ marginBottom: 8, fontSize: 13 }}>{dayLabel}</div>
 
             <div className="section" style={{ marginBottom: 10 }}>
-                <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>Kdo je dnes v práci
-                    <button className="btn" style={{ padding: '6px 8px' }} onClick={() => setShowStaff(s => !s)}>{showStaff ? 'Skrýt' : 'Zobrazit'}</button>
+                <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>Moje dostupnost dnes</div>
+                    <div style={{ fontSize: 12, color: '#475569' }}>{/* placeholder for alignment */}</div>
                 </h3>
+                {/* Personal availability card */}
+                {(() => {
+                    const me = staff.find(s => s.id === currentUserId)
+                    return (
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: 160 }}>
+                                <div style={{ fontWeight: 800 }}>{me?.name || 'Uživatel'}</div>
+                                <div style={{ color: '#475569', fontSize: 13 }}>{me ? (me.availability === 'dnes_pracuji' ? 'Jsem: Pracuji dnes' : me.availability === 'jen_urgentni' ? 'Jsem: Jen urgentní' : 'Jsem: Nepracuji dnes') : ''}</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                <button className="action-large" style={{ minWidth: 120 }} onClick={() => onSetAvailability(currentUserId, 'dnes_pracuji')}>Pracuji dnes</button>
+                                <button className="btn" style={{ minWidth: 120 }} onClick={() => onSetAvailability(currentUserId, 'dnes_nepracuji')}>Nepracuji dnes</button>
+                                <button className="btn" style={{ minWidth: 120 }} onClick={() => onSetAvailability(currentUserId, 'jen_urgentni')}>Jen urgentní</button>
+                            </div>
+                        </div>
+                    )
+                })()}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button className="btn" style={{ padding: '6px 8px' }} onClick={() => setShowStaff(s => !s)}>{showStaff ? 'Skrýt přehled' : 'Zobrazit přehled'}</button>
+                </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     {staff.map((s) => (
                         <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, border: '1px solid #e6edf3', borderRadius: 8, minWidth: 140 }}>

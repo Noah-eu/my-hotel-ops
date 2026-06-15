@@ -14,6 +14,7 @@ export function RoleSwitch({ current, onChange }: { current: string; onChange: (
             <select className="role-select" value={current} onChange={(e) => onChange(e.target.value)} aria-label="Vyber roli">
                 {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 6 }}>Demo režim – výběr osoby nahrazuje přihlášení.</div>
         </div>
     )
 }
