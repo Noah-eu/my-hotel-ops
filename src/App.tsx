@@ -94,14 +94,15 @@ export default function App() {
 
     const visibleSupplies = useMemo(() => {
         const role = (currentUser?.role || 'cleaner') as UserRole
-        if (role === 'admin') return supplyRequests
+        // Always hide cancelled requests from visible lists
+        if (role === 'admin') return supplyRequests.filter((s) => s.status !== 'cancelled')
         if (role === 'lead' || role === 'cleaner') {
-            return supplyRequests.filter((s) => s.category !== 'maintenance' || s.requestedByRole === role)
+            return supplyRequests.filter((s) => s.status !== 'cancelled' && (s.category !== 'maintenance' || s.requestedByRole === role))
         }
         if (role === 'maintenance') {
-            return supplyRequests.filter((s) => s.category === 'maintenance' || s.requestedByRole === 'maintenance')
+            return supplyRequests.filter((s) => s.status !== 'cancelled' && (s.category === 'maintenance' || s.requestedByRole === 'maintenance'))
         }
-        return supplyRequests
+        return supplyRequests.filter((s) => s.status !== 'cancelled')
     }, [supplyRequests, currentUser?.role])
 
     function handleRoleChange(nextUserId: string) {

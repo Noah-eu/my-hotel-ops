@@ -19,24 +19,69 @@ type Props = {
     onCancelRequest: (requestId: string) => void
 }
 
-const cleaningChips = ['Toaletní papír', 'Pytle malé', 'Pytle velké', 'Tablety do myčky', 'Gel na praní', 'Lenor', 'Cif', 'Savo', 'Vodní kámen', 'Houbičky', 'Papírové utěrky', 'Baterky', 'Káva', 'Ručníky', 'Povlečení']
+const uklidChips = [
+    'Toaletní papír',
+    'Pytle malé',
+    'Pytle velké',
+    'Tablety do myčky',
+    'Gel na praní',
+    'Lenor',
+    'Jar',
+    'Cif',
+    'Savo',
+    'Vodní kámen',
+    'Houbičky',
+    'Papírové utěrky',
+    'Hadry / utěrky',
+    'Rukavice',
+    'Mop / náhradní hlavice'
+]
+
+const vybaveniChips = [
+    'Ručníky',
+    'Osušky',
+    'Povlečení',
+    'Prostěradla',
+    'Polštáře',
+    'Deky'
+]
+
+const ostatniChips = [
+    'Baterky',
+    'Žárovky',
+    'Káva',
+    'Vody'
+]
 
 const categoryByItem: Record<string, SupplyRequest['category']> = {
+    // Úklid
     'Toaletní papír': 'bathroom',
     'Pytle malé': 'cleaning',
     'Pytle velké': 'cleaning',
     'Tablety do myčky': 'kitchen',
     'Gel na praní': 'laundry',
     Lenor: 'laundry',
-    Cif: 'bathroom',
-    Savo: 'bathroom',
+    Jar: 'kitchen',
+    Cif: 'cleaning',
+    Savo: 'cleaning',
     'Vodní kámen': 'bathroom',
     Houbičky: 'kitchen',
     'Papírové utěrky': 'kitchen',
-    Baterky: 'kitchen',
-    Káva: 'kitchen',
-    Ručníky: 'laundry',
-    Povlečení: 'laundry'
+    'Hadry / utěrky': 'cleaning',
+    Rukavice: 'cleaning',
+    'Mop / náhradní hlavice': 'cleaning',
+    // Vybavení
+    Ručníky: 'equipment',
+    Osušky: 'equipment',
+    Povlečení: 'equipment',
+    Prostěradla: 'equipment',
+    Polštáře: 'equipment',
+    Deky: 'equipment',
+    // Ostatní / maintenance
+    Baterky: 'maintenance',
+    Žárovky: 'maintenance',
+    Káva: 'other',
+    Vody: 'other'
 }
 
 function quantityText(level: SupplyRequest['quantityLevel'], customQuantity?: string) {
@@ -83,10 +128,7 @@ export default function SuppliesView({
 
     const [maintenanceItem, setMaintenanceItem] = useState('')
     const [maintenancePriority, setMaintenancePriority] = useState<SupplyRequest['priority']>('normal')
-    const [maintenanceRoomNumber, setMaintenanceRoomNumber] = useState('')
     const [maintenanceNote, setMaintenanceNote] = useState('')
-
-    const [roomNumber, setRoomNumber] = useState('')
 
     const newRequests = useMemo(() => requests.filter((r) => r.status === 'new' || r.status === 'approved'), [requests])
     const orderedRequests = useMemo(() => requests.filter((r) => r.status === 'ordered'), [requests])
@@ -96,10 +138,7 @@ export default function SuppliesView({
     const shouldShowCleaningChips = role === 'admin' || role === 'lead' || role === 'cleaner'
     const shouldShowMaintenanceForm = role === 'maintenance'
 
-    const visibleChips = useMemo(() => {
-        if (!shouldShowCleaningChips) return []
-        return [...cleaningChips, ...customChips]
-    }, [shouldShowCleaningChips, customChips])
+    const visibleCustomChips = useMemo(() => customChips || [], [customChips])
 
     function setFeedbackText(text: string) {
         setFeedback(text)
@@ -134,7 +173,7 @@ export default function SuppliesView({
             quantityLevel: 'medium',
             priority: customPriority,
             note: customNote.trim() || undefined,
-            roomNumber: roomNumber.trim() || undefined
+            roomNumber: undefined
         })
 
         if (saveCustomChip) {
@@ -144,7 +183,6 @@ export default function SuppliesView({
         setCustomItem('')
         setCustomPriority('normal')
         setCustomNote('')
-        setRoomNumber('')
         setSaveCustomChip(false)
         setFeedbackText(`Přidáno: ${itemName}`)
     }
@@ -159,13 +197,12 @@ export default function SuppliesView({
             quantityLevel: 'medium',
             priority: maintenancePriority,
             note: maintenanceNote.trim() || undefined,
-            roomNumber: maintenanceRoomNumber.trim() || undefined
+            roomNumber: undefined
         })
 
         setMaintenanceItem('')
         setMaintenancePriority('normal')
         setMaintenanceNote('')
-        setMaintenanceRoomNumber('')
         setFeedbackText(`Přidáno: ${itemName}`)
     }
 
@@ -186,20 +223,42 @@ export default function SuppliesView({
             {shouldShowCleaningChips && (
                 <>
                     <div className="section">
-                        <h3>Rychlé požadavky</h3>
+                        <h3>Úklid</h3>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {visibleChips.map((chip) => (
-                                <button
-                                    key={chip}
-                                    className="chip"
-                                    style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }}
-                                    onClick={() => handleQuickAdd(chip)}
-                                >
-                                    {chip}
-                                </button>
+                            {uklidChips.map((chip) => (
+                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
                             ))}
                         </div>
                     </div>
+
+                    <div className="section">
+                        <h3>Vybavení</h3>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {vybaveniChips.map((chip) => (
+                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="section">
+                        <h3>Ostatní</h3>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {ostatniChips.map((chip) => (
+                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {visibleCustomChips.length > 0 && (
+                        <div className="section">
+                            <h3>Vlastní</h3>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {visibleCustomChips.map((chip) => (
+                                    <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     <div className="section" style={{ background: '#fff', border: '1px solid #dbe7f3', borderRadius: 12, padding: 12 }}>
                         <h3 style={{ marginBottom: 8 }}>Jiný požadavek</h3>
@@ -208,12 +267,6 @@ export default function SuppliesView({
                             onChange={(e) => setCustomItem(e.target.value)}
                             placeholder="Např. rukavice, nový mop, vůně do koupelny…"
                             style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
-                        />
-                        <input
-                            value={roomNumber}
-                            onChange={(e) => setRoomNumber(e.target.value)}
-                            placeholder="Pokoj (volitelně)"
-                            style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                         />
                         <input
                             value={customNote}
@@ -259,12 +312,7 @@ export default function SuppliesView({
                         placeholder="Např. silikon, sifon, žárovka, baterie do zámku…"
                         style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                     />
-                    <input
-                        value={maintenanceRoomNumber}
-                        onChange={(e) => setMaintenanceRoomNumber(e.target.value)}
-                        placeholder="Pokoj (volitelně)"
-                        style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
-                    />
+                    {/* room field removed for maintenance requests */}
                     <input
                         value={maintenanceNote}
                         onChange={(e) => setMaintenanceNote(e.target.value)}
@@ -305,7 +353,7 @@ export default function SuppliesView({
                                 <div style={{ fontWeight: 800 }}>{request.itemName}</div>
                                 <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
                                 <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
-                                {request.roomNumber && <div className="room-meta">Pokoj: {request.roomNumber}</div>}
+                                {/* room number is intentionally hidden in supplies UI */}
                                 {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
                                 {canCancel(role, userName, request) && (
                                     <div style={{ marginTop: 8 }}>
