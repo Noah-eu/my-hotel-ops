@@ -32,6 +32,10 @@ type CreateSupplyRequestInput = {
     priority: SupplyRequest['priority']
 }
 
+function isCleaningDomain(category: SupplyRequest['category']) {
+    return category !== 'maintenance'
+}
+
 function canViewTask(role: UserRole, task: Task) {
     if (role === 'admin') return true
     if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
@@ -70,6 +74,7 @@ export default function App() {
     const [roomsByDay, setRoomsByDay] = useState(() => saved?.roomsByDay ?? roomPlansByDay)
     const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
+    const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
     const [resetConfirm, setResetConfirm] = useState(false)
 
     const currentUser = users.find((u) => u.id === userId)
@@ -248,6 +253,40 @@ export default function App() {
         setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
     }
 
+    function handleSaveCustomSupplyChip(name: string) {
+        const cleaned = name.trim()
+        if (!cleaned) return
+        setCustomSupplyChips((prev) => {
+            const exists = prev.some((chip) => chip.toLowerCase() === cleaned.toLowerCase())
+            if (exists) return prev
+            return [...prev, cleaned]
+        })
+    }
+
+    function canCancelSupplyRequest(request: SupplyRequest) {
+        if (!currentUser) return false
+        if (currentUser.role === 'admin') return true
+        if (currentUser.role === 'lead') return isCleaningDomain(request.category)
+        if (currentUser.role === 'cleaner') return request.status === 'new' && request.requestedByRole === 'cleaner' && request.requestedBy === currentUser.name
+        if (currentUser.role === 'maintenance') {
+            return request.status === 'new' && request.category === 'maintenance' && request.requestedByRole === 'maintenance' && request.requestedBy === currentUser.name
+        }
+        return false
+    }
+
+    function handleCancelSupplyRequest(requestId: string) {
+        setSupplyRequests((prev) =>
+            prev.map((request) => {
+                if (request.id !== requestId) return request
+                if (!canCancelSupplyRequest(request)) return request
+                return {
+                    ...request,
+                    status: 'cancelled'
+                }
+            })
+        )
+    }
+
     // save to localStorage whenever key pieces of state change
     useEffect(() => {
         try {
@@ -257,19 +296,21 @@ export default function App() {
                 view,
                 roomsByDay,
                 tasks,
-                supplyRequests
+                supplyRequests,
+                customSupplyChips
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
         } catch (e) {
             console.warn('Failed to save demo state', e)
         }
-    }, [userId, tab, view, roomsByDay, tasks, supplyRequests])
+    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, customSupplyChips])
 
     function resetDemoData() {
         // restore mock data and clear saved state
         setRoomsByDay(roomPlansByDay)
         setTasks([])
         setSupplyRequests(initialSupplyRequests)
+        setCustomSupplyChips([])
         setTab('Dnes')
         setUserId('david')
         setView('today')
@@ -344,9 +385,13 @@ export default function App() {
                     )}
                     {view === 'supplies' && (
                         <SuppliesView
+                            userName={currentUser?.name || 'Uživatel'}
                             role={(currentUser?.role || 'cleaner') as UserRole}
                             requests={visibleSupplies}
+                            customChips={customSupplyChips}
                             onCreateRequest={handleCreateSupplyRequest}
+                            onSaveCustomChip={handleSaveCustomSupplyChip}
+                            onCancelRequest={handleCancelSupplyRequest}
                         />
                     )}
                 </div>

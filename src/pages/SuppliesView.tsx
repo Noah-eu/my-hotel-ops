@@ -2,8 +2,10 @@ import React, { useMemo, useState } from 'react'
 import { SupplyRequest, UserRole } from '../types'
 
 type Props = {
+    userName: string
     role: UserRole
     requests: SupplyRequest[]
+    customChips: string[]
     onCreateRequest: (input: {
         itemName: string
         category: SupplyRequest['category']
@@ -13,9 +15,11 @@ type Props = {
         note?: string
         priority: SupplyRequest['priority']
     }) => void
+    onSaveCustomChip: (name: string) => void
+    onCancelRequest: (requestId: string) => void
 }
 
-const chips = ['Toaletní papír', 'Pytle malé', 'Pytle velké', 'Tablety do myčky', 'Gel na praní', 'Lenor', 'Cif', 'Savo', 'Vodní kámen', 'Houbičky', 'Papírové utěrky', 'Baterky', 'Káva', 'Ručníky', 'Povlečení']
+const cleaningChips = ['Toaletní papír', 'Pytle malé', 'Pytle velké', 'Tablety do myčky', 'Gel na praní', 'Lenor', 'Cif', 'Savo', 'Vodní kámen', 'Houbičky', 'Papírové utěrky', 'Baterky', 'Káva', 'Ručníky', 'Povlečení']
 
 const categoryByItem: Record<string, SupplyRequest['category']> = {
     'Toaletní papír': 'bathroom',
@@ -24,12 +28,12 @@ const categoryByItem: Record<string, SupplyRequest['category']> = {
     'Tablety do myčky': 'kitchen',
     'Gel na praní': 'laundry',
     Lenor: 'laundry',
-    Cif: 'cleaning',
-    Savo: 'cleaning',
+    Cif: 'bathroom',
+    Savo: 'bathroom',
     'Vodní kámen': 'bathroom',
     Houbičky: 'kitchen',
     'Papírové utěrky': 'kitchen',
-    Baterky: 'maintenance',
+    Baterky: 'kitchen',
     Káva: 'kitchen',
     Ručníky: 'laundry',
     Povlečení: 'laundry'
@@ -51,167 +55,239 @@ function statusText(status: SupplyRequest['status']) {
     return 'Zrušeno'
 }
 
-export default function SuppliesView({ role, requests, onCreateRequest }: Props) {
-    const [selectedItem, setSelectedItem] = useState<string>('')
-    const [quantityLevel, setQuantityLevel] = useState<SupplyRequest['quantityLevel']>('medium')
-    const [customQuantity, setCustomQuantity] = useState('')
-    const [priority, setPriority] = useState<SupplyRequest['priority']>('normal')
-    const [note, setNote] = useState('')
-    const [roomNumber, setRoomNumber] = useState('')
-    const [category, setCategory] = useState<SupplyRequest['category']>('cleaning')
+function canCancel(role: UserRole, userName: string, request: SupplyRequest) {
+    if (role === 'admin') return true
+    if (role === 'lead') return request.category !== 'maintenance'
+    if (role === 'cleaner') return request.status === 'new' && request.requestedBy === userName && request.requestedByRole === 'cleaner'
+    if (role === 'maintenance') {
+        return request.status === 'new' && request.category === 'maintenance' && request.requestedBy === userName && request.requestedByRole === 'maintenance'
+    }
+    return false
+}
 
-    const canCreate = role === 'admin' || role === 'lead' || role === 'cleaner' || role === 'maintenance'
-    const roleLockedCategory = role === 'maintenance'
+export default function SuppliesView({
+    userName,
+    role,
+    requests,
+    customChips,
+    onCreateRequest,
+    onSaveCustomChip,
+    onCancelRequest
+}: Props) {
+    const [feedback, setFeedback] = useState('')
+
+    const [customItem, setCustomItem] = useState('')
+    const [customPriority, setCustomPriority] = useState<SupplyRequest['priority']>('normal')
+    const [customNote, setCustomNote] = useState('')
+    const [saveCustomChip, setSaveCustomChip] = useState(false)
+
+    const [maintenanceItem, setMaintenanceItem] = useState('')
+    const [maintenancePriority, setMaintenancePriority] = useState<SupplyRequest['priority']>('normal')
+    const [maintenanceRoomNumber, setMaintenanceRoomNumber] = useState('')
+    const [maintenanceNote, setMaintenanceNote] = useState('')
+
+    const [roomNumber, setRoomNumber] = useState('')
 
     const newRequests = useMemo(() => requests.filter((r) => r.status === 'new' || r.status === 'approved'), [requests])
     const orderedRequests = useMemo(() => requests.filter((r) => r.status === 'ordered'), [requests])
     const completedRequests = useMemo(() => requests.filter((r) => r.status === 'delivered' || r.status === 'handed_over'), [requests])
     const cancelledRequests = useMemo(() => requests.filter((r) => r.status === 'cancelled'), [requests])
 
-    function handleSelectItem(item: string) {
-        setSelectedItem(item)
-        setCategory(roleLockedCategory ? 'maintenance' : (categoryByItem[item] || 'other'))
+    const shouldShowCleaningChips = role === 'admin' || role === 'lead' || role === 'cleaner'
+    const shouldShowMaintenanceForm = role === 'maintenance'
+
+    const visibleChips = useMemo(() => {
+        if (!shouldShowCleaningChips) return []
+        return [...cleaningChips, ...customChips]
+    }, [shouldShowCleaningChips, customChips])
+
+    function setFeedbackText(text: string) {
+        setFeedback(text)
+        window.setTimeout(() => {
+            setFeedback((prev) => (prev === text ? '' : prev))
+        }, 1800)
     }
 
-    function resetForm() {
-        setQuantityLevel('medium')
-        setCustomQuantity('')
-        setPriority('normal')
-        setNote('')
-        setRoomNumber('')
+    function inferCategory(itemName: string): SupplyRequest['category'] {
+        return categoryByItem[itemName] || 'other'
     }
 
-    function handleCreate() {
-        if (!canCreate || !selectedItem) return
+    function handleQuickAdd(item: string) {
         onCreateRequest({
-            itemName: selectedItem,
-            category: roleLockedCategory ? 'maintenance' : category,
-            quantityLevel,
-            customQuantity: quantityLevel === 'custom' ? customQuantity : undefined,
-            roomNumber: roomNumber.trim() || undefined,
-            note: note.trim() || undefined,
-            priority
+            itemName: item,
+            category: inferCategory(item),
+            quantityLevel: 'medium',
+            priority: 'normal',
+            note: undefined,
+            roomNumber: undefined
         })
-        resetForm()
+        setFeedbackText(`Přidáno: ${item}`)
+    }
+
+    function handleAddCustomRequest() {
+        const itemName = customItem.trim()
+        if (!itemName) return
+
+        onCreateRequest({
+            itemName,
+            category: inferCategory(itemName),
+            quantityLevel: 'medium',
+            priority: customPriority,
+            note: customNote.trim() || undefined,
+            roomNumber: roomNumber.trim() || undefined
+        })
+
+        if (saveCustomChip) {
+            onSaveCustomChip(itemName)
+        }
+
+        setCustomItem('')
+        setCustomPriority('normal')
+        setCustomNote('')
+        setRoomNumber('')
+        setSaveCustomChip(false)
+        setFeedbackText(`Přidáno: ${itemName}`)
+    }
+
+    function handleAddMaintenanceRequest() {
+        const itemName = maintenanceItem.trim()
+        if (!itemName) return
+
+        onCreateRequest({
+            itemName,
+            category: 'maintenance',
+            quantityLevel: 'medium',
+            priority: maintenancePriority,
+            note: maintenanceNote.trim() || undefined,
+            roomNumber: maintenanceRoomNumber.trim() || undefined
+        })
+
+        setMaintenanceItem('')
+        setMaintenancePriority('normal')
+        setMaintenanceNote('')
+        setMaintenanceRoomNumber('')
+        setFeedbackText(`Přidáno: ${itemName}`)
+    }
+
+    function getCancelLabel(request: SupplyRequest) {
+        return request.status === 'new' ? 'Smazat' : 'Zrušit'
     }
 
     return (
         <div>
-            <div className="section">
-                <h3>Rychlé požadavky</h3>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {chips.map((chip) => (
-                        <button
-                            key={chip}
-                            className="chip"
-                            style={{
-                                fontWeight: 700,
-                                border: selectedItem === chip ? '2px solid #0ea5a4' : '1px solid #dbe7f3',
-                                background: selectedItem === chip ? '#ecfeff' : '#f8fafc'
-                            }}
-                            onClick={() => handleSelectItem(chip)}
-                        >
-                            {chip}
-                        </button>
-                    ))}
+            {feedback && (
+                <div className="section" style={{ paddingTop: 0, paddingBottom: 6 }}>
+                    <div className="room-card" style={{ borderLeft: '6px solid #0ea5a4', paddingTop: 8, paddingBottom: 8 }}>
+                        <div style={{ fontWeight: 700 }}>{feedback}</div>
+                    </div>
                 </div>
-            </div>
+            )}
 
-            {selectedItem && (
-                <div className="section" style={{ background: '#fff', border: '1px solid #dbe7f3', borderRadius: 12, padding: 12 }}>
-                    <h3 style={{ marginBottom: 8 }}>Přidat do nákupu: {selectedItem}</h3>
-
-                    {!roleLockedCategory && (
-                        <div style={{ marginBottom: 10 }}>
-                            <div className="room-meta" style={{ marginBottom: 6 }}>Kategorie</div>
-                            <select
-                                value={category}
-                                onChange={(e) => setCategory(e.target.value as SupplyRequest['category'])}
-                                style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px' }}
-                            >
-                                <option value="cleaning">Úklid</option>
-                                <option value="laundry">Prádelna</option>
-                                <option value="bathroom">Koupelna</option>
-                                <option value="kitchen">Kuchyně</option>
-                                <option value="maintenance">Údržba</option>
-                                <option value="other">Ostatní</option>
-                            </select>
-                        </div>
-                    )}
-
-                    <div style={{ marginBottom: 10 }}>
-                        <div className="room-meta" style={{ marginBottom: 6 }}>Množství</div>
+            {shouldShowCleaningChips && (
+                <>
+                    <div className="section">
+                        <h3>Rychlé požadavky</h3>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {[
-                                { value: 'low', label: 'Málo' },
-                                { value: 'medium', label: 'Středně' },
-                                { value: 'high', label: 'Hodně' },
-                                { value: 'custom', label: 'Vlastní' }
-                            ].map((option) => (
+                            {visibleChips.map((chip) => (
                                 <button
-                                    key={option.value}
-                                    className="btn"
-                                    style={{
-                                        border: quantityLevel === option.value ? '2px solid #0ea5a4' : '1px solid #dbe7f3',
-                                        background: quantityLevel === option.value ? '#ecfeff' : '#fff'
-                                    }}
-                                    onClick={() => setQuantityLevel(option.value as SupplyRequest['quantityLevel'])}
+                                    key={chip}
+                                    className="chip"
+                                    style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }}
+                                    onClick={() => handleQuickAdd(chip)}
                                 >
-                                    {option.label}
+                                    {chip}
                                 </button>
                             ))}
                         </div>
-                        {quantityLevel === 'custom' && (
-                            <input
-                                value={customQuantity}
-                                onChange={(e) => setCustomQuantity(e.target.value)}
-                                placeholder="Např. 24 ks"
-                                style={{ width: '100%', marginTop: 8, minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px' }}
-                            />
-                        )}
                     </div>
 
-                    <div style={{ marginBottom: 10 }}>
-                        <div className="room-meta" style={{ marginBottom: 6 }}>Priorita</div>
-                        <div style={{ display: 'flex', gap: 8 }}>
+                    <div className="section" style={{ background: '#fff', border: '1px solid #dbe7f3', borderRadius: 12, padding: 12 }}>
+                        <h3 style={{ marginBottom: 8 }}>Jiný požadavek</h3>
+                        <input
+                            value={customItem}
+                            onChange={(e) => setCustomItem(e.target.value)}
+                            placeholder="Např. rukavice, nový mop, vůně do koupelny…"
+                            style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                        />
+                        <input
+                            value={roomNumber}
+                            onChange={(e) => setRoomNumber(e.target.value)}
+                            placeholder="Pokoj (volitelně)"
+                            style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                        />
+                        <input
+                            value={customNote}
+                            onChange={(e) => setCustomNote(e.target.value)}
+                            placeholder="Poznámka (volitelně)"
+                            style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                        />
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                             <button
                                 className="btn"
-                                style={{ border: priority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: priority === 'normal' ? '#ecfeff' : '#fff' }}
-                                onClick={() => setPriority('normal')}
+                                style={{ border: customPriority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: customPriority === 'normal' ? '#ecfeff' : '#fff' }}
+                                onClick={() => setCustomPriority('normal')}
                             >
                                 Normální
                             </button>
                             <button
                                 className="btn"
-                                style={{ border: priority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: priority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
-                                onClick={() => setPriority('urgent')}
+                                style={{ border: customPriority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: customPriority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
+                                onClick={() => setCustomPriority('urgent')}
                             >
                                 Urgentní
                             </button>
                         </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: '#334155' }}>
+                            <input
+                                type="checkbox"
+                                checked={saveCustomChip}
+                                onChange={(e) => setSaveCustomChip(e.target.checked)}
+                            />
+                            Uložit jako chip pro příště
+                        </label>
+                        <button className="action-large" style={{ width: '100%' }} onClick={handleAddCustomRequest}>Přidat požadavek</button>
                     </div>
+                </>
+            )}
 
-                    <div style={{ marginBottom: 10 }}>
-                        <div className="room-meta" style={{ marginBottom: 6 }}>Číslo pokoje (volitelné)</div>
-                        <input
-                            value={roomNumber}
-                            onChange={(e) => setRoomNumber(e.target.value)}
-                            placeholder="Např. 101"
-                            style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px' }}
-                        />
+            {shouldShowMaintenanceForm && (
+                <div className="section" style={{ background: '#fff', border: '1px solid #dbe7f3', borderRadius: 12, padding: 12 }}>
+                    <h3 style={{ marginBottom: 8 }}>Zapsat materiál pro údržbu</h3>
+                    <input
+                        value={maintenanceItem}
+                        onChange={(e) => setMaintenanceItem(e.target.value)}
+                        placeholder="Např. silikon, sifon, žárovka, baterie do zámku…"
+                        style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                    />
+                    <input
+                        value={maintenanceRoomNumber}
+                        onChange={(e) => setMaintenanceRoomNumber(e.target.value)}
+                        placeholder="Pokoj (volitelně)"
+                        style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                    />
+                    <input
+                        value={maintenanceNote}
+                        onChange={(e) => setMaintenanceNote(e.target.value)}
+                        placeholder="Poznámka (volitelně)"
+                        style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
+                    />
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                        <button
+                            className="btn"
+                            style={{ border: maintenancePriority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: maintenancePriority === 'normal' ? '#ecfeff' : '#fff' }}
+                            onClick={() => setMaintenancePriority('normal')}
+                        >
+                            Normální
+                        </button>
+                        <button
+                            className="btn"
+                            style={{ border: maintenancePriority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: maintenancePriority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
+                            onClick={() => setMaintenancePriority('urgent')}
+                        >
+                            Urgentní
+                        </button>
                     </div>
-
-                    <div style={{ marginBottom: 12 }}>
-                        <div className="room-meta" style={{ marginBottom: 6 }}>Poznámka (volitelně)</div>
-                        <textarea
-                            value={note}
-                            onChange={(e) => setNote(e.target.value)}
-                            placeholder="Doplňující poznámka"
-                            style={{ width: '100%', minHeight: 70, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', resize: 'vertical' }}
-                        />
-                    </div>
-
-                    <button className="action-large" style={{ width: '100%' }} onClick={handleCreate}>Přidat do nákupu</button>
+                    <button className="action-large" style={{ width: '100%' }} onClick={handleAddMaintenanceRequest}>Přidat materiál</button>
                 </div>
             )}
 
@@ -231,6 +307,11 @@ export default function SuppliesView({ role, requests, onCreateRequest }: Props)
                                 <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
                                 {request.roomNumber && <div className="room-meta">Pokoj: {request.roomNumber}</div>}
                                 {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
+                                {canCancel(role, userName, request) && (
+                                    <div style={{ marginTop: 8 }}>
+                                        <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
+                                    </div>
+                                )}
                             </div>
                             {request.priority === 'urgent' && <div className="status red">URGENT</div>}
                         </div>
