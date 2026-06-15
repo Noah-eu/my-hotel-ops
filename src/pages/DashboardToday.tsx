@@ -119,7 +119,26 @@ export default function DashboardToday({
     const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
     const relativeEstimateOptions = [30, 45, 60]
 
+    function toggleExpandedRoom(roomId: string) {
+        setExpandedRoom((prev) => {
+            const nextExpanded = prev === roomId ? null : roomId
+            if (nextExpanded !== roomId && taskPanelRoom === roomId) {
+                setTaskPanelRoom(null)
+            }
+            if (nextExpanded !== roomId && estimatingRoom === roomId) {
+                setEstimatingRoom(null)
+            }
+            if (nextExpanded === roomId) {
+                if (taskPanelRoom && taskPanelRoom !== roomId) setTaskPanelRoom(null)
+                if (estimatingRoom && estimatingRoom !== roomId) setEstimatingRoom(null)
+            }
+            return nextExpanded
+        })
+    }
+
     function openTaskPanel(roomId: string) {
+        setExpandedRoom(roomId)
+        setEstimatingRoom((prev) => (prev === roomId ? null : prev))
         if (taskPanelRoom === roomId) {
             setTaskPanelRoom(null)
             return
@@ -347,7 +366,7 @@ export default function DashboardToday({
                                 <div className="room-col">
                                     <div className="room-no">{room.number}</div>
                                     <div className="mini-badge">{statusLabel(room.status)}</div>
-                                    <button className="room-action-btn" onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>{isExpanded ? '×' : '⋯'}</button>
+                                    <button className="room-action-btn" onClick={() => toggleExpandedRoom(room.id)}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
