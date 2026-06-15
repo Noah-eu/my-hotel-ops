@@ -232,14 +232,14 @@ body {
     /* each room is a contained block with a clear status outline */
     --status-color: transparent;
     --status-border: rgba(232, 238, 245, 0.9);
-    --status-bg: rgba(255,255,255,0);
+    --status-bg: rgba(255, 255, 255, 0);
     border: 3px solid var(--status-border);
     border-radius: 14px;
     margin-bottom: 16px;
     background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
     position: relative;
     overflow: hidden;
-    box-shadow: 0 6px 14px rgba(2,6,23,0.06);
+    box-shadow: 0 6px 14px rgba(2, 6, 23, 0.06);
 }
 
 .daily-row-wrap:last-child {
@@ -253,7 +253,8 @@ body {
     left: 0;
     top: 0;
     bottom: 0;
-    width: 8px; /* thicker left stripe */
+    width: 8px;
+    /* thicker left stripe */
     background: var(--status-color, transparent);
     border-top-left-radius: 12px;
     border-bottom-left-radius: 12px;
@@ -290,7 +291,7 @@ body {
 
 .room-col {
     padding: 12px 10px;
-    border-right: 1px solid rgba(2,6,23,0.04);
+    border-right: 1px solid rgba(2, 6, 23, 0.04);
 }
 
 .room-no {
@@ -329,7 +330,7 @@ body {
 
 .plan-col {
     padding: 12px 10px;
-    border-right: 1px solid rgba(2,6,23,0.04);
+    border-right: 1px solid rgba(2, 6, 23, 0.04);
     min-height: 88px;
 }
 
@@ -388,7 +389,45 @@ body {
     gap: 8px;
     flex-wrap: wrap;
     border-top: 1px solid rgba(15, 23, 42, 0.04);
-    background: rgba(255,255,255,0.6);
+    background: rgba(255, 255, 255, 0.6);
+}
+
+/* Distinct Departure (Odjezd) and Arrival (Příjezd) cell styling */
+/* .daily-row children: 1 = room-col, 2 = departure, 3 = arrival */
+.daily-row > div:nth-child(2) {
+    /* departure: cool/neutral tint */
+    background: rgba(59,130,246,0.02);
+    padding-left: 12px;
+    padding-right: 12px;
+    border-right: 1px solid rgba(2,6,23,0.06);
+}
+.daily-row > div:nth-child(3) {
+    /* arrival: warm/light green tint to stand out */
+    background: rgba(16,185,129,0.03);
+    padding-left: 12px;
+    padding-right: 12px;
+    border-left: 1px solid rgba(2,6,23,0.06);
+}
+
+/* Make arrival time and BOX more visible */
+.daily-row > div:nth-child(3) .plan-time {
+    color: #166534; /* stronger green for arrival time */
+}
+.daily-row > div:nth-child(3) .plan-note {
+    background: rgba(16,185,129,0.06);
+    border: 1px solid rgba(16,185,129,0.08);
+}
+
+/* Keep departure text clear but slightly cooler tonal */
+.daily-row > div:nth-child(2) .plan-time {
+    color: #1f2937; /* neutral/darker */
+}
+
+/* Muted empty states */
+.daily-row > div:nth-child(2) .plan-empty,
+.daily-row > div:nth-child(3) .plan-empty {
+    color: #94a3b8;
+    font-style: italic;
 }
 
 .row-even {
@@ -443,7 +482,7 @@ body {
 .status-row-green,
 .status-row-gray {
     border-color: var(--status-border);
-    background: linear-gradient(180deg, var(--status-bg) 0%, rgba(255,255,255,0.6) 100%);
+    background: linear-gradient(180deg, var(--status-bg) 0%, rgba(255, 255, 255, 0.6) 100%);
 }
 
 .footer {
