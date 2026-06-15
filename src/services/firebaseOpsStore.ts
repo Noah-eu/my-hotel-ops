@@ -34,6 +34,45 @@ function devLog(message: string, payload?: unknown) {
     console.info(`[FirestoreStore] ${message}`, payload)
 }
 
+// Sanitize objects for Firestore: remove undefined values recursively.
+function sanitizeForFirestore<T>(input: T, rootPath = ''): { cleaned: T; removedPaths: string[] } {
+    const removed: string[] = []
+
+    function inner(value: any, path: string): any {
+        if (value === undefined) {
+            removed.push(path || '<root>')
+            return undefined
+        }
+        if (value === null) return null
+        if (Array.isArray(value)) {
+            const arr: any[] = []
+            value.forEach((item, idx) => {
+                const cleaned = inner(item, `${path}[${idx}]`)
+                if (cleaned !== undefined) arr.push(cleaned)
+            })
+            return arr
+        }
+        if (typeof value === 'object') {
+            const out: Record<string, any> = {}
+            Object.keys(value).forEach((k) => {
+                const childPath = path ? `${path}.${k}` : k
+                const cleaned = inner(value[k], childPath)
+                if (cleaned !== undefined) out[k] = cleaned
+            })
+            return out
+        }
+        return value
+    }
+
+    const cleaned = inner(input, rootPath)
+
+    if (DEV && removed.length > 0) {
+        console.warn(`[FirestoreSanitizer] removed undefined fields:`, { removed })
+    }
+
+    return { cleaned, removedPaths: removed }
+}
+
 function toStoreError(error: any, fallbackMessage: string): OpsStoreError {
     return {
         code: error?.code,
@@ -110,40 +149,41 @@ async function ensureSeeded(defaultState: OpsPersistedState) {
         ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
             defaultState.roomsByDay[day].forEach((room) => {
                 const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', roomPlanId(day, room.id))
-                batch.set(ref, { ...room, day })
+                const { cleaned } = sanitizeForFirestore({ ...room, day }, `roomPlans.${roomPlanId(day, room.id)}`)
+                batch.set(ref, cleaned)
             })
         })
 
     defaultState.tasks.forEach((task) => {
         const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id)
-        batch.set(ref, task)
+        const { cleaned } = sanitizeForFirestore(task, `tasks.${task.id}`)
+        batch.set(ref, cleaned)
     })
 
     defaultState.supplyRequests.forEach((request) => {
         const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id)
-        batch.set(ref, request)
+        const { cleaned } = sanitizeForFirestore(request, `supplyRequests.${request.id}`)
+        batch.set(ref, cleaned)
     })
 
     defaultState.maintenanceItems.forEach((item) => {
         const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id)
-        batch.set(ref, item)
+        const { cleaned } = sanitizeForFirestore(item, `maintenanceItems.${item.id}`)
+        batch.set(ref, cleaned)
     })
 
     defaultState.staff.forEach((member) => {
         const staffRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', member.id)
         const availabilityRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', member.id)
-        batch.set(staffRef, member)
-        batch.set(availabilityRef, {
-            staffId: member.id,
-            availability: member.availability || 'dnes_nepracuji',
-            updatedAt: serverTimestamp()
-        })
+        const { cleaned: cleanedMember } = sanitizeForFirestore(member, `staff.${member.id}`)
+        batch.set(staffRef, cleanedMember)
+        const availabilityObj = { staffId: member.id, availability: member.availability || 'dnes_nepracuji', updatedAt: serverTimestamp() }
+        const { cleaned: cleanedAvail } = sanitizeForFirestore(availabilityObj, `dailyAvailability.${member.id}`)
+        batch.set(availabilityRef, cleanedAvail)
     })
 
-    batch.set(metaRef, {
-        seeded: true,
-        seededAt: serverTimestamp()
-    })
+    const { cleaned: cleanedMeta } = sanitizeForFirestore({ seeded: true, seededAt: serverTimestamp() }, 'meta.appState')
+    batch.set(metaRef, cleanedMeta)
 
     await batch.commit()
     devLog('Seed completed')
@@ -216,7 +256,7 @@ export function createFirebaseOpsStore(): OpsStore {
                     availability: availabilityMap.get(member.id) || member.availability
                 }))
                 onState({
-                    roomsByDay,
+                    roomsByDay: roomPlansByDay,
                     tasks,
                     supplyRequests,
                     maintenanceItems,
@@ -322,7 +362,8 @@ export function createFirebaseOpsStore(): OpsStore {
         updateRoomPlan(day: OpsTab, roomId: string, patch) {
             if (!firestoreDb) return
             const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${roomId}`)
-            void runWrite('updateRoomPlan', () => updateDoc(ref, patch as Record<string, unknown>))
+            const { cleaned } = sanitizeForFirestore(patch, `roomPlans.${day}-${roomId}.patch`)
+            void runWrite('updateRoomPlan', () => updateDoc(ref, cleaned as Record<string, unknown>))
         },
         createTask(input: CreateTaskInput) {
             if (!firestoreDb) return null
@@ -338,7 +379,8 @@ export function createFirebaseOpsStore(): OpsStore {
                 createdBy: input.createdBy,
                 createdAt: input.createdAt
             }
-            void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), task))
+            const { cleaned } = sanitizeForFirestore(task, `tasks.${task.id}`)
+            void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), cleaned))
             return task
         },
         updateTaskStatus(taskId: string, status: Task['status']) {
@@ -361,7 +403,8 @@ export function createFirebaseOpsStore(): OpsStore {
                 status: 'new',
                 priority: input.priority
             }
-            void runWrite('createSupplyRequest', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id), request))
+            const { cleaned } = sanitizeForFirestore(request, `supplyRequests.${request.id}`)
+            void runWrite('createSupplyRequest', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', request.id), cleaned))
             return request
         },
         cancelSupplyRequest(requestId: string) {
@@ -385,22 +428,27 @@ export function createFirebaseOpsStore(): OpsStore {
                 reportedBy: input.reportedBy,
                 createdAt: input.createdAt
             }
-            void runWrite('createMaintenanceItem', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id), item))
+            const { cleaned } = sanitizeForFirestore(item, `maintenanceItems.${item.id}`)
+            void runWrite('createMaintenanceItem', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id), cleaned))
             return item
         },
         updateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>) {
             if (!firestoreDb) return
-            void runWrite('updateMaintenanceItem', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', itemId), patch as Record<string, unknown>))
+            const { cleaned } = sanitizeForFirestore(patch, `maintenanceItems.${itemId}.patch`)
+            void runWrite('updateMaintenanceItem', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', itemId), cleaned as Record<string, unknown>))
         },
         setStaffAvailability(id: string, availability) {
             if (!firestoreDb) return
             void runWrite('setStaffAvailability', async () => {
+                const availObj = { staffId: id, availability, updatedAt: serverTimestamp() }
+                const { cleaned: cleanedAvail } = sanitizeForFirestore(availObj, `dailyAvailability.${id}`)
                 await setDoc(
                     doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', id),
-                    { staffId: id, availability, updatedAt: serverTimestamp() },
+                    cleanedAvail,
                     { merge: true }
                 )
-                await updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', id), { availability })
+                const { cleaned: cleanedStaff } = sanitizeForFirestore({ availability }, `staff.${id}.availability`)
+                await updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', id), cleanedStaff)
             })
         },
         async resetDemoState(defaultState) {
