@@ -42,6 +42,7 @@ export interface RoomPlan {
     estimatedReady?: string // HH:MM concrete time
     estimateSetAt?: string // HH:MM when estimate was set
     statusNote?: string
+    checkoutException?: boolean
 }
 
 export interface Task {

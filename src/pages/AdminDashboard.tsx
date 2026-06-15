@@ -28,6 +28,7 @@ export default function AdminDashboard({
     const hotove = rooms.filter(r => r.status === 'hotovo')
     const ceka = rooms.filter(r => r.status === 'ceka' || r.status === 'prevzato' || r.status === 'probihá')
     const problemy = rooms.filter(r => r.status === 'problem')
+    const hostNeodesel = rooms.filter(r => r.checkoutException)
     const odhad = rooms.filter(r => r.status === 'odhad')
     const noveUkoly = tasks.filter((t) => t.status === 'new' || t.status === 'read')
     const urgentniUkoly = tasks.filter((t) => t.priority === 'urgent' && t.status !== 'done' && t.status !== 'cancelled')
@@ -77,7 +78,13 @@ export default function AdminDashboard({
                     <div className="room-card"><div className="room-number">Čeká na úklid</div><div className="room-meta">{ceka.length}</div></div>
                     <div className="room-card"><div className="room-number">Problémy</div><div className="room-meta">{problemy.length}</div></div>
                     <div className="room-card"><div className="room-number">Odhad</div><div className="room-meta">{odhad.length}</div></div>
+                    <div className="room-card" style={{ borderLeft: '6px solid #dc2626' }}><div className="room-number">Host neodešel</div><div className="room-meta">{hostNeodesel.length}</div></div>
                 </div>
+                {hostNeodesel.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 13, color: '#991b1b' }}>
+                        Výjimky: {hostNeodesel.map(r => r.number).join(', ')}
+                    </div>
+                )}
             </div>
             <div className="section">
                 <h3>Úkoly</h3>

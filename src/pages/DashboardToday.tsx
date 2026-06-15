@@ -14,10 +14,19 @@ type CreateTaskInput = {
     note?: string
 }
 
+const arrivalPreparationTitles = new Set([
+    'Připravit postýlku',
+    'Připravit gauč',
+    'Vyměnit ručníky',
+    'Extra ručníky',
+    'Doplnit toaletní papír'
+])
+
 const quickTaskOptions: { label: string; category: Task['category'] }[] = [
     { label: 'Připravit postýlku', category: 'cleaning' },
     { label: 'Připravit gauč', category: 'cleaning' },
     { label: 'Vyměnit ručníky', category: 'cleaning' },
+    { label: 'Extra ručníky', category: 'cleaning' },
     { label: 'Doplnit toaletní papír', category: 'supplies' },
     { label: 'Najít zapomenutou věc', category: 'guest_request' },
     { label: 'Zkontrolovat sejf', category: 'maintenance' },
@@ -76,6 +85,7 @@ export default function DashboardToday({
     tasks,
     onAction,
     onCreateTask,
+    onUpdateTaskStatus,
     role,
     dayLabel,
     staff,
@@ -86,6 +96,7 @@ export default function DashboardToday({
     tasks: Task[]
     onAction: (id: string, action: string, payload?: RoomActionPayload) => void
     onCreateTask: (roomId: string, input: CreateTaskInput) => void
+    onUpdateTaskStatus: (taskId: string, status: Task['status']) => void
     role: UserRole
     dayLabel: string
     staff: { id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[]
@@ -326,6 +337,9 @@ export default function DashboardToday({
                 {rooms.map((room, index) => {
                     const isExpanded = expandedRoom === room.id
                     const roomTasks = tasks.filter((t) => t.roomNumber === room.number && canSeeTask(role, t))
+                    const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
+                    const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
+                    const otherRoomTasks = activeRoomTasks.filter((t) => !arrivalPreparationTitles.has(t.title))
 
                     return (
                         <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
@@ -335,7 +349,13 @@ export default function DashboardToday({
                                     <div className="mini-badge">{statusLabel(room.status)}</div>
                                     <button className="room-action-btn" onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
-                                    {room.statusNote && <div className="mini-muted" style={{ color: '#b45309' }}>{room.statusNote}</div>}
+                                    {room.checkoutException && (
+                                        <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
+                                            <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c' }}>{room.statusNote || 'Host neodešel'}</div>
+                                            <button className="chip" style={{ marginTop: 4, fontSize: 11, padding: '4px 8px' }} onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>
+                                        </div>
+                                    )}
+                                    {!room.checkoutException && room.statusNote && <div className="mini-muted" style={{ color: '#b45309' }}>{room.statusNote}</div>}
                                 </div>
 
                                 <div className={`plan-col ${room.departure ? '' : 'empty-col'}`}>
@@ -357,6 +377,17 @@ export default function DashboardToday({
                                             <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                                 {room.arrival.box && <div className="note-chip">{room.arrival.box}</div>}
                                                 {room.arrival.notes && room.arrival.notes.slice(0, 1).map(n => <div key={n} className="note-chip">{n}</div>)}
+                                                {arrivalPrepTasks.map((task) => (
+                                                    <button
+                                                        key={task.id}
+                                                        className="note-chip"
+                                                        style={{ cursor: 'pointer', border: '1px solid #bfdbfe', background: '#eff6ff' }}
+                                                        onClick={() => onUpdateTaskStatus(task.id, 'done')}
+                                                        title="Označit jako hotovo"
+                                                    >
+                                                        {task.title}
+                                                    </button>
+                                                ))}
                                             </div>
                                             {room.estimatedReady && (
                                                 <div className="plan-ready">
@@ -382,9 +413,9 @@ export default function DashboardToday({
                                 </div>
                             </div>
 
-                            {roomTasks.length > 0 && (
+                            {otherRoomTasks.length > 0 && (
                                 <div style={{ padding: '8px 10px', borderTop: '1px solid rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                    {roomTasks.map((task) => (
+                                    {otherRoomTasks.map((task) => (
                                         <div
                                             key={task.id}
                                             style={{
@@ -424,8 +455,16 @@ export default function DashboardToday({
                                         Hotovo
                                     </button>
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
-                                    <button className="action-secondary" onClick={() => onAction(room.id, 'host_zustava')}>Host je ještě na pokoji</button>
                                     {canCreateTask && <button className="chip" onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
+
+                                    <div style={{ width: '100%', marginTop: 8, paddingTop: 8, borderTop: '1px dashed rgba(148,163,184,0.6)' }}>
+                                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Výjimky</div>
+                                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                            <button className="action-secondary" onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
+                                            {room.checkoutException && <button className="chip" onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
+                                            <div style={{ fontSize: 12, color: '#64748b' }}>Push notifikace pro admin zde doplníme po backend integraci.</div>
+                                        </div>
+                                    </div>
 
                                     {estimatingRoom === room.id && (
                                         <div style={{ width: '100%', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>

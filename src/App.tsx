@@ -7,7 +7,7 @@ import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
 
-type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava'
+type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -146,7 +146,7 @@ export default function App() {
                     return {
                         ...r,
                         status: 'hotovo',
-                        statusNote: undefined
+                        statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
                 if (action === 'prevzit') {
@@ -154,7 +154,7 @@ export default function App() {
                         ...r,
                         status: 'prevzato',
                         assigned: assignedName || r.assigned,
-                        statusNote: undefined
+                        statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
                 if (action === 'odhad') {
@@ -164,7 +164,7 @@ export default function App() {
                         estimatedReady: computedEstimate || r.estimatedReady || '12:30',
                         estimateSetAt: setAt,
                         assigned: assignedName || r.assigned,
-                        statusNote: undefined
+                        statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
                 if (action === 'problem') {
@@ -175,14 +175,29 @@ export default function App() {
                     }
                 }
                 if (action === 'host_zustava') {
+                    // TODO: Here we can trigger push notification to admin in future backend integration.
                     return {
                         ...r,
-                        statusNote: 'Host je ještě na pokoji'
+                        status: 'problem',
+                        statusNote: 'Host neodešel',
+                        checkoutException: true
+                    }
+                }
+                if (action === 'clear_exception') {
+                    return {
+                        ...r,
+                        checkoutException: false,
+                        statusNote: r.statusNote === 'Host neodešel' ? undefined : r.statusNote,
+                        status: r.status === 'problem' ? 'ceka' : r.status
                     }
                 }
                 return r
             })
         }))
+    }
+
+    function handleUpdateTaskStatus(taskId: string, status: Task['status']) {
+        setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, status } : task)))
     }
 
     function handleCreateTask(roomId: string, input: CreateTaskInput) {
@@ -424,6 +439,7 @@ export default function App() {
                             tasks={visibleTodayTasks}
                             onAction={handleAction}
                             onCreateTask={handleCreateTask}
+                            onUpdateTaskStatus={handleUpdateTaskStatus}
                             role={(currentUser?.role || 'cleaner') as UserRole}
                             dayLabel={dayLabel}
                             staff={staff}
