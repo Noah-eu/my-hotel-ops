@@ -208,8 +208,8 @@ body {
     background: #fff;
     border-radius: 12px;
     border: 1px solid var(--line);
-    overflow: hidden;
-    padding: 8px;
+    overflow: visible;
+    padding: 10px;
 }
 
 .daily-table-header {
@@ -231,12 +231,30 @@ body {
 .daily-row-wrap {
     border: 1px solid #e8eff8;
     border-radius: 10px;
-    margin-bottom: 8px;
+        margin-bottom: 12px;
     background: #ffffff;
+        position: relative;
+        overflow: visible;
+        box-shadow: 0 1px 0 rgba(15,23,42,0.04);
 }
 
 .daily-row-wrap:last-child {
     margin-bottom: 0;
+}
+.daily-row-wrap::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: -10px;
+    height: 2px;
+    background: linear-gradient(90deg, rgba(15,23,42,0.05), rgba(15,23,42,0.02));
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.daily-row-wrap:last-child::after {
+    display: none;
 }
 
 .daily-row {
@@ -344,7 +362,7 @@ body {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    border-top: 1px dashed #e3ebf5;
+        border-top: 1px solid rgba(15,23,42,0.04);
     background: #fbfdff;
 }
 
