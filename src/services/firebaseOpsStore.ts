@@ -11,7 +11,7 @@ import {
     updateDoc,
     writeBatch
 } from 'firebase/firestore'
-import { ensureAnonymousAuth, firebaseAuth, firestoreDb } from '../lib/firebase'
+import { ensureAuthenticatedUser, firebaseAuth, firestoreDb } from '../lib/firebase'
 import { MaintenanceItem, SupplyRequest, Task } from '../types'
 import {
     CreateMaintenanceItemInput,
@@ -105,7 +105,7 @@ function buildFirestoreOperationError(error: any, path: string, operation: strin
 
 async function runWrite(label: string, operation: () => Promise<void>) {
     try {
-        await ensureAnonymousAuth()
+        await ensureAuthenticatedUser({ allowAnonymous: false })
         await operation()
         devLog(`write success: ${label}`)
     } catch (error: any) {
@@ -172,15 +172,7 @@ async function ensureSeeded(defaultState: OpsPersistedState) {
         batch.set(ref, cleaned)
     })
 
-    defaultState.staff.forEach((member) => {
-        const staffRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', member.id)
-        const availabilityRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', member.id)
-        const { cleaned: cleanedMember } = sanitizeForFirestore(member, `staff.${member.id}`)
-        batch.set(staffRef, cleanedMember)
-        const availabilityObj = { staffId: member.id, availability: member.availability || 'dnes_nepracuji', updatedAt: serverTimestamp() }
-        const { cleaned: cleanedAvail } = sanitizeForFirestore(availabilityObj, `dailyAvailability.${member.id}`)
-        batch.set(availabilityRef, cleanedAvail)
-    })
+    // Online mode uses Firebase Auth UID keyed staff profiles; do not seed demo identities.
 
     const { cleaned: cleanedMeta } = sanitizeForFirestore({ seeded: true, seededAt: serverTimestamp() }, 'meta.appState')
     batch.set(metaRef, cleanedMeta)
@@ -219,7 +211,7 @@ export function createFirebaseOpsStore(): OpsStore {
         },
         async initializeState(defaultState) {
             if (!firestoreDb) return
-            const authUser = await ensureAnonymousAuth()
+            const authUser = await ensureAuthenticatedUser({ allowAnonymous: false })
             authReadyUid = authUser?.uid || null
             devLog('Auth ready before seed/listeners', { uid: authReadyUid })
             try {
@@ -334,7 +326,7 @@ export function createFirebaseOpsStore(): OpsStore {
             unsubs.push(onSnapshot(
                 collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff'),
                 (snap) => {
-                    staffDocs = snap.docs.map((d) => d.data())
+                    staffDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
                     emitState()
                 },
                 (err) => {
@@ -469,13 +461,11 @@ export function createFirebaseOpsStore(): OpsStore {
         },
         async resetDemoState(defaultState) {
             if (!firestoreDb) return
-            await ensureAnonymousAuth()
+            await ensureAuthenticatedUser({ allowAnonymous: false })
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'roomPlans'])
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'tasks'])
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'supplyRequests'])
             await clearCollection(['hotels', ONLINE_HOTEL_ID, 'maintenanceItems'])
-            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'dailyAvailability'])
-            await clearCollection(['hotels', ONLINE_HOTEL_ID, 'staff'])
             await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'meta', 'appState'), {
                 seeded: false,
                 resetAt: serverTimestamp()

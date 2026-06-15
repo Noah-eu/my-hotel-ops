@@ -1,5 +1,12 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth, signInAnonymously, onAuthStateChanged, type User } from 'firebase/auth'
+import {
+    getAuth,
+    signInAnonymously,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    signOut,
+    type User
+} from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 
 type FirebaseEnvVarName =
@@ -68,7 +75,7 @@ export const appMode: AppMode = hasFirebaseConfig ? 'online' : 'demo'
 
 let pendingAnonymousAuthPromise: Promise<User | null> | null = null
 
-function waitForAuthUser(timeoutMs = 15000): Promise<User> {
+function waitForAuthUser(timeoutMs = 15000, allowAnonymous = true): Promise<User> {
     return new Promise((resolve, reject) => {
         if (!firebaseAuth) {
             reject(new Error('Firebase auth not initialized'))
@@ -84,6 +91,7 @@ function waitForAuthUser(timeoutMs = 15000): Promise<User> {
             firebaseAuth,
             (user) => {
                 if (!user) return
+                if (!allowAnonymous && user.isAnonymous) return
                 clearTimeout(timeout)
                 unsubscribe()
                 resolve(user)
@@ -95,6 +103,27 @@ function waitForAuthUser(timeoutMs = 15000): Promise<User> {
             }
         )
     })
+}
+
+export async function ensureAuthenticatedUser(options?: { allowAnonymous?: boolean; timeoutMs?: number }): Promise<User | null> {
+    const allowAnonymous = options?.allowAnonymous ?? false
+    const timeoutMs = options?.timeoutMs ?? 15000
+
+    if (!firebaseAuth) return null
+
+    const current = firebaseAuth.currentUser
+    if (current && (allowAnonymous || !current.isAnonymous)) {
+        await current.getIdToken()
+        return current
+    }
+
+    if (!allowAnonymous && current?.isAnonymous) {
+        throw Object.assign(new Error('Anonymous user is not allowed for this operation'), { code: 'auth/requires-email-login' })
+    }
+
+    const user = await waitForAuthUser(timeoutMs, allowAnonymous)
+    await user.getIdToken()
+    return user
 }
 
 export async function ensureAnonymousAuth(): Promise<User | null> {
@@ -127,6 +156,20 @@ export async function ensureAnonymousAuth(): Promise<User | null> {
     } finally {
         pendingAnonymousAuthPromise = null
     }
+}
+
+export async function signInWithEmailPassword(email: string, password: string): Promise<User | null> {
+    if (!firebaseAuth) return null
+    const credential = await signInWithEmailAndPassword(firebaseAuth, email, password)
+    await credential.user.getIdToken()
+    devLog('Email/password auth success', { uid: credential.user.uid })
+    return credential.user
+}
+
+export async function signOutFirebaseUser(): Promise<void> {
+    if (!firebaseAuth) return
+    await signOut(firebaseAuth)
+    devLog('Auth sign-out completed')
 }
 
 export function onFirebaseAuthState(callback: (user: User | null) => void): (() => void) | null {

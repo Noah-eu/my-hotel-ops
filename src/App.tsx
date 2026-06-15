@@ -1,4 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
+import type { User } from 'firebase/auth'
+import { doc, getDoc } from 'firebase/firestore'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
@@ -6,7 +8,14 @@ import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
-import { appMode, ensureAnonymousAuth, firebaseEnvDiagnostics } from './lib/firebase'
+import {
+    appMode,
+    firebaseEnvDiagnostics,
+    firestoreDb,
+    onFirebaseAuthState,
+    signInWithEmailPassword,
+    signOutFirebaseUser
+} from './lib/firebase'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -16,13 +25,25 @@ type AppDiagnostics = {
     missingEnvVars: string[]
     intendedMode: 'demo' | 'online'
     activeMode: 'demo' | 'online' | 'fallback'
-    authStatus: 'not_started' | 'signing_in' | 'signed_in_anonymous' | 'error'
+    authStatus: 'not_started' | 'signed_out' | 'signing_in' | 'signed_in_password' | 'error'
     authUid?: string
     firestoreStatus: 'not_started' | 'seeding' | 'listening' | 'connected' | 'permission_denied' | 'error'
     supplySyncCount?: number
     hotelId: string
     lastErrorCode?: string
     lastErrorMessage?: string
+}
+
+type StaffMember = {
+    id: string
+    name: string
+    role: UserRole
+    availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'
+}
+
+type OnlineStaffProfile = StaffMember & {
+    uid: string
+    active: boolean
 }
 
 function extractErrorInfo(error: any): { code?: string; message: string } {
@@ -76,6 +97,13 @@ function defaultAssigneeName(role: Task['assignedToRole']) {
     return undefined
 }
 
+function roleLabel(role: UserRole) {
+    if (role === 'admin') return 'Admin'
+    if (role === 'lead') return 'Iryna'
+    if (role === 'cleaner') return 'Úklid'
+    return 'Údržba'
+}
+
 export default function App() {
     const localStore = useMemo(() => createLocalOpsStore(), [])
     const onlineStore = useMemo(() => createFirebaseOpsStore(), [])
@@ -83,6 +111,14 @@ export default function App() {
     const [onlineLoading, setOnlineLoading] = useState(appMode === 'online')
     const [onlineError, setOnlineError] = useState<string | null>(null)
     const [diagOpen, setDiagOpen] = useState(false)
+    const [authUser, setAuthUser] = useState<User | null>(null)
+    const [profileLoading, setProfileLoading] = useState(false)
+    const [onlineProfile, setOnlineProfile] = useState<OnlineStaffProfile | null>(null)
+    const [missingProfileUid, setMissingProfileUid] = useState<string | null>(null)
+    const [loginEmail, setLoginEmail] = useState('')
+    const [loginPassword, setLoginPassword] = useState('')
+    const [loginLoading, setLoginLoading] = useState(false)
+    const [loginError, setLoginError] = useState<string | null>(null)
     const [diagnostics, setDiagnostics] = useState<AppDiagnostics>({
         firebaseConfigured: firebaseEnvDiagnostics.firebaseConfigured,
         missingEnvVars: firebaseEnvDiagnostics.missingEnvVars,
@@ -117,12 +153,14 @@ export default function App() {
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
     const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>(() => saved?.maintenanceItems ?? initialMaintenanceItems)
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
-    const [staff, setStaff] = useState(() => saved?.staff ?? users)
+    const [staff, setStaff] = useState<StaffMember[]>(() => saved?.staff ?? users)
     const [resetConfirm, setResetConfirm] = useState(false)
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
 
-    const currentUser = users.find((u) => u.id === userId)
+    const currentUser = runtimeMode === 'online'
+        ? (staff.find((u) => u.id === userId) || onlineProfile || null)
+        : (users.find((u) => u.id === userId) || null)
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const dayLabel = `${dayTitle} • ${new Date().toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
@@ -150,7 +188,60 @@ export default function App() {
         return supplyRequests.filter((s) => s.status !== 'cancelled')
     }, [supplyRequests, currentUser?.role])
 
+    async function loadOnlineProfile(user: User): Promise<OnlineStaffProfile | null> {
+        if (!firestoreDb) return null
+        const profileRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', user.uid)
+        const profileSnap = await getDoc(profileRef)
+        if (!profileSnap.exists()) return null
+
+        const data = profileSnap.data() as Partial<OnlineStaffProfile>
+        if (!data.role || !data.name) return null
+
+        return {
+            id: user.uid,
+            uid: user.uid,
+            name: data.name,
+            role: data.role,
+            active: data.active !== false,
+            availability: data.availability
+        }
+    }
+
+    function loginErrorMessage(code?: string) {
+        if (code === 'auth/invalid-credential') return 'Neplatný e-mail nebo heslo.'
+        if (code === 'auth/user-disabled') return 'Tento účet je deaktivovaný.'
+        if (code === 'auth/too-many-requests') return 'Příliš mnoho pokusů. Zkuste to prosím později.'
+        if (code === 'auth/network-request-failed') return 'Chyba sítě. Zkontrolujte připojení a zkuste to znovu.'
+        return 'Přihlášení se nepodařilo. Zkuste to prosím znovu.'
+    }
+
+    async function handleLoginSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault()
+        if (!loginEmail.trim() || !loginPassword) return
+        setLoginLoading(true)
+        setLoginError(null)
+        try {
+            const user = await signInWithEmailPassword(loginEmail.trim(), loginPassword)
+            setAuthUser(user)
+            setLoginPassword('')
+        } catch (error: any) {
+            setLoginError(loginErrorMessage(error?.code))
+        } finally {
+            setLoginLoading(false)
+        }
+    }
+
+    async function handleLogout() {
+        setLoginError(null)
+        setOnlineProfile(null)
+        setMissingProfileUid(null)
+        setAuthUser(null)
+        setOnlineLoading(false)
+        await signOutFirebaseUser()
+    }
+
     function handleRoleChange(nextUserId: string) {
+        if (runtimeMode === 'online') return
         const nextUser = users.find((u) => u.id === nextUserId)
         setUserId(nextUserId)
 
@@ -439,7 +530,7 @@ export default function App() {
         if (runtimeMode === 'online') {
             activeStore.setStaffAvailability(id, availability)
         }
-        setStaff((prev: any) => prev.map((s: any) => (s.id === id ? { ...s, availability } : s)))
+        setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, availability } : s)))
     }
 
     function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
@@ -502,34 +593,6 @@ export default function App() {
     }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
 
     useEffect(() => {
-        let unsub: (() => void) | null = null
-        let cancelled = false
-
-        function switchToDemoWithFallback(code: string | undefined, message: string) {
-            setDiagnostics((prev) => ({
-                ...prev,
-                activeMode: 'fallback',
-                lastErrorCode: code,
-                lastErrorMessage: message
-            }))
-            setOnlineError(`Online režim se nepodařilo spustit – používám demo data. ${code ? `${code}: ` : ''}${message}`)
-
-            const localSaved = localStore.loadInitialState()
-            if (localSaved) {
-                setUserId(localSaved.userId)
-                setTab(localSaved.tab)
-                setView(localSaved.view)
-                setRoomsByDay(localSaved.roomsByDay)
-                setTasks(localSaved.tasks)
-                setSupplyRequests(localSaved.supplyRequests)
-                setMaintenanceItems(localSaved.maintenanceItems)
-                setCustomSupplyChips(localSaved.customSupplyChips)
-                setStaff(localSaved.staff)
-            }
-            setRuntimeMode('demo')
-            setOnlineLoading(false)
-        }
-
         if (!firebaseEnvDiagnostics.firebaseConfigured) {
             setDiagnostics((prev) => ({
                 ...prev,
@@ -544,35 +607,101 @@ export default function App() {
             return
         }
 
-        if (runtimeMode !== 'online') {
+        if (runtimeMode !== 'online') return
+
+        const unsubscribe = onFirebaseAuthState((user) => {
+            setAuthUser(user)
+            if (!user) {
+                setOnlineProfile(null)
+                setMissingProfileUid(null)
+                setOnlineLoading(false)
+                setDiagnostics((prev) => ({
+                    ...prev,
+                    activeMode: 'online',
+                    authStatus: 'signed_out',
+                    authUid: undefined,
+                    firestoreStatus: 'not_started'
+                }))
+                return
+            }
+
+            setDiagnostics((prev) => ({
+                ...prev,
+                activeMode: 'online',
+                authStatus: user.isAnonymous ? 'error' : 'signed_in_password',
+                authUid: user.uid
+            }))
+        })
+
+        return () => {
+            if (unsubscribe) unsubscribe()
+        }
+    }, [runtimeMode])
+
+    useEffect(() => {
+        let unsub: (() => void) | null = null
+        let cancelled = false
+
+        if (!firebaseEnvDiagnostics.firebaseConfigured || runtimeMode !== 'online') {
             setOnlineLoading(false)
             return
         }
 
+        if (!authUser) {
+            setOnlineLoading(false)
+            return
+        }
+
+        if (authUser.isAnonymous) {
+            setOnlineError('Online režim vyžaduje přihlášení e-mailem a heslem.')
+            setOnlineLoading(false)
+            setDiagnostics((prev) => ({
+                ...prev,
+                authStatus: 'error',
+                lastErrorCode: 'auth/requires-email-login',
+                lastErrorMessage: 'Anonymous přihlášení není pro online provoz podporované.'
+            }))
+            return
+        }
+
+        setProfileLoading(true)
         setOnlineLoading(true)
         setOnlineError(null)
         setDiagnostics((prev) => ({
             ...prev,
-            activeMode: 'online',
-            authStatus: 'signing_in',
-            firestoreStatus: 'not_started',
+            authStatus: 'signed_in_password',
+            firestoreStatus: 'seeding',
             lastErrorCode: undefined,
             lastErrorMessage: undefined
         }))
 
-        ensureAnonymousAuth()
-            .then((user) => {
+        loadOnlineProfile(authUser)
+            .then((profile) => {
                 if (cancelled) return null
-                setDiagnostics((prev) => ({
-                    ...prev,
-                    authStatus: 'signed_in_anonymous',
-                    authUid: user?.uid || undefined,
-                    firestoreStatus: 'seeding'
-                }))
+                setProfileLoading(false)
+                if (!profile || !profile.active) {
+                    setOnlineProfile(null)
+                    setMissingProfileUid(authUser.uid)
+                    setOnlineLoading(false)
+                    setDiagnostics((prev) => ({
+                        ...prev,
+                        firestoreStatus: 'error',
+                        lastErrorCode: 'profile/not-found',
+                        lastErrorMessage: 'Uživatel není přiřazený k hotelu.'
+                    }))
+                    return null
+                }
+
+                setMissingProfileUid(null)
+                setOnlineProfile(profile)
+                setUserId(profile.id)
+                if (profile.role === 'maintenance') {
+                    setView('maintenance')
+                }
                 return onlineStore.initializeState(defaultState)
             })
-            .then(() => {
-                if (cancelled) return
+            .then((initResult) => {
+                if (cancelled || initResult === null) return
                 setDiagnostics((prev) => ({
                     ...prev,
                     firestoreStatus: 'listening'
@@ -587,7 +716,7 @@ export default function App() {
                             setDiagnostics((prev) => ({ ...prev, supplySyncCount: state.supplyRequests?.length || 0 }))
                         }
                         if (state.maintenanceItems) setMaintenanceItems(state.maintenanceItems)
-                        if (state.staff) setStaff(state.staff)
+                        if (state.staff) setStaff(state.staff as StaffMember[])
                         setDiagnostics((prev) => ({
                             ...prev,
                             firestoreStatus: 'connected'
@@ -607,12 +736,14 @@ export default function App() {
                             lastErrorCode: code,
                             lastErrorMessage: message
                         }))
-                        switchToDemoWithFallback(code, message)
+                        setOnlineError(`${code ? `${code}: ` : ''}${message}`)
+                        setOnlineLoading(false)
                     }
                 )
             })
             .catch((err: any) => {
                 if (cancelled) return
+                setProfileLoading(false)
                 const errorInfo = extractErrorInfo(err)
                 const isAuthError = Boolean(errorInfo.code && String(errorInfo.code).startsWith('auth/'))
                 setDiagnostics((prev) => ({
@@ -624,14 +755,15 @@ export default function App() {
                     lastErrorCode: errorInfo.code,
                     lastErrorMessage: errorInfo.message
                 }))
-                switchToDemoWithFallback(errorInfo.code, errorInfo.message)
+                setOnlineError(`${errorInfo.code ? `${errorInfo.code}: ` : ''}${errorInfo.message}`)
+                setOnlineLoading(false)
             })
 
         return () => {
             cancelled = true
             if (unsub) unsub()
         }
-    }, [runtimeMode, onlineStore, localStore, defaultState])
+    }, [runtimeMode, authUser, onlineStore, defaultState])
 
     async function resetDemoData() {
         // restore mock data and clear saved state
@@ -679,12 +811,29 @@ export default function App() {
                         )}
                     </div>
                 </div>
-                <RoleSwitch current={userId} onChange={handleRoleChange} />
+                {runtimeMode === 'demo' ? (
+                    <RoleSwitch current={userId} onChange={handleRoleChange} />
+                ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 13, color: '#334155' }}>
+                            {onlineProfile ? (
+                                <>
+                                    <strong>{onlineProfile.name}</strong> • {roleLabel(onlineProfile.role)}
+                                </>
+                            ) : authUser ? (
+                                <>Přihlášený uživatel: {authUser.email || authUser.uid}</>
+                            ) : (
+                                <>Nejste přihlášeni</>
+                            )}
+                        </div>
+                        <button className="btn" onClick={handleLogout} disabled={!authUser}>Odhlásit</button>
+                    </div>
+                )}
             </div>
 
-            {(runtimeMode === 'online' && (onlineLoading || onlineError)) && (
+            {(runtimeMode === 'online' && onlineError) && (
                 <div style={{ padding: '4px 12px', fontSize: 12, color: onlineError ? '#b91c1c' : '#475569' }}>
-                    {onlineError || 'Připojuji k online datům...'}
+                    {onlineError}
                 </div>
             )}
 
@@ -696,6 +845,50 @@ export default function App() {
             )}
 
             <div style={{ padding: 12 }}>
+                {runtimeMode === 'online' && !authUser && (
+                    <div className="section" style={{ maxWidth: 420, margin: '0 auto' }}>
+                        <h3>Přihlášení</h3>
+                        <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 8, background: '#fff', padding: 12, borderRadius: 12, border: '1px solid #dbe7f3' }}>
+                            <input
+                                type="email"
+                                value={loginEmail}
+                                onChange={(e) => setLoginEmail(e.target.value)}
+                                placeholder="E-mail"
+                                autoComplete="email"
+                                required
+                            />
+                            <input
+                                type="password"
+                                value={loginPassword}
+                                onChange={(e) => setLoginPassword(e.target.value)}
+                                placeholder="Heslo"
+                                autoComplete="current-password"
+                                required
+                            />
+                            <button className="action-large" type="submit" disabled={loginLoading}>
+                                {loginLoading ? 'Přihlašuji…' : 'Přihlásit'}
+                            </button>
+                            {loginError && <div style={{ color: '#b91c1c', fontSize: 13 }}>{loginError}</div>}
+                        </form>
+                    </div>
+                )}
+
+                {runtimeMode === 'online' && authUser && !onlineProfile && !profileLoading && (
+                    <div className="section" style={{ maxWidth: 520, margin: '0 auto', background: '#fff', padding: 12, borderRadius: 12, border: '1px solid #fecaca' }}>
+                        <h3 style={{ marginBottom: 6 }}>Uživatel není přiřazený k hotelu.</h3>
+                        <div style={{ fontSize: 13, color: '#475569' }}>Vytvořte prosím dokument ve Firestore: hotels/{ONLINE_HOTEL_ID}/staff/{missingProfileUid || authUser.uid}</div>
+                        <div style={{ marginTop: 6, fontSize: 13, color: '#0f172a' }}>UID: {missingProfileUid || authUser.uid}</div>
+                    </div>
+                )}
+
+                {runtimeMode === 'online' && (onlineLoading || profileLoading) && authUser && (
+                    <div style={{ padding: '4px 12px', fontSize: 12, color: '#475569' }}>
+                        Načítám online data...
+                    </div>
+                )}
+
+                {runtimeMode === 'online' && (!authUser || !onlineProfile) ? null : (
+                <>
                 <div className="tabs">
                     <div className={`tab ${tab === 'Dnes' ? 'active' : ''}`} onClick={() => setTab('Dnes')}>Dnes</div>
                     <div className={`tab ${tab === 'Zitra' ? 'active' : ''}`} onClick={() => setTab('Zitra')}>Zítra</div>
@@ -774,6 +967,8 @@ export default function App() {
                         />
                     )}
                 </div>
+                </>
+                )}
             </div>
         </div>
     )
