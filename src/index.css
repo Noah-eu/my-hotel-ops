@@ -395,37 +395,81 @@ body {
 /* Distinct Departure (Odjezd) and Arrival (Příjezd) cell styling */
 /* .daily-row children: 1 = room-col, 2 = departure, 3 = arrival */
 .daily-row > div:nth-child(2) {
-    /* departure: cool/neutral tint */
-    background: rgba(59,130,246,0.02);
-    padding-left: 12px;
-    padding-right: 12px;
-    border-right: 1px solid rgba(2,6,23,0.06);
+    /* departure: cool/neutral panel */
+    background: rgba(59, 130, 246, 0.04);
+    padding: 14px 12px;
+    border-right: 2px solid rgba(15, 23, 42, 0.08);
+    position: relative;
 }
+.daily-row > div:nth-child(2)::before {
+    content: "Odjezd";
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-size: 11px;
+    font-weight: 800;
+    color: rgba(15,23,42,0.48);
+    text-transform: uppercase;
+}
+
 .daily-row > div:nth-child(3) {
-    /* arrival: warm/light green tint to stand out */
-    background: rgba(16,185,129,0.03);
-    padding-left: 12px;
-    padding-right: 12px;
-    border-left: 1px solid rgba(2,6,23,0.06);
+    /* arrival: warm/light green panel */
+    background: rgba(16, 185, 129, 0.045);
+    padding: 14px 12px;
+    border-left: 2px solid rgba(15, 23, 42, 0.08);
+    position: relative;
+}
+.daily-row > div:nth-child(3)::before {
+    content: "Příjezd";
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-size: 11px;
+    font-weight: 800;
+    color: rgba(15,23,42,0.48);
+    text-transform: uppercase;
 }
 
 /* Make arrival time and BOX more visible */
 .daily-row > div:nth-child(3) .plan-time {
-    color: #166534; /* stronger green for arrival time */
+    color: #0b5f3a; /* stronger green for arrival time */
+    font-size: 18px;
+    margin-top: 18px; /* leave space for label */
 }
+
 .daily-row > div:nth-child(3) .plan-note {
-    background: rgba(16,185,129,0.06);
+    background: rgba(16, 185, 129, 0.06);
     border: 1px solid rgba(16,185,129,0.08);
 }
 
-/* Keep departure text clear but slightly cooler tonal */
 .daily-row > div:nth-child(2) .plan-time {
-    color: #1f2937; /* neutral/darker */
+    color: #0f172a; /* neutral/darker */
+    font-size: 17px;
+    margin-top: 18px;
+}
+
+.daily-row > div:nth-child(2) .plan-empty,
+.daily-row > div:nth-child(3) .plan-empty {
+    color: #94a3b8;
+    font-style: italic;
+    background: transparent;
+}
+
+/* stronger divider between departure and arrival for clarity */
+.daily-row > div:nth-child(2),
+.daily-row > div:nth-child(3) {
+    min-height: 72px;
+}
+
+/* Keep departure text clear but slightly cooler tonal */
+.daily-row>div:nth-child(2) .plan-time {
+    color: #1f2937;
+    /* neutral/darker */
 }
 
 /* Muted empty states */
-.daily-row > div:nth-child(2) .plan-empty,
-.daily-row > div:nth-child(3) .plan-empty {
+.daily-row>div:nth-child(2) .plan-empty,
+.daily-row>div:nth-child(3) .plan-empty {
     color: #94a3b8;
     font-style: italic;
 }
