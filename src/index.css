@@ -209,7 +209,7 @@ body {
     border-radius: 12px;
     border: 1px solid var(--line);
     overflow: visible;
-    padding: 10px;
+    padding: 12px;
 }
 
 .daily-table-header {
@@ -229,16 +229,17 @@ body {
 }
 
 .daily-row-wrap {
-    /* each room is a contained block with a subtle border */
+    /* each room is a contained block with a clear status outline */
     --status-color: transparent;
-    --status-border: rgba(232,238,245,0.9);
-    border: 2px solid var(--status-border);
-    border-radius: 12px;
-    margin-bottom: 14px;
+    --status-border: rgba(232, 238, 245, 0.9);
+    --status-bg: rgba(255,255,255,0);
+    border: 3px solid var(--status-border);
+    border-radius: 14px;
+    margin-bottom: 16px;
     background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
     position: relative;
     overflow: hidden;
-    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+    box-shadow: 0 6px 14px rgba(2,6,23,0.06);
 }
 
 .daily-row-wrap:last-child {
@@ -252,10 +253,10 @@ body {
     left: 0;
     top: 0;
     bottom: 0;
-    width: 8px;
+    width: 8px; /* thicker left stripe */
     background: var(--status-color, transparent);
-    border-top-left-radius: 10px;
-    border-bottom-left-radius: 10px;
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
     z-index: 1;
     pointer-events: none;
 }
@@ -282,12 +283,14 @@ body {
     grid-template-columns: 96px 1fr 1fr;
     gap: 0;
     position: relative;
-    z-index: 2; /* place content above the left accent */
+    z-index: 2;
+    /* place content above the left accent */
+    background: var(--status-bg, transparent);
 }
 
 .room-col {
-    padding: 10px 8px;
-    border-right: 1px solid #eef2f7;
+    padding: 12px 10px;
+    border-right: 1px solid rgba(2,6,23,0.04);
 }
 
 .room-no {
@@ -325,8 +328,8 @@ body {
 }
 
 .plan-col {
-    padding: 10px 8px;
-    border-right: 1px solid #eef2f7;
+    padding: 12px 10px;
+    border-right: 1px solid rgba(2,6,23,0.04);
     min-height: 88px;
 }
 
@@ -380,30 +383,59 @@ body {
 }
 
 .expanded-actions {
-    padding: 10px 8px 12px 8px;
+    padding: 12px 10px 14px 10px;
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
     border-top: 1px solid rgba(15, 23, 42, 0.04);
-    background: #fbfdff;
+    background: rgba(255,255,255,0.6);
 }
 
 .row-even {
-    background: #ffffff;
+    background: transparent;
 }
 
 .row-odd {
-    background: #fcfdff;
+    background: transparent;
 }
 
-.status-row-red { --status-color: #ef4444; --status-border: rgba(239,68,68,0.14); }
-.status-row-blue { --status-color: #3b82f6; --status-border: rgba(59,130,246,0.12); }
-.status-row-orange { --status-color: #f97316; --status-border: rgba(249,115,22,0.14); }
-.status-row-purple { --status-color: #8b5cf6; --status-border: rgba(139,92,246,0.14); }
-.status-row-green { --status-color: #10b981; --status-border: rgba(16,185,129,0.14); }
-.status-row-gray { --status-color: #94a3b8; --status-border: rgba(148,163,184,0.12); }
+.status-row-red {
+    --status-color: #ef4444;
+    --status-border: rgba(239, 68, 68, 0.22);
+    --status-bg: rgba(239, 68, 68, 0.04);
+}
 
-/* apply the colored border when status variable is present */
+.status-row-blue {
+    --status-color: #3b82f6;
+    --status-border: rgba(59, 130, 246, 0.18);
+    --status-bg: rgba(59, 130, 246, 0.03);
+}
+
+.status-row-orange {
+    --status-color: #f97316;
+    --status-border: rgba(249, 115, 22, 0.22);
+    --status-bg: rgba(249, 115, 22, 0.04);
+}
+
+.status-row-purple {
+    --status-color: #8b5cf6;
+    --status-border: rgba(139, 92, 246, 0.20);
+    --status-bg: rgba(139, 92, 246, 0.04);
+}
+
+.status-row-green {
+    --status-color: #10b981;
+    --status-border: rgba(16, 185, 129, 0.20);
+    --status-bg: rgba(16, 185, 129, 0.04);
+}
+
+.status-row-gray {
+    --status-color: #94a3b8;
+    --status-border: rgba(148, 163, 184, 0.14);
+    --status-bg: rgba(148, 163, 184, 0.03);
+}
+
+/* apply the colored border and subtle background when status variable is present */
 .status-row-red,
 .status-row-blue,
 .status-row-orange,
@@ -411,6 +443,7 @@ body {
 .status-row-green,
 .status-row-gray {
     border-color: var(--status-border);
+    background: linear-gradient(180deg, var(--status-bg) 0%, rgba(255,255,255,0.6) 100%);
 }
 
 .footer {
