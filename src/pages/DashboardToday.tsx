@@ -3,10 +3,12 @@ import { RoomPlan } from '../types'
 
 export default function DashboardToday({ rooms, onAction, role, dayLabel }: { rooms: RoomPlan[]; onAction: (id: string, action: string) => void; role: string; dayLabel: string }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
+    const isCleaningRole = role === 'cleaner' || role === 'lead'
 
     function statusClass(status: RoomPlan['status']) {
         switch (status) {
             case 'ceka':
+            case 'problem':
                 return 'status-row-red'
             case 'prevzato':
                 return 'status-row-blue'
@@ -25,16 +27,18 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
         switch (status) {
             case 'ceka':
                 return 'Čeká'
+            case 'problem':
+                return 'Problém'
             case 'prevzato':
                 return 'Převzato'
             case 'probihá':
                 return 'Probíhá'
             case 'odhad':
-                return 'Odhad hotovo'
+                return 'Odhad'
             case 'hotovo':
-                return 'Připraveno'
+                return 'Hotovo'
             default:
-                return 'Není potřeba řešit'
+                return 'Volno'
         }
     }
 
@@ -55,23 +59,17 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                     <div>Příjezd</div>
                 </div>
 
-                {rooms.map((room) => {
+                {rooms.map((room, index) => {
                     const isExpanded = expandedRoom === room.id
 
                     return (
-                        <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)}`}>
+                        <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
                             <div className="daily-row">
                                 <div className="room-col">
-                                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-                                        <div>
-                                            <div className="room-no">{room.number}</div>
-                                            <div className="mini-badge">{statusLabel(room.status)}</div>
-                                            {room.assigned && <div className="mini-muted">{room.assigned}</div>}
-                                        </div>
-                                        <div>
-                                            <button className="action-secondary" style={{padding:'6px 8px',fontSize:16}} onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>⋯</button>
-                                        </div>
-                                    </div>
+                                    <div className="room-no">{room.number}</div>
+                                    <div className="mini-badge">{statusLabel(room.status)}</div>
+                                    <button className="room-action-btn" onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>{isExpanded ? '×' : '⋯'}</button>
+                                    {room.assigned && <div className="mini-muted">{room.assigned}</div>}
                                 </div>
 
                                 <div className={`plan-col ${room.departure ? '' : 'empty-col'}`}>
@@ -79,7 +77,6 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                         <>
                                             <div className="plan-time">{room.departure.time}</div>
                                             <div className="plan-meta">{room.departure.guestLabel || 'Host'}{room.departure.guestCount ? ` • ${room.departure.guestCount}p` : ''}</div>
-                                            {room.assigned && <div className="plan-meta">Úklid: {room.assigned}</div>}
                                         </>
                                     ) : (
                                         <div className="plan-empty">—</div>
@@ -91,11 +88,11 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                         <>
                                             <div className="plan-time">{room.arrival.time}</div>
                                             <div className="plan-meta">{room.arrival.guestLabel || 'Host'}{room.arrival.guestCount ? ` • ${room.arrival.guestCount}p` : ''}</div>
-                                            <div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}}>
-                                                {room.arrival.box && <div className="chip">{room.arrival.box}</div>}
-                                                {room.arrival.notes && room.arrival.notes.map(n => <div key={n} className="note-chip">{n}</div>)}
-                                                {room.estimatedReady && <div className="plan-ready">Odhad: {room.estimatedReady}</div>}
+                                            <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                                {room.arrival.box && <div className="note-chip">{room.arrival.box}</div>}
+                                                {room.arrival.notes && room.arrival.notes.slice(0, 1).map(n => <div key={n} className="note-chip">{n}</div>)}
                                             </div>
+                                            {room.estimatedReady && <div className="plan-ready">Odhad: {room.estimatedReady}</div>}
                                         </>
                                     ) : (
                                         <>
@@ -110,10 +107,10 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
 
                             {isExpanded && (
                                 <div className="expanded-actions">
-                                    <button className={role === 'cleaner' ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'prevzit')}>Převzít pokoj</button>
-                                    <button className={role === 'cleaner' ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'odhad')}>Odhad hotovo</button>
-                                    <button className={role === 'cleaner' ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'hotovo')}>Hotovo</button>
-                                    <button className={role === 'cleaner' ? 'action-large' : 'chip'} style={role === 'cleaner' ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'odhad')}>Odhad</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'hotovo')}>Hotovo</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
                                     <button className="action-secondary" onClick={() => onAction(room.id, 'host_zustava')}>Host je ještě na pokoji</button>
                                     {role === 'admin' && <button className="chip" onClick={() => onAction(room.id, 'add_task')}>Přidat úkol</button>}
                                 </div>

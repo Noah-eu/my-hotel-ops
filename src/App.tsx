@@ -17,6 +17,17 @@ export default function App() {
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const dayLabel = `${dayTitle} • ${new Date().toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
 
+    function handleRoleChange(nextUserId: string) {
+        const nextUser = users.find((u) => u.id === nextUserId)
+        setUserId(nextUserId)
+
+        if (nextUser?.role === 'maintenance') {
+            setView('maintenance')
+        } else if (view === 'maintenance') {
+            setView('today')
+        }
+    }
+
     function handleAction(id: string, action: string) {
         setRoomsByDay(prev => ({
             ...prev,
@@ -26,7 +37,7 @@ export default function App() {
                 if (action === 'hotovo') return { ...r, status: 'hotovo' }
                 if (action === 'prevzit') return { ...r, status: 'prevzato' }
                 if (action === 'odhad') return { ...r, status: 'odhad', estimatedReady: r.estimatedReady || '12:30' }
-                if (action === 'problem') return { ...r, status: 'ceka' }
+                if (action === 'problem') return { ...r, status: 'problem' }
                 return r
             })
         }))
@@ -36,7 +47,7 @@ export default function App() {
         <div className="app">
             <div className="topbar">
                 <div className="title">My Hotel Ops</div>
-                <RoleSwitch current={userId} onChange={setUserId} />
+                <RoleSwitch current={userId} onChange={handleRoleChange} />
             </div>
 
             <div style={{ padding: 12 }}>
@@ -47,10 +58,10 @@ export default function App() {
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button className="btn" onClick={() => setView('today')}>Dnes</button>
-                    <button className="btn" onClick={() => setView('admin')}>Admin</button>
-                    <button className="btn" onClick={() => setView('maintenance')}>Údržba</button>
-                    <button className="btn" onClick={() => setView('supplies')}>Nákupy</button>
+                    <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Dnes</button>
+                    <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
+                    <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
+                    <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
                 </div>
 
                 {tab !== 'Dnes' && (

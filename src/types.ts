@@ -2,7 +2,7 @@ export type UserRole = 'admin' | 'lead' | 'cleaner' | 'maintenance'
 
 export type RoomSituation = 'odjezd' | 'prijezd' | 'odjezd_prijezd' | 'volny'
 
-export type RoomStatus = 'ceka' | 'prevzato' | 'probihá' | 'odhad' | 'hotovo' | 'neni'
+export type RoomStatus = 'ceka' | 'problem' | 'prevzato' | 'probihá' | 'odhad' | 'hotovo' | 'neni'
 
 export type PlanDay = 'Dnes' | 'Zitra' | 'Pozitri'
 
