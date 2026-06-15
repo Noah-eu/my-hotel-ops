@@ -1,9 +1,17 @@
 import React, { useState } from 'react'
 import { RoomPlan } from '../types'
 
-export default function DashboardToday({ rooms, onAction, role, dayLabel }: { rooms: RoomPlan[]; onAction: (id: string, action: string) => void; role: string; dayLabel: string }) {
+type ActionPayload = {
+    estimateTime?: string
+    relativeMinutes?: number
+}
+
+export default function DashboardToday({ rooms, onAction, role, dayLabel }: { rooms: RoomPlan[]; onAction: (id: string, action: string, payload?: ActionPayload) => void; role: string; dayLabel: string }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
+    const [estimatingRoom, setEstimatingRoom] = useState<string | null>(null)
     const isCleaningRole = role === 'cleaner' || role === 'lead'
+    const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
+    const relativeEstimateOptions = [30, 45, 60]
 
     function statusClass(status: RoomPlan['status']) {
         switch (status) {
@@ -70,6 +78,7 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                     <div className="mini-badge">{statusLabel(room.status)}</div>
                                     <button className="room-action-btn" onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
+                                    {room.statusNote && <div className="mini-muted" style={{ color: '#b45309' }}>{room.statusNote}</div>}
                                 </div>
 
                                 <div className={`plan-col ${room.departure ? '' : 'empty-col'}`}>
@@ -92,11 +101,22 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                                 {room.arrival.box && <div className="note-chip">{room.arrival.box}</div>}
                                                 {room.arrival.notes && room.arrival.notes.slice(0, 1).map(n => <div key={n} className="note-chip">{n}</div>)}
                                             </div>
-                                            {room.estimatedReady && <div className="plan-ready">Odhad: {room.estimatedReady}</div>}
+                                            {room.estimatedReady && (
+                                                <div className="plan-ready">
+                                                    Odhad: {room.estimatedReady}
+                                                    {room.estimateSetAt ? ` (zadán v ${room.estimateSetAt})` : ''}
+                                                </div>
+                                            )}
                                         </>
                                     ) : (
                                         <>
                                             <div className="plan-empty">—</div>
+                                            {room.estimatedReady && (
+                                                <div className="plan-ready">
+                                                    Odhad: {room.estimatedReady}
+                                                    {room.estimateSetAt ? ` (zadán v ${room.estimateSetAt})` : ''}
+                                                </div>
+                                            )}
                                             {room.situation === 'odjezd' && nextArrivalText(room) && (
                                                 <div className="plan-preview">{nextArrivalText(room)}</div>
                                             )}
@@ -108,11 +128,54 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                             {isExpanded && (
                                 <div className="expanded-actions">
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'odhad')}>Odhad</button>
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'hotovo')}>Hotovo</button>
+                                    <button
+                                        className={isCleaningRole ? 'action-large' : 'chip'}
+                                        onClick={() => setEstimatingRoom(estimatingRoom === room.id ? null : room.id)}
+                                    >
+                                        Odhad
+                                    </button>
+                                    <button
+                                        className={isCleaningRole ? 'action-large' : 'chip'}
+                                        onClick={() => {
+                                            onAction(room.id, 'hotovo')
+                                            setExpandedRoom(null)
+                                            setEstimatingRoom(null)
+                                        }}
+                                    >
+                                        Hotovo
+                                    </button>
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
                                     <button className="action-secondary" onClick={() => onAction(room.id, 'host_zustava')}>Host je ještě na pokoji</button>
                                     {role === 'admin' && <button className="chip" onClick={() => onAction(room.id, 'add_task')}>Přidat úkol</button>}
+
+                                    {estimatingRoom === room.id && (
+                                        <div style={{ width: '100%', display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                                            {fixedEstimateOptions.map((time) => (
+                                                <button
+                                                    key={time}
+                                                    className="chip"
+                                                    onClick={() => {
+                                                        onAction(room.id, 'odhad', { estimateTime: time })
+                                                        setEstimatingRoom(null)
+                                                    }}
+                                                >
+                                                    {time}
+                                                </button>
+                                            ))}
+                                            {relativeEstimateOptions.map((mins) => (
+                                                <button
+                                                    key={mins}
+                                                    className="chip"
+                                                    onClick={() => {
+                                                        onAction(room.id, 'odhad', { relativeMinutes: mins })
+                                                        setEstimatingRoom(null)
+                                                    }}
+                                                >
+                                                    +{mins} min
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

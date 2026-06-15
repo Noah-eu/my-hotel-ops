@@ -6,6 +6,13 @@ import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users } from './mockData'
 
+type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'add_task'
+
+type ActionPayload = {
+    estimateTime?: string
+    relativeMinutes?: number
+}
+
 export default function App() {
     const [userId, setUserId] = useState('david')
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>('Dnes')
@@ -28,16 +35,68 @@ export default function App() {
         }
     }
 
-    function handleAction(id: string, action: string) {
+    function formatNowHHmm(date = new Date()) {
+        return date.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', hour12: false })
+    }
+
+    function addMinutes(base: Date, minutes: number) {
+        const next = new Date(base.getTime() + minutes * 60 * 1000)
+        return formatNowHHmm(next)
+    }
+
+    function handleAction(id: string, action: RoomAction, payload?: ActionPayload) {
+        const assignedName = currentUser?.name
+        const now = new Date()
+        const setAt = formatNowHHmm(now)
+        const computedEstimate = payload?.estimateTime
+            ? payload.estimateTime
+            : typeof payload?.relativeMinutes === 'number'
+                ? addMinutes(now, payload.relativeMinutes)
+                : undefined
+
         setRoomsByDay(prev => ({
             ...prev,
             [tab]: prev[tab].map(r => {
                 if (r.id !== id) return r
 
-                if (action === 'hotovo') return { ...r, status: 'hotovo' }
-                if (action === 'prevzit') return { ...r, status: 'prevzato' }
-                if (action === 'odhad') return { ...r, status: 'odhad', estimatedReady: r.estimatedReady || '12:30' }
-                if (action === 'problem') return { ...r, status: 'problem' }
+                if (action === 'hotovo') {
+                    return {
+                        ...r,
+                        status: 'hotovo',
+                        statusNote: undefined
+                    }
+                }
+                if (action === 'prevzit') {
+                    return {
+                        ...r,
+                        status: 'prevzato',
+                        assigned: assignedName || r.assigned,
+                        statusNote: undefined
+                    }
+                }
+                if (action === 'odhad') {
+                    return {
+                        ...r,
+                        status: 'odhad',
+                        estimatedReady: computedEstimate || r.estimatedReady || '12:30',
+                        estimateSetAt: setAt,
+                        assigned: assignedName || r.assigned,
+                        statusNote: undefined
+                    }
+                }
+                if (action === 'problem') {
+                    return {
+                        ...r,
+                        status: 'problem',
+                        statusNote: 'Problém nahlášen'
+                    }
+                }
+                if (action === 'host_zustava') {
+                    return {
+                        ...r,
+                        statusNote: 'Host je ještě na pokoji'
+                    }
+                }
                 return r
             })
         }))
@@ -70,7 +129,7 @@ export default function App() {
 
                 <div style={{ marginTop: 12 }}>
                     {view === 'today' && <DashboardToday rooms={roomsByDay[tab]} onAction={handleAction} role={currentUser?.role || 'cleaner'} dayLabel={dayLabel} />}
-                    {view === 'admin' && <AdminDashboard />}
+                    {view === 'admin' && <AdminDashboard rooms={roomsByDay[tab]} />}
                     {view === 'maintenance' && <MaintenanceView />}
                     {view === 'supplies' && <SuppliesView />}
                 </div>

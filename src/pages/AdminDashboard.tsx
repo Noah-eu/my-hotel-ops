@@ -1,11 +1,12 @@
 import React from 'react'
-import { roomPlans, supplyRequests } from '../mockData'
+import { RoomPlan } from '../types'
+import { supplyRequests } from '../mockData'
 
-export default function AdminDashboard() {
-    const hotove = roomPlans.filter(r => r.status === 'hotovo')
-    const ceka = roomPlans.filter(r => r.status === 'ceka')
-    const problemy = roomPlans.filter(r => r.status === 'probihá')
-    const odhad = roomPlans.filter(r => r.status === 'odhad')
+export default function AdminDashboard({ rooms }: { rooms: RoomPlan[] }) {
+    const hotove = rooms.filter(r => r.status === 'hotovo')
+    const ceka = rooms.filter(r => r.status === 'ceka' || r.status === 'prevzato' || r.status === 'probihá')
+    const problemy = rooms.filter(r => r.status === 'problem')
+    const odhad = rooms.filter(r => r.status === 'odhad')
     const nakupy = supplyRequests.filter(s => s.status === 'open')
 
     return (
@@ -21,14 +22,14 @@ export default function AdminDashboard() {
             </div>
             <div className="section">
                 <h3>Pokoje připravené pro hosty</h3>
-                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {hotove.map(r => (
-                        <div key={r.id} className="room-card" style={{borderLeft:'6px solid #10b981'}}>
-                            <div style={{flex:1}}>
-                                <div style={{fontWeight:800}}>{r.number}</div>
+                        <div key={r.id} className="room-card" style={{ borderLeft: '6px solid #10b981' }}>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 800 }}>{r.number}</div>
                                 <div className="room-meta">Připraveno pro hosty</div>
                             </div>
-                            <div style={{fontWeight:700,color:'#10b981'}}>{r.estimatedReady || 'Hotovo'}</div>
+                            <div style={{ fontWeight: 700, color: '#10b981' }}>{r.estimatedReady || 'Hotovo'}</div>
                         </div>
                     ))}
                 </div>

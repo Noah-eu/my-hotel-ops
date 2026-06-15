@@ -40,6 +40,8 @@ export interface RoomPlan {
     status: RoomStatus
     assigned?: string // user id
     estimatedReady?: string // HH:MM concrete time
+    estimateSetAt?: string // HH:MM when estimate was set
+    statusNote?: string
 }
 
 export interface Task {
