@@ -4,8 +4,8 @@ import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
-import { roomPlansByDay, users, supplyRequests as initialSupplyRequests } from './mockData'
-import { SupplyRequest, Task, UserRole } from './types'
+import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
+import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
 
 type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava'
 
@@ -74,6 +74,7 @@ export default function App() {
     const [roomsByDay, setRoomsByDay] = useState(() => saved?.roomsByDay ?? roomPlansByDay)
     const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
+    const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>(() => saved?.maintenanceItems ?? initialMaintenanceItems)
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
     const [staff, setStaff] = useState(() => saved?.staff ?? users)
     const [resetConfirm, setResetConfirm] = useState(false)
@@ -219,6 +220,54 @@ export default function App() {
         )
     }
 
+    function handleCreateMaintenanceItem(input: { roomNumber?: string; title: string; category: MaintenanceItem['category']; priority: MaintenanceItem['priority']; note?: string }) {
+        if (!currentUser) return
+        const newItem: MaintenanceItem = {
+            id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            roomNumber: formatRoomNumber(input.roomNumber),
+            title: input.title.trim(),
+            category: input.category,
+            priority: input.priority,
+            status: 'new',
+            note: input.note?.trim() || undefined,
+            reportedBy: currentUser.name,
+            createdAt: formatNowHHmm(new Date())
+        }
+        setMaintenanceItems((prev) => [newItem, ...prev])
+    }
+
+    function handleUpdateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>) {
+        setMaintenanceItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch, updatedAt: formatNowHHmm(new Date()) } : it)))
+    }
+
+    function handleMaterialNeeded(itemId: string, materialText: string) {
+        const material = materialText.trim()
+        if (!material) return
+        const item = maintenanceItems.find((m) => m.id === itemId)
+        if (!item) return
+
+        // update maintenance item
+        handleUpdateMaintenanceItem(itemId, { materialNeeded: material, status: 'waiting_material' })
+
+        // create supply request
+        const newRequest: SupplyRequest = {
+            id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            itemName: material,
+            category: 'maintenance',
+            quantityLevel: 'custom',
+            customQuantity: undefined,
+            roomNumber: item.roomNumber ? item.roomNumber : undefined,
+            note: `Závada: ${item.title}`,
+            requestedBy: currentUser?.name || 'Uživatel',
+            requestedByRole: currentUser?.role || 'maintenance',
+            createdAt: formatNowHHmm(new Date()),
+            status: 'new',
+            priority: item.priority
+        }
+
+        setSupplyRequests((prev) => [newRequest, ...prev])
+    }
+
     function formatRoomNumber(roomNumber?: string) {
         if (!roomNumber) return undefined
         return roomNumber.trim() || undefined
@@ -301,6 +350,7 @@ export default function App() {
                 roomsByDay,
                 tasks,
                 supplyRequests,
+                maintenanceItems,
                 customSupplyChips,
                 staff
             }
@@ -308,13 +358,14 @@ export default function App() {
         } catch (e) {
             console.warn('Failed to save demo state', e)
         }
-    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, customSupplyChips, staff])
+    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff])
 
     function resetDemoData() {
         // restore mock data and clear saved state
         setRoomsByDay(roomPlansByDay)
         setTasks([])
         setSupplyRequests(initialSupplyRequests)
+        setMaintenanceItems(initialMaintenanceItems)
         setCustomSupplyChips([])
         setStaff(users)
         setTab('Dnes')
@@ -391,7 +442,15 @@ export default function App() {
                         />
                     )}
                     {view === 'maintenance' && (
-                        <MaintenanceView tasks={maintenanceTasks} onTaskAction={handleMaintenanceTaskAction} />
+                        <MaintenanceView
+                            role={(currentUser?.role || 'cleaner') as UserRole}
+                            currentUserId={userId}
+                            maintenanceItems={maintenanceItems}
+                            tasks={maintenanceTasks}
+                            onCreateMaintenance={handleCreateMaintenanceItem}
+                            onUpdateMaintenance={handleUpdateMaintenanceItem}
+                            onMaterialNeeded={handleMaterialNeeded}
+                        />
                     )}
                     {view === 'supplies' && (
                         <SuppliesView

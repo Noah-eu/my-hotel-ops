@@ -74,3 +74,18 @@ export interface SupplyRequest {
     status: 'new' | 'approved' | 'ordered' | 'delivered' | 'handed_over' | 'cancelled'
     priority: 'normal' | 'urgent'
 }
+
+export interface MaintenanceItem {
+    id: string
+    roomNumber?: string
+    title: string
+    category: 'water' | 'drain' | 'electricity' | 'lock' | 'safe' | 'tv_wifi' | 'heating' | 'furniture' | 'appliance' | 'other'
+    priority: 'normal' | 'urgent'
+    status: 'new' | 'accepted' | 'in_progress' | 'waiting_material' | 'done' | 'cannot_today' | 'cancelled'
+    note?: string
+    reportedBy: string
+    assignedTo?: string
+    createdAt: string
+    updatedAt?: string
+    materialNeeded?: string
+}

@@ -161,3 +161,62 @@ export const supplyRequests: SupplyRequest[] = [
         priority: 'normal'
     }
 ]
+
+export const maintenanceItems: {
+    id: string
+    roomNumber?: string
+    title: string
+    category: 'water' | 'drain' | 'electricity' | 'lock' | 'safe' | 'tv_wifi' | 'heating' | 'furniture' | 'appliance' | 'other'
+    priority: 'normal' | 'urgent'
+    status: 'new' | 'accepted' | 'in_progress' | 'waiting_material' | 'done' | 'cannot_today' | 'cancelled'
+    note?: string
+    reportedBy: string
+    assignedTo?: string
+    createdAt: string
+    updatedAt?: string
+    materialNeeded?: string
+}[] = [
+    {
+        id: 'm1',
+        roomNumber: '101',
+        title: 'Zasekaná zásuvka',
+        category: 'electricity',
+        priority: 'urgent',
+        status: 'new',
+        note: 'Host hlásí jiskření při zapojení nabíječky',
+        reportedBy: 'David',
+        createdAt: '09:00'
+    },
+    {
+        id: 'm2',
+        roomNumber: '205',
+        title: 'Protéká záchod',
+        category: 'drain',
+        priority: 'urgent',
+        status: 'new',
+        note: 'Nutné ihned zkontrolovat',
+        reportedBy: 'Iryna',
+        createdAt: '08:50'
+    },
+    {
+        id: 'm3',
+        roomNumber: '302',
+        title: 'Problém se sejfem',
+        category: 'safe',
+        priority: 'normal',
+        status: 'new',
+        note: 'Sejf odmítá přijmout kód',
+        reportedBy: 'David',
+        createdAt: '08:30'
+    },
+    {
+        id: 'm4',
+        roomNumber: 'Chodba 2. patro',
+        title: 'Nesvítí světlo',
+        category: 'electricity',
+        priority: 'normal',
+        status: 'new',
+        reportedBy: 'Uklízečka 2',
+        createdAt: '07:45'
+    }
+]
