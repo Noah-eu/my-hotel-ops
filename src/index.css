@@ -49,8 +49,10 @@ body {
 .role-switch {
     display: flex;
     gap: 6px;
-    overflow-x: auto;
+    flex-wrap: wrap;
 }
+
+.role-select{display:none;width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);font-weight:700}
 
 .btn {
     background: #eef2ff;
@@ -360,3 +362,14 @@ body {
         font-size: 14px;
     }
 }
+
+@media (max-width: 420px) {
+    .role-switch{display:none}
+    .role-select{display:block}
+    .btn{padding:8px 10px;font-size:13px}
+    .plan-col{min-height:64px}
+    .room-no{font-size:16px}
+    .plan-time{font-size:15px}
+}
+
+.note-chip{background:#fff4e6;color:#92400e;padding:4px 6px;border-radius:8px;font-size:12px;border:1px solid #fde3bf}

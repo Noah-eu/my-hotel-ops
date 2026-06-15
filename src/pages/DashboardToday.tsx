@@ -62,22 +62,27 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                         <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)}`}>
                             <div className="daily-row">
                                 <div className="room-col">
-                                    <div className="room-no">{room.number}</div>
-                                    <div className="mini-badge">{statusLabel(room.status)}</div>
-                                    {room.assigned && <div className="mini-muted">{room.assigned}</div>}
+                                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                                        <div>
+                                            <div className="room-no">{room.number}</div>
+                                            <div className="mini-badge">{statusLabel(room.status)}</div>
+                                            {room.assigned && <div className="mini-muted">{room.assigned}</div>}
+                                        </div>
+                                        <div>
+                                            <button className="action-secondary" style={{padding:'6px 8px',fontSize:16}} onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>⋯</button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className={`plan-col ${room.departure ? '' : 'empty-col'}`}>
                                     {room.departure ? (
                                         <>
                                             <div className="plan-time">{room.departure.time}</div>
-                                            <div className="plan-meta">{room.departure.guestLabel || 'Host'}</div>
-                                            {room.departure.guestCount !== undefined && <div className="plan-meta">Hosté: {room.departure.guestCount}</div>}
-                                            <div className="plan-meta">Stav: {statusLabel(room.status)}</div>
+                                            <div className="plan-meta">{room.departure.guestLabel || 'Host'}{room.departure.guestCount ? ` • ${room.departure.guestCount}p` : ''}</div>
                                             {room.assigned && <div className="plan-meta">Úklid: {room.assigned}</div>}
                                         </>
                                     ) : (
-                                        <div className="plan-empty">bez odjezdu</div>
+                                        <div className="plan-empty">—</div>
                                     )}
                                 </div>
 
@@ -85,27 +90,22 @@ export default function DashboardToday({ rooms, onAction, role, dayLabel }: { ro
                                     {room.arrival ? (
                                         <>
                                             <div className="plan-time">{room.arrival.time}</div>
-                                            <div className="plan-meta">{room.arrival.guestLabel || 'Host'}</div>
-                                            {room.arrival.guestCount !== undefined && <div className="plan-meta">Hosté: {room.arrival.guestCount}</div>}
-                                            {room.arrival.box && <div className="plan-meta">{room.arrival.box}</div>}
-                                            {room.arrival.notes && room.arrival.notes.length > 0 && <div className="plan-note">{room.arrival.notes.join(', ')}</div>}
-                                            {room.estimatedReady && <div className="plan-ready">Odhad hotovo: {room.estimatedReady}</div>}
+                                            <div className="plan-meta">{room.arrival.guestLabel || 'Host'}{room.arrival.guestCount ? ` • ${room.arrival.guestCount}p` : ''}</div>
+                                            <div style={{marginTop:6,display:'flex',gap:6,flexWrap:'wrap'}}>
+                                                {room.arrival.box && <div className="chip">{room.arrival.box}</div>}
+                                                {room.arrival.notes && room.arrival.notes.map(n => <div key={n} className="note-chip">{n}</div>)}
+                                                {room.estimatedReady && <div className="plan-ready">Odhad: {room.estimatedReady}</div>}
+                                            </div>
                                         </>
                                     ) : (
                                         <>
-                                            <div className="plan-empty">bez příjezdu</div>
+                                            <div className="plan-empty">—</div>
                                             {room.situation === 'odjezd' && nextArrivalText(room) && (
                                                 <div className="plan-preview">{nextArrivalText(room)}</div>
                                             )}
                                         </>
                                     )}
                                 </div>
-                            </div>
-
-                            <div className="row-actions-toggle">
-                                <button className="btn" onClick={() => setExpandedRoom(isExpanded ? null : room.id)}>
-                                    Detail / Akce
-                                </button>
                             </div>
 
                             {isExpanded && (

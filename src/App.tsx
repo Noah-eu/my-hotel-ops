@@ -65,12 +65,7 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="footer">
-                <div>Role: {currentUser?.name || userId}</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn" onClick={() => setUserId('david')}>Switch Demo</button>
-                </div>
-            </div>
+            {/* Footer removed to save vertical space on mobile */}
         </div>
     )
 }
