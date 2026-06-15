@@ -4,18 +4,32 @@ import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
-import { roomPlans, users } from './mockData'
+import { roomPlansByDay, users } from './mockData'
 
 export default function App() {
     const [userId, setUserId] = useState('david')
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>('Dnes')
     const [view, setView] = useState<'today' | 'admin' | 'maintenance' | 'supplies'>('today')
-    const [rooms, setRooms] = useState(roomPlans)
+    const [roomsByDay, setRoomsByDay] = useState(roomPlansByDay)
 
     const currentUser = users.find(u => u.id === userId)
 
+    const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
+    const dayLabel = `${dayTitle} • ${new Date().toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
+
     function handleAction(id: string, action: string) {
-        setRooms(rs => rs.map(r => r.id === id ? ({ ...r, status: action === 'hotovo' ? 'hotovo' : (action === 'prevzit' ? 'prevzato' : r.status) }) : r))
+        setRoomsByDay(prev => ({
+            ...prev,
+            [tab]: prev[tab].map(r => {
+                if (r.id !== id) return r
+
+                if (action === 'hotovo') return { ...r, status: 'hotovo' }
+                if (action === 'prevzit') return { ...r, status: 'prevzato' }
+                if (action === 'odhad') return { ...r, status: 'odhad', estimatedReady: r.estimatedReady || '12:30' }
+                if (action === 'problem') return { ...r, status: 'ceka' }
+                return r
+            })
+        }))
     }
 
     return (
@@ -44,7 +58,7 @@ export default function App() {
                 )}
 
                 <div style={{ marginTop: 12 }}>
-                    {view === 'today' && <DashboardToday rooms={rooms} onAction={handleAction} role={currentUser?.role || 'cleaner'} currentUserId={currentUser?.id} />}
+                    {view === 'today' && <DashboardToday rooms={roomsByDay[tab]} onAction={handleAction} role={currentUser?.role || 'cleaner'} dayLabel={dayLabel} />}
                     {view === 'admin' && <AdminDashboard />}
                     {view === 'maintenance' && <MaintenanceView />}
                     {view === 'supplies' && <SuppliesView />}
