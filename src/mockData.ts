@@ -125,7 +125,38 @@ export const roomPlansByDay: Record<'Dnes' | 'Zitra' | 'Pozitri', RoomPlan[]> = 
 export const roomPlans: RoomPlan[] = todayPlans
 
 export const supplyRequests: SupplyRequest[] = [
-    { id: 's1', item: 'Toaletní papír', qty: 12, status: 'open' },
-    { id: 's2', item: 'Pytle malé', qty: 5, status: 'open' },
-    { id: 's3', item: 'Tablety do myčky', qty: 2, status: 'fulfilled' }
+    {
+        id: 's1',
+        itemName: 'Cif',
+        category: 'cleaning',
+        quantityLevel: 'medium',
+        requestedBy: 'Iryna',
+        requestedByRole: 'lead',
+        createdAt: '08:45',
+        status: 'new',
+        priority: 'normal'
+    },
+    {
+        id: 's2',
+        itemName: 'Pytle malé',
+        category: 'cleaning',
+        quantityLevel: 'medium',
+        roomNumber: '101',
+        requestedBy: 'Uklízečka',
+        requestedByRole: 'cleaner',
+        createdAt: '09:10',
+        status: 'ordered',
+        priority: 'urgent'
+    },
+    {
+        id: 's3',
+        itemName: 'Tablety do myčky',
+        category: 'kitchen',
+        quantityLevel: 'low',
+        requestedBy: 'David',
+        requestedByRole: 'admin',
+        createdAt: '07:55',
+        status: 'delivered',
+        priority: 'normal'
+    }
 ]

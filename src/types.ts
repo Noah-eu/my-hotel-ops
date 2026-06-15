@@ -62,8 +62,15 @@ export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'
 
 export interface SupplyRequest {
     id: string
-    item: string
-    qty: number
+    itemName: string
+    category: 'cleaning' | 'laundry' | 'bathroom' | 'kitchen' | 'maintenance' | 'other'
+    quantityLevel: 'low' | 'medium' | 'high' | 'custom'
+    customQuantity?: string
+    roomNumber?: string
     note?: string
-    status: 'open' | 'fulfilled'
+    requestedBy: string
+    requestedByRole: UserRole
+    createdAt: string
+    status: 'new' | 'approved' | 'ordered' | 'delivered' | 'handed_over' | 'cancelled'
+    priority: 'normal' | 'urgent'
 }

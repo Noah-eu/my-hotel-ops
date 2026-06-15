@@ -4,8 +4,8 @@ import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
-import { roomPlansByDay, users } from './mockData'
-import { Task, UserRole } from './types'
+import { roomPlansByDay, users, supplyRequests as initialSupplyRequests } from './mockData'
+import { SupplyRequest, Task, UserRole } from './types'
 
 type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava'
 
@@ -20,6 +20,16 @@ type CreateTaskInput = {
     priority: Task['priority']
     assignedToRole: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>
     note?: string
+}
+
+type CreateSupplyRequestInput = {
+    itemName: string
+    category: SupplyRequest['category']
+    quantityLevel: SupplyRequest['quantityLevel']
+    customQuantity?: string
+    roomNumber?: string
+    note?: string
+    priority: SupplyRequest['priority']
 }
 
 function canViewTask(role: UserRole, task: Task) {
@@ -59,6 +69,7 @@ export default function App() {
     const [view, setView] = useState<'today' | 'admin' | 'maintenance' | 'supplies'>(saved?.view ?? 'today')
     const [roomsByDay, setRoomsByDay] = useState(() => saved?.roomsByDay ?? roomPlansByDay)
     const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
+    const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
     const [resetConfirm, setResetConfirm] = useState(false)
 
     const currentUser = users.find((u) => u.id === userId)
@@ -75,6 +86,18 @@ export default function App() {
         () => tasks.filter((task) => task.assignedToRole === 'maintenance'),
         [tasks]
     )
+
+    const visibleSupplies = useMemo(() => {
+        const role = (currentUser?.role || 'cleaner') as UserRole
+        if (role === 'admin') return supplyRequests
+        if (role === 'lead' || role === 'cleaner') {
+            return supplyRequests.filter((s) => s.category !== 'maintenance' || s.requestedByRole === role)
+        }
+        if (role === 'maintenance') {
+            return supplyRequests.filter((s) => s.category === 'maintenance' || s.requestedByRole === 'maintenance')
+        }
+        return supplyRequests
+    }, [supplyRequests, currentUser?.role])
 
     function handleRoleChange(nextUserId: string) {
         const nextUser = users.find((u) => u.id === nextUserId)
@@ -189,6 +212,42 @@ export default function App() {
         )
     }
 
+    function formatRoomNumber(roomNumber?: string) {
+        if (!roomNumber) return undefined
+        return roomNumber.trim() || undefined
+    }
+
+    function handleCreateSupplyRequest(input: CreateSupplyRequestInput) {
+        if (!currentUser) return
+        const role = currentUser.role
+        const canCreate = role === 'admin' || role === 'lead' || role === 'cleaner' || role === 'maintenance'
+        if (!canCreate) return
+
+        if (role === 'maintenance' && input.category !== 'maintenance') return
+
+        const newRequest: SupplyRequest = {
+            id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            itemName: input.itemName,
+            category: input.category,
+            quantityLevel: input.quantityLevel,
+            customQuantity: input.quantityLevel === 'custom' ? input.customQuantity : undefined,
+            roomNumber: formatRoomNumber(input.roomNumber),
+            note: input.note,
+            requestedBy: currentUser.name,
+            requestedByRole: currentUser.role,
+            createdAt: formatNowHHmm(new Date()),
+            status: 'new',
+            priority: input.priority
+        }
+
+        setSupplyRequests((prev) => [newRequest, ...prev])
+    }
+
+    function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
+        if (!currentUser || currentUser.role !== 'admin') return
+        setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
+    }
+
     // save to localStorage whenever key pieces of state change
     useEffect(() => {
         try {
@@ -197,18 +256,20 @@ export default function App() {
                 tab,
                 view,
                 roomsByDay,
-                tasks
+                tasks,
+                supplyRequests
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
         } catch (e) {
             console.warn('Failed to save demo state', e)
         }
-    }, [userId, tab, view, roomsByDay, tasks])
+    }, [userId, tab, view, roomsByDay, tasks, supplyRequests])
 
     function resetDemoData() {
         // restore mock data and clear saved state
         setRoomsByDay(roomPlansByDay)
         setTasks([])
+        setSupplyRequests(initialSupplyRequests)
         setTab('Dnes')
         setUserId('david')
         setView('today')
@@ -269,11 +330,25 @@ export default function App() {
                             dayLabel={dayLabel}
                         />
                     )}
-                    {view === 'admin' && <AdminDashboard rooms={roomsByDay[tab]} tasks={tasks} />}
+                    {view === 'admin' && (
+                        <AdminDashboard
+                            rooms={roomsByDay[tab]}
+                            tasks={tasks}
+                            supplyRequests={supplyRequests}
+                            canManageSupplies={currentUser?.role === 'admin'}
+                            onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
+                        />
+                    )}
                     {view === 'maintenance' && (
                         <MaintenanceView tasks={maintenanceTasks} onTaskAction={handleMaintenanceTaskAction} />
                     )}
-                    {view === 'supplies' && <SuppliesView />}
+                    {view === 'supplies' && (
+                        <SuppliesView
+                            role={(currentUser?.role || 'cleaner') as UserRole}
+                            requests={visibleSupplies}
+                            onCreateRequest={handleCreateSupplyRequest}
+                        />
+                    )}
                 </div>
             </div>
         </div>

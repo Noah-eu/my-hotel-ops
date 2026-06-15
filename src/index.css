@@ -86,6 +86,12 @@ body {
     color: #1e3a8a;
 }
 
+.btn.danger {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
 .tabs {
     display: flex;
     gap: 8px;
@@ -394,70 +400,75 @@ body {
 
 /* Distinct Departure (Odjezd) and Arrival (Příjezd) cell styling */
 /* .daily-row children: 1 = room-col, 2 = departure, 3 = arrival */
-.daily-row > div:nth-child(2) {
+.daily-row>div:nth-child(2) {
     /* departure: cool/neutral panel */
     background: rgba(59, 130, 246, 0.04);
     padding: 14px 12px;
     border-right: 2px solid rgba(15, 23, 42, 0.08);
     position: relative;
 }
-.daily-row > div:nth-child(2)::before {
+
+.daily-row>div:nth-child(2)::before {
     content: "Odjezd";
     position: absolute;
     top: 8px;
     left: 12px;
     font-size: 11px;
     font-weight: 800;
-    color: rgba(15,23,42,0.48);
+    color: rgba(15, 23, 42, 0.48);
     text-transform: uppercase;
 }
 
-.daily-row > div:nth-child(3) {
+.daily-row>div:nth-child(3) {
     /* arrival: warm/light green panel */
     background: rgba(16, 185, 129, 0.045);
     padding: 14px 12px;
     border-left: 2px solid rgba(15, 23, 42, 0.08);
     position: relative;
 }
-.daily-row > div:nth-child(3)::before {
+
+.daily-row>div:nth-child(3)::before {
     content: "Příjezd";
     position: absolute;
     top: 8px;
     left: 12px;
     font-size: 11px;
     font-weight: 800;
-    color: rgba(15,23,42,0.48);
+    color: rgba(15, 23, 42, 0.48);
     text-transform: uppercase;
 }
 
 /* Make arrival time and BOX more visible */
-.daily-row > div:nth-child(3) .plan-time {
-    color: #0b5f3a; /* stronger green for arrival time */
+.daily-row>div:nth-child(3) .plan-time {
+    color: #0b5f3a;
+    /* stronger green for arrival time */
     font-size: 18px;
-    margin-top: 18px; /* leave space for label */
+    margin-top: 18px;
+    /* leave space for label */
 }
 
-.daily-row > div:nth-child(3) .plan-note {
+.daily-row>div:nth-child(3) .plan-note {
     background: rgba(16, 185, 129, 0.06);
-    border: 1px solid rgba(16,185,129,0.08);
+    border: 1px solid rgba(16, 185, 129, 0.08);
 }
 
-.daily-row > div:nth-child(2) .plan-time {
-    color: #0f172a; /* neutral/darker */
+.daily-row>div:nth-child(2) .plan-time {
+    color: #0f172a;
+    /* neutral/darker */
     font-size: 17px;
     margin-top: 18px;
 }
 
-.daily-row > div:nth-child(2) .plan-empty,
-.daily-row > div:nth-child(3) .plan-empty {
+.daily-row>div:nth-child(2) .plan-empty,
+.daily-row>div:nth-child(3) .plan-empty {
     color: #94a3b8;
     font-style: italic;
     background: transparent;
 }
 
 /* stronger divider between departure and arrival for clarity */
-.daily-row > div:nth-child(2),
-.daily-row > div:nth-child(3) {
+.daily-row>div:nth-child(2),
+.daily-row>div:nth-child(3) {
     min-height: 72px;
 }
 
