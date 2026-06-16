@@ -357,6 +357,34 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
         return KNOWN_ROOM_NUMBERS.has(room) ? room : undefined
     }
 
+    function isCapacityLine(line: string) {
+        return /^\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]$/.test(line.trim())
+    }
+
+    function isDateSpanLine(line: string) {
+        return /^\d{1,2}\.\s*\d{1,2}\.\s+\d{1,2}\.\s*\d{1,2}\.$/.test(line.trim())
+    }
+
+    function isNoteLine(line: string) {
+        const normalized = normalizeForMatch(line)
+        return normalized.includes('recepce') || /\bbox\b/i.test(line) || /\bb\s*ox\b/i.test(line)
+    }
+
+    function isAlfredWindow(line: string) {
+        return /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/i.test(line) && /alfred/i.test(line)
+    }
+
+    function isMostlyGuestLine(line: string) {
+        const trimmed = line.trim()
+        if (!trimmed) return false
+        if (detectRoomMarker(trimmed)) return false
+        if (isCapacityLine(trimmed)) return false
+        if (isDateSpanLine(trimmed)) return false
+        if (isNoteLine(trimmed)) return false
+        if (/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/.test(trimmed)) return false
+        return /[A-Za-zÀ-ž]/.test(trimmed)
+    }
+
     function toMinutes(hhmm: string) {
         const [h, m] = hhmm.split(':').map(Number)
         return h * 60 + m
@@ -369,17 +397,6 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
             unique.add(normalizeTime(`${match[1]}:${match[2]}`))
         }
         return Array.from(unique).sort((a, b) => toMinutes(a) - toMinutes(b))
-    }
-
-    function chooseSingleTime(blockText: string, side: 'departure' | 'arrival') {
-        const detected = detectTimes(blockText)
-        if (detected.length === 0) return undefined
-        if (side === 'departure') {
-            const departures = detected.filter((time) => toMinutes(time) <= 12 * 60)
-            return departures[0] || detected[0]
-        }
-        const arrivals = detected.filter((time) => toMinutes(time) >= 13 * 60)
-        return arrivals[0] || detected[detected.length - 1]
     }
 
     function chooseTimes(detectedTimes: string[]) {
@@ -473,159 +490,34 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
         return Array.from(tokens)
     }
 
-    function rowify(items: PrevioPdfTextItem[], yTolerance = 2.5) {
-        const sorted = [...items].sort((a, b) => {
-            if (Math.abs(a.y - b.y) > 0.001) return b.y - a.y
-            return a.x - b.x
-        })
-
-        const rows: Array<{ y: number; items: PrevioPdfTextItem[] }> = []
-        sorted.forEach((item) => {
-            let bestIndex = -1
-            let bestDistance = Number.POSITIVE_INFINITY
-            rows.forEach((row, index) => {
-                const distance = Math.abs(row.y - item.y)
-                if (distance <= yTolerance && distance < bestDistance) {
-                    bestIndex = index
-                    bestDistance = distance
-                }
-            })
-
-            if (bestIndex >= 0) {
-                const target = rows[bestIndex]
-                target.items.push(item)
-                target.y = (target.y * (target.items.length - 1) + item.y) / target.items.length
-            } else {
-                rows.push({ y: item.y, items: [item] })
-            }
-        })
-
-        return rows
-            .map((row) => ({
-                y: row.y,
-                items: row.items.sort((a, b) => a.x - b.x),
-                text: row.items.map((i) => i.text).join(' ').replace(/\s+/g, ' ').trim()
-            }))
-            .sort((a, b) => b.y - a.y)
-    }
-
-    function detectColumns(rows: Array<{ y: number; items: PrevioPdfTextItem[]; text: string }>) {
-        const defaults = {
-            room: 40,
-            dateArrival: 130,
-            departure: 250,
-            arrival: 350,
-            dateDeparture: 450,
-            departureNote: 560,
-            arrivalNote: 680
+    function extractGuestLabel(blockLines: string[], markerIndex: number, side: 'departure' | 'arrival') {
+        const ordered = side === 'departure' ? [...blockLines].reverse() : [...blockLines]
+        for (const line of ordered) {
+            const trimmed = line.trim()
+            if (!trimmed) continue
+            if (detectRoomMarker(trimmed)) continue
+            if (isCapacityLine(trimmed)) continue
+            if (isDateSpanLine(trimmed)) continue
+            if (isNoteLine(trimmed)) continue
+            if (/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/.test(trimmed)) continue
+            if (!/[A-Za-zÀ-ž]/.test(trimmed)) continue
+            return trimmed
         }
-
-        const headerRow = rows.find((row) => {
-            const normalized = normalizeForMatch(row.text)
-            return normalized.includes('pokoj') && normalized.includes('odjezd') && normalized.includes('prijezd')
-        })
-
-        if (!headerRow) return defaults
-
-        const datumXs: number[] = []
-        const noteXs: number[] = []
-        let roomX: number | undefined
-        let departureX: number | undefined
-        let arrivalX: number | undefined
-
-        headerRow.items.forEach((item) => {
-            const token = normalizeForMatch(item.text)
-            if (token.includes('pokoj')) roomX = item.x
-            if (token.includes('odjezd')) departureX = item.x
-            if (token.includes('prijezd')) arrivalX = item.x
-            if (token.includes('datum')) datumXs.push(item.x)
-            if (token.includes('poznam')) noteXs.push(item.x)
-        })
-
-        datumXs.sort((a, b) => a - b)
-        noteXs.sort((a, b) => a - b)
-
-        return {
-            room: roomX ?? defaults.room,
-            dateArrival: datumXs[0] ?? defaults.dateArrival,
-            departure: departureX ?? defaults.departure,
-            arrival: arrivalX ?? defaults.arrival,
-            dateDeparture: datumXs[1] ?? defaults.dateDeparture,
-            departureNote: noteXs[0] ?? defaults.departureNote,
-            arrivalNote: noteXs[1] ?? defaults.arrivalNote
-        }
-    }
-
-    function getColumnBounds(centers: ReturnType<typeof detectColumns>) {
-        const ordered: Array<{ key: keyof ReturnType<typeof detectColumns>; x: number }> = [
-            { key: 'room', x: centers.room },
-            { key: 'dateArrival', x: centers.dateArrival },
-            { key: 'departure', x: centers.departure },
-            { key: 'arrival', x: centers.arrival },
-            { key: 'dateDeparture', x: centers.dateDeparture },
-            { key: 'departureNote', x: centers.departureNote },
-            { key: 'arrivalNote', x: centers.arrivalNote }
-        ].sort((a, b) => a.x - b.x)
-
-        const bounds = new Map<keyof ReturnType<typeof detectColumns>, { min: number; max: number }>()
-        ordered.forEach((entry, index) => {
-            const prev = ordered[index - 1]
-            const next = ordered[index + 1]
-            const min = prev ? (prev.x + entry.x) / 2 : Number.NEGATIVE_INFINITY
-            const max = next ? (entry.x + next.x) / 2 : Number.POSITIVE_INFINITY
-            bounds.set(entry.key, { min, max })
-        })
-
-        return bounds
-    }
-
-    function inColumn(x: number, key: keyof ReturnType<typeof detectColumns>, bounds: Map<keyof ReturnType<typeof detectColumns>, { min: number; max: number }>) {
-        const range = bounds.get(key)
-        if (!range) return false
-        return x > range.min && x <= range.max
-    }
-
-    function itemsToText(items: PrevioPdfTextItem[]) {
-        if (items.length === 0) return ''
-        const rows = rowify(items, 2.5)
-        return rows.map((row) => row.text).filter(Boolean).join('\n')
-    }
-
-    function extractGuestLabelFromColumn(text: string) {
-        const lines = text
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean)
-
-        for (const line of lines) {
-            const cleaned = line
-                .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g, ' ')
-                .replace(/\[(\d{1,2})\s*\+\s*\d{1,2}\]/g, ' ')
-                .replace(/\b\d{1,2}\.\s*\d{1,2}\.\b/g, ' ')
-                .replace(/\b(?:recepce|box|studio|odjezd|prijezd|datum|poznamka)\b/gi, ' ')
-                .replace(/\s+/g, ' ')
-                .trim()
-
-            if (/[a-zA-ZÀ-ž]/.test(cleaned) && cleaned.length >= 3) {
-                return cleaned
-            }
-        }
-
         return undefined
     }
 
-    const extractedPages: PrevioPdfPageExtract[] = typeof source === 'string'
-        ? rawText
-            .split(PDF_PAGE_BREAK)
-            .map((page, index) => ({
-                page: index + 1,
-                items: [],
-                mergedLines: page.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-            }))
-        : source.pages
+    const pages = rawText
+        .split(PDF_PAGE_BREAK)
+        .map((page) => page.trim())
+        .filter(Boolean)
 
-    extractedPages.forEach((page, pageIndex) => {
-        const pageLines = page.mergedLines
+    const effectivePages = pages.length ? pages : [rawText]
+
+    effectivePages.forEach((pageText, pageIndex) => {
+        const pageLines = pageText
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
 
         const pageDateLine = pageLines.find((line) => isPageDateHeader(line))
         const pageDate = pageDateLine ? parsePageDateHeader(pageDateLine) : null
@@ -635,80 +527,78 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
                 parsedDateHeadings.push(pageDateIso)
             }
         } else {
-            warnings.push(`Strana ${page.page}: nenašel jsem hlavičku data strany.`)
+            warnings.push(`Strana ${pageIndex + 1}: nenašel jsem hlavičku data strany.`)
         }
 
-        if (page.items.length === 0) {
-            warnings.push(`Strana ${page.page}: chybí souřadnicová data, fallback parser nemusí být přesný.`)
+        const contentLines = pageLines.filter((line) => !isPageDateHeader(line) && !shouldIgnoreLine(line))
+        const roomMarkers = contentLines
+            .map((line, index) => ({ index, room: detectRoomMarker(line) }))
+            .filter((entry): entry is { index: number; room: string } => Boolean(entry.room))
+
+        if (roomMarkers.length === 0) {
+            warnings.push(`Strana ${pageIndex + 1}: nenašel jsem žádný pokojový blok.`)
             return
         }
 
-        const rowsByY = rowify(page.items)
-        const columns = detectColumns(rowsByY)
-        const columnBounds = getColumnBounds(columns)
+        let cursor = 0
 
-        const roomRows = rowsByY
-            .map((row, index) => {
-                const roomItems = row.items.filter((item) => inColumn(item.x, 'room', columnBounds))
-                const roomText = roomItems.map((item) => item.text).join(' ').replace(/\s+/g, ' ').trim()
-                return {
-                    index,
-                    y: row.y,
-                    room: detectRoomMarker(roomText)
+        roomMarkers.forEach((marker, markerIndex) => {
+            const prevRoom = markerIndex > 0 ? roomMarkers[markerIndex - 1].room : undefined
+            const nextRoom = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].room : undefined
+            const nextRoomIndex = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].index : contentLines.length
+
+            const blockStart = Math.min(Math.max(cursor, 0), marker.index)
+            let blockEnd = nextRoomIndex - 1
+
+            const localCapacity = (() => {
+                for (let i = marker.index; i < nextRoomIndex; i++) {
+                    if (isCapacityLine(contentLines[i])) return i
                 }
-            })
-            .filter((row): row is { index: number; y: number; room: string } => Boolean(row.room))
+                return -1
+            })()
 
-        if (roomRows.length === 0) {
-            warnings.push(`Strana ${page.page}: nenašel jsem žádný pokojový blok.`)
-            return
-        }
+            if (localCapacity >= 0) {
+                blockEnd = localCapacity
+                while (blockEnd + 1 < nextRoomIndex) {
+                    const candidate = contentLines[blockEnd + 1]
+                    if (isMostlyGuestLine(candidate) || isDateSpanLine(candidate)) {
+                        blockEnd += 1
+                        continue
+                    }
+                    break
+                }
+            }
 
-        roomRows.forEach((marker, markerIndex) => {
-            const prevRoom = markerIndex > 0 ? roomRows[markerIndex - 1].room : undefined
-            const prevY = markerIndex > 0 ? roomRows[markerIndex - 1].y : Number.POSITIVE_INFINITY
-            const nextRoom = markerIndex + 1 < roomRows.length ? roomRows[markerIndex + 1].room : undefined
-            const nextY = markerIndex + 1 < roomRows.length ? roomRows[markerIndex + 1].y : Number.NEGATIVE_INFINITY
+            const blockLines = contentLines.slice(blockStart, blockEnd + 1)
+            cursor = blockEnd + 1
 
-            const yStart = Number.isFinite(prevY) ? (prevY + marker.y) / 2 : marker.y + 6
-            const yEnd = Number.isFinite(nextY) ? (marker.y + nextY) / 2 : marker.y - 6
-            const bandItems = page.items.filter((item) => item.y <= yStart && item.y > yEnd)
+            const markerInBlock = blockLines.findIndex((line) => detectRoomMarker(line) === marker.room)
+            const beforeMarker = markerInBlock >= 0 ? blockLines.slice(0, markerInBlock) : blockLines
+            const afterMarker = markerInBlock >= 0 ? blockLines.slice(markerInBlock + 1) : []
+            const rawBlock = blockLines.join('\n')
 
-            const roomItems = bandItems.filter((item) => inColumn(item.x, 'room', columnBounds))
-            const departureItems = bandItems.filter((item) => inColumn(item.x, 'departure', columnBounds))
-            const arrivalItems = bandItems.filter((item) => inColumn(item.x, 'arrival', columnBounds))
-            const departureNoteItems = bandItems.filter((item) => inColumn(item.x, 'departureNote', columnBounds))
-            const arrivalNoteItems = bandItems.filter((item) => inColumn(item.x, 'arrivalNote', columnBounds))
+            const timeSourceLines = blockLines.filter((line) => !isAlfredWindow(line))
+            const detectedTimes = detectTimes(timeSourceLines.join('\n'))
+            const { departureTime, arrivalTime } = chooseTimes(detectedTimes)
 
-            const roomColumnText = itemsToText(roomItems)
-            const departureColumnText = itemsToText(departureItems)
-            const arrivalColumnText = itemsToText(arrivalItems)
-            const departureNoteColumnText = itemsToText(departureNoteItems)
-            const arrivalNoteColumnText = itemsToText(arrivalNoteItems)
-            const rawBlock = itemsToText(bandItems)
-
-            const departureTime = chooseSingleTime(departureColumnText, 'departure')
-            const arrivalTime = chooseSingleTime(arrivalColumnText, 'arrival')
-            const detectedTimes = Array.from(new Set([
-                ...detectTimes(departureColumnText),
-                ...detectTimes(arrivalColumnText)
-            ])).sort((a, b) => toMinutes(a) - toMinutes(b))
-
-            const noteGroups = splitNoteGroups(`${departureNoteColumnText} ... ${arrivalNoteColumnText}`)
-            const departureNotes = splitNoteGroups(departureNoteColumnText)
-            const arrivalNotes = splitNoteGroups(arrivalNoteColumnText)
+            const noteSource = beforeMarker.join(' ')
+            const noteGroups = splitNoteGroups(noteSource)
             const {
+                departureNotes,
+                arrivalNotes,
                 generalNotes,
                 sideWarnings
             } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
-            const noteKeywordMatches = keywordNotes(normalizeForMatch(`${departureNoteColumnText} ${arrivalNoteColumnText}`))
+
+            const noteKeywordMatches = keywordNotes(normalizeForMatch(rawBlock))
             const allGeneralNotes = Array.from(new Set([...generalNotes, ...noteKeywordMatches]))
-            const box = arrivalTime ? extractBox(arrivalNoteColumnText || arrivalNotes.join(' ')) : undefined
+            const box = arrivalTime ? extractBox(arrivalNotes.join(' ') || rawBlock) : undefined
             const guestCount = extractGuestCount(rawBlock)
-            const contextDates = extractDateTokens(rawBlock)
+            const contextDates = extractDateTokens(afterMarker.join(' '))
             const blockWarnings: string[] = []
-            const departureGuestLabel = extractGuestLabelFromColumn(departureColumnText)
-            const arrivalGuestLabel = extractGuestLabelFromColumn(arrivalColumnText)
+
+            const departureGuestLabel = extractGuestLabel(beforeMarker, marker.index, 'departure')
+            const arrivalGuestLabel = extractGuestLabel(beforeMarker, marker.index, 'arrival')
 
             if (!departureTime && !arrivalTime) {
                 blockWarnings.push('Blok bez rozpoznaného času příjezdu/odjezdu')
@@ -745,21 +635,21 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
 
             lineDebug.push({
                 index: lineDebug.length + 1,
-                page: page.page,
+                page: pageIndex + 1,
                 pageDate: pageDate ? formatLocalDate(pageDate) : undefined,
                 room: marker.room,
                 previousRoom: prevRoom,
                 nextRoom,
-                blockStartLine: marker.index + 1,
-                blockEndLine: markerIndex + 1 < roomRows.length ? roomRows[markerIndex + 1].index : rowsByY.length,
-                yStart,
-                yEnd,
+                blockStartLine: blockStart + 1,
+                blockEndLine: blockEnd + 1,
+                yStart: 0,
+                yEnd: 0,
                 rawBlock,
-                roomColumnText,
-                departureColumnText,
-                arrivalColumnText,
-                departureNoteColumnText,
-                arrivalNoteColumnText,
+                roomColumnText: marker.room,
+                departureColumnText: beforeMarker.join('\n'),
+                arrivalColumnText: beforeMarker.join('\n'),
+                departureNoteColumnText: departureNotes.join(', '),
+                arrivalNoteColumnText: arrivalNotes.join(', '),
                 detectedTimes,
                 noteGroups,
                 departureTime,
@@ -830,7 +720,13 @@ export function buildPrevioImportPreview(
     const parsedTabDates: Partial<Record<OpsTab, string>> = {}
     const warnings = [...parsed.warnings]
     const rowsWithoutTimes = parsed.rows.filter((row) => !row.departureTime && !row.arrivalTime).length
-    const confidenceLow = parsed.rows.length > 0 ? (rowsWithoutTimes / parsed.rows.length) > 0.3 : true
+    const tooFewRows = parsed.rows.length < 25
+    const tooManyWithoutTimes = parsed.rows.length > 0 ? (rowsWithoutTimes / parsed.rows.length) > 0.3 : true
+    const confidenceLow = tooFewRows || tooManyWithoutTimes
+
+    if (tooFewRows) {
+        warnings.push('Import není bezpečný – parser našel málo pokojů.')
+    }
 
     const activeRooms = roomCatalog
         .filter((room) => room.active)

@@ -1277,7 +1277,7 @@ export default function App() {
                                                     <div className="room-meta">Bez příjezdu/odjezdu: {importPreview.noTurnoverRooms.length}</div>
                                                     {importPreview.confidenceLow && (
                                                         <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
-                                                            Časy nebyly rozpoznány – import nepotvrzovat.
+                                                            Import není bezpečný – parser našel málo pokojů nebo příliš mnoho řádků bez času. Import nepotvrzovat.
                                                         </div>
                                                     )}
                                                     {importPreview.warnings.length > 0 && (
@@ -1360,7 +1360,7 @@ export default function App() {
                                                     </div>
 
                                                     <div style={{ display: 'flex', gap: 8 }}>
-                                                        <button className="btn" onClick={() => void handleConfirmPrevioImport()}>Potvrdit import</button>
+                                                        <button className="btn" disabled={importPreview.confidenceLow} onClick={() => void handleConfirmPrevioImport()}>Potvrdit import</button>
                                                         <button className="btn" onClick={handleCancelPrevioImport}>Zrušit</button>
                                                     </div>
                                                 </div>
