@@ -81,6 +81,7 @@ const todayPlans: RoomPlan[] = [
     { id: 'r205', number: '205', situation: 'odjezd_prijezd', departure: { time: '08:00', guestLabel: 'Host H.' }, arrival: { time: '18:00', guestLabel: 'Host I.', box: 'BOX C', notes: ['late arrival'] }, departureTime: '08:00', arrivalTime: '18:00', status: 'ceka', box: 'BOX C' },
     { id: 'r301', number: '301', situation: 'odjezd', departure: { time: '12:00', guestLabel: 'Host J.' }, departureTime: '12:00', status: 'ceka', nextArrivalPreview: { day: 'zitra', time: '15:00' } },
     { id: 'r302', number: '302', situation: 'prijezd', arrival: { time: '20:00', guestLabel: 'Host K.', box: 'BOX X', notes: ['dětská postýlka'] }, arrivalTime: '20:00', status: 'ceka' },
+    { id: 'r303', number: '303', situation: 'volny', status: 'neni' },
     { id: 'r304', number: '304', situation: 'volny', status: 'neni' },
     { id: 'r305', number: '305', situation: 'prijezd', arrival: { time: '14:00', guestLabel: 'Host L.', box: 'BOX Z', notes: ['dětská postýlka'] }, arrivalTime: '14:00', status: 'ceka', notes: ['dětská postýlka'], box: 'BOX Z' }
 ]

@@ -6,7 +6,8 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
-        "validate:previo": "node scripts/validate-previo-parser.mjs"
+        "validate:previo": "node scripts/validate-previo-parser.mjs",
+        "validate:previo-state": "node scripts/validate-previo-state-parser.mjs"
     },
     "dependencies": {
         "firebase": "^12.14.0",

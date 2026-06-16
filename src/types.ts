@@ -44,6 +44,12 @@ export interface RoomPlan {
     estimateSetAt?: string // HH:MM when estimate was set
     statusNote?: string
     checkoutException?: boolean
+    occupiedConfirmed?: boolean
+    freeConfirmed?: boolean
+    stateSource?: 'previo-state-pdf'
+    stateImportedAt?: string
+    stayoverGuestName?: string
+    stayoverUntil?: string
 }
 
 export interface Task {

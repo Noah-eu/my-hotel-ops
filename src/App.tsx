@@ -28,6 +28,14 @@ import {
     type PrevioImportPreview,
     type RoomCatalogItem
 } from './services/previoPdfParser'
+import {
+    buildPrevioStateImportPreview,
+    extractStateTextFromPdfFile,
+    MASTER_ROOM_NUMBERS,
+    parsePrevioStatePdfText,
+    type PrevioStateImportPreview,
+    type PrevioStateParseResult
+} from './services/previoStatePdfParser'
 
 type AppDiagnostics = {
     firebaseConfigured: boolean
@@ -206,7 +214,14 @@ export default function App() {
     const [importPreview, setImportPreview] = useState<PrevioImportPreview | null>(null)
     const [importRawText, setImportRawText] = useState('')
     const [importParseResult, setImportParseResult] = useState<PrevioParseResult | null>(null)
+    const [stateImportPdfStatus, setStateImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+    const [stateImportPdfError, setStateImportPdfError] = useState<string | null>(null)
+    const [stateImportPreview, setStateImportPreview] = useState<PrevioStateImportPreview | null>(null)
+    const [stateImportRawText, setStateImportRawText] = useState('')
+    const [stateImportParseResult, setStateImportParseResult] = useState<PrevioStateParseResult | null>(null)
     const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>({})
+    const [importedRoomsByDate, setImportedRoomsByDate] = useState<Record<string, typeof roomPlansByDay[OpsTab]>>({})
+    const [selectedImportedDateIso, setSelectedImportedDateIso] = useState<string | null>(null)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
 
@@ -224,8 +239,24 @@ export default function App() {
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
     const fallbackTabDate = new Date(Date.now() + tabOffsetDays * 24 * 60 * 60 * 1000)
-    const selectedTabDate = importedTabDates[tab] ? new Date(importedTabDates[tab] as string) : fallbackTabDate
-    const dayLabel = `${dayTitle} • ${selectedTabDate.toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
+    const selectedTabDateIso = importedTabDates[tab] || fallbackTabDate.toISOString().slice(0, 10)
+    const selectedTabDate = new Date(selectedTabDateIso)
+    const isExtraImportedDay = Boolean(selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso])
+    const effectiveDateIso = selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso]
+        ? selectedImportedDateIso
+        : selectedTabDateIso
+    const effectiveDate = new Date(effectiveDateIso)
+    const dayLabelPrefix = isExtraImportedDay ? 'Další den' : dayTitle
+    const dayLabel = `${dayLabelPrefix} • ${effectiveDate.toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
+    const displayedRooms = selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso]
+        ? importedRoomsByDate[selectedImportedDateIso]
+        : roomsByDay[tab]
+
+    const importedExtraDates = useMemo(() => (
+        Object.keys(importedRoomsByDate)
+            .filter((dateIso) => dateIso !== importedTabDates.Dnes && dateIso !== importedTabDates.Zitra && dateIso !== importedTabDates.Pozitri)
+            .sort()
+    ), [importedRoomsByDate, importedTabDates.Dnes, importedTabDates.Zitra, importedTabDates.Pozitri])
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -355,14 +386,15 @@ export default function App() {
             })
         })
 
-        if (!byRoom.has('203')) {
-            const room203: RoomCatalogItem = {
-                roomNumber: '203',
+        for (const roomNumber of MASTER_ROOM_NUMBERS) {
+            if (byRoom.has(roomNumber)) continue
+            const fallbackRoom: RoomCatalogItem = {
+                roomNumber,
                 active: true,
-                sortOrder: 203
+                sortOrder: Number(roomNumber)
             }
-            byRoom.set('203', room203)
-            await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'rooms', '203'), room203)
+            byRoom.set(roomNumber, fallbackRoom)
+            await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'rooms', roomNumber), fallbackRoom)
         }
 
         const loaded = Array.from(byRoom.values()).sort((a, b) => a.sortOrder - b.sortOrder)
@@ -404,6 +436,180 @@ export default function App() {
         }
     }
 
+    async function handlePrevioStatePdfSelected(file: File | null) {
+        if (!file) return
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+        if (!isPdf) {
+            setStateImportPdfStatus('error')
+            setStateImportPdfError('Soubor musí být ve formátu PDF.')
+            setStateImportPreview(null)
+            setStateImportRawText('')
+            setStateImportParseResult(null)
+            return
+        }
+
+        setStateImportPdfStatus('loading')
+        setStateImportPdfError(null)
+        setStateImportPreview(null)
+        setStateImportRawText('')
+        setStateImportParseResult(null)
+
+        try {
+            const extracted = await extractStateTextFromPdfFile(file)
+            const parsed = parsePrevioStatePdfText(extracted.rawText, new Date())
+            const preview = buildPrevioStateImportPreview(parsed, activeRooms, new Date())
+            setStateImportPreview(preview)
+            setStateImportRawText(extracted.rawText)
+            setStateImportParseResult(parsed)
+            setStateImportPdfStatus('loaded')
+        } catch (error: any) {
+            setStateImportPdfStatus('error')
+            setStateImportPdfError(error?.message || 'PDF Stav se nepodařilo načíst.')
+            setStateImportPreview(null)
+            setStateImportRawText('')
+            setStateImportParseResult(null)
+        }
+    }
+
+    function formatImportTimestamp(date = new Date()) {
+        const d = `${date.getDate()}`.padStart(2, '0')
+        const m = `${date.getMonth() + 1}`.padStart(2, '0')
+        const y = date.getFullYear()
+        const hh = `${date.getHours()}`.padStart(2, '0')
+        const mm = `${date.getMinutes()}`.padStart(2, '0')
+        return `${d}.${m}.${y} ${hh}:${mm}`
+    }
+
+    function buildRoomsForStateDay(dateIso: string, dayPreview?: PrevioStateImportPreview['days'][number]) {
+        const existingTabs = ['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]
+        const currentTabDate = existingTabs.find((day) => importedTabDates[day] === dateIso)
+        const sourceRooms = currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes
+        const existingByRoom = new Map(
+            sourceRooms.map((room) => [normalizeCatalogRoomNumber(room.number), room])
+        )
+
+        const parsedByRoom = new Map(
+            (dayPreview?.rows || []).map((row) => [normalizeCatalogRoomNumber(row.roomNumber), row])
+        )
+
+        return activeRooms.map((catalogRoom) => {
+            const normalizedRoom = normalizeCatalogRoomNumber(catalogRoom.roomNumber)
+            const base = existingByRoom.get(normalizedRoom)
+            const parsed = parsedByRoom.get(normalizedRoom)
+            const isDerivedFree = Boolean(dayPreview?.complete && dayPreview?.derivedFreeRooms.includes(normalizedRoom))
+
+            const row = base
+                ? { ...base }
+                : {
+                    id: `r-${normalizedRoom}`,
+                    number: catalogRoom.displayName || catalogRoom.roomNumber,
+                    situation: 'volny' as const,
+                    status: 'neni' as const
+                }
+
+            const importedAt = formatImportTimestamp(new Date())
+
+            if (!parsed) {
+                return {
+                    ...row,
+                    departure: undefined,
+                    arrival: undefined,
+                    departureTime: undefined,
+                    arrivalTime: undefined,
+                    nextArrivalPreview: undefined,
+                    occupiedConfirmed: false,
+                    freeConfirmed: isDerivedFree,
+                    stateSource: isDerivedFree ? 'previo-state-pdf' as const : row.stateSource,
+                    stateImportedAt: isDerivedFree ? importedAt : row.stateImportedAt,
+                    stayoverGuestName: undefined,
+                    stayoverUntil: undefined,
+                    situation: 'volny' as const
+                }
+            }
+
+            const hasDeparture = Boolean(parsed.departureTime)
+            const hasArrival = Boolean(parsed.arrivalTime)
+            if (!hasDeparture && !hasArrival) {
+                return {
+                    ...row,
+                    situation: 'volny' as const,
+                    departure: undefined,
+                    arrival: undefined,
+                    departureTime: undefined,
+                    arrivalTime: undefined,
+                    nextArrivalPreview: undefined,
+                    occupiedConfirmed: true,
+                    freeConfirmed: false,
+                    stateSource: 'previo-state-pdf' as const,
+                    stateImportedAt: importedAt,
+                    stayoverGuestName: parsed.stayoverGuestName,
+                    stayoverUntil: parsed.stayoverUntil
+                }
+            }
+
+            const mergedSituation = hasDeparture && hasArrival
+                ? 'odjezd_prijezd'
+                : hasDeparture
+                    ? 'odjezd'
+                    : 'prijezd'
+
+            const arrivalNotes = parsed.arrivalNotes.length ? parsed.arrivalNotes : row.arrival?.notes
+            const arrivalBoxFromNotes = arrivalNotes?.join(' ').match(/\bbox\s*([a-z0-9-]+)/i)
+            const arrivalBox = arrivalBoxFromNotes ? `BOX ${arrivalBoxFromNotes[1].toUpperCase()}` : row.box
+
+            return {
+                ...row,
+                situation: mergedSituation,
+                departure: hasDeparture ? {
+                    time: parsed.departureTime as string,
+                    guestLabel: parsed.departureGuestName || row.departure?.guestLabel,
+                    notes: parsed.departureNotes.length ? parsed.departureNotes : row.departure?.notes
+                } : undefined,
+                arrival: hasArrival ? {
+                    time: parsed.arrivalTime as string,
+                    guestLabel: parsed.arrivalGuestName || row.arrival?.guestLabel,
+                    box: arrivalBox,
+                    notes: arrivalNotes
+                } : undefined,
+                departureTime: parsed.departureTime,
+                arrivalTime: parsed.arrivalTime,
+                box: arrivalBox,
+                nextArrivalPreview: undefined,
+                occupiedConfirmed: false,
+                freeConfirmed: false,
+                stateSource: 'previo-state-pdf' as const,
+                stateImportedAt: importedAt,
+                stayoverGuestName: undefined,
+                stayoverUntil: undefined
+            }
+        })
+    }
+
+    function buildMergedPlansFromStateImport(preview: PrevioStateImportPreview) {
+        const next: Record<OpsTab, typeof roomsByDay[OpsTab]> = {
+            Dnes: [],
+            Zitra: [],
+            Pozitri: []
+        }
+
+        const byDate: Record<string, typeof roomsByDay[OpsTab]> = {}
+
+        preview.days.forEach((day) => {
+            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day)
+        })
+
+        ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+            const dateIso = preview.parsedTabDates[day]
+            if (!dateIso || !byDate[dateIso]) {
+                next[day] = buildRoomsForStateDay(dateIso || importedTabDates[day] || '', undefined)
+                return
+            }
+            next[day] = byDate[dateIso]
+        })
+
+        return { next, byDate }
+    }
+
     async function handleCopyImportDebugText() {
         if (!importRawText) return
         try {
@@ -420,6 +626,28 @@ export default function App() {
         const link = document.createElement('a')
         link.href = url
         link.download = 'previo-debug-text.txt'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+    }
+
+    async function handleCopyStateImportDebugText() {
+        if (!stateImportRawText) return
+        try {
+            await navigator.clipboard.writeText(stateImportRawText)
+        } catch {
+            setStateImportPdfError('Debug text Stav se nepodařilo zkopírovat do schránky.')
+        }
+    }
+
+    function handleDownloadStateImportDebugText() {
+        if (!stateImportRawText) return
+        const blob = new Blob([stateImportRawText], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'previo-state-debug-text.txt'
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)
@@ -507,6 +735,7 @@ export default function App() {
         if (!importPreview) return
         const merged = buildMergedPlansFromImport(importPreview)
         setImportedTabDates(importPreview.parsedTabDates)
+        setSelectedImportedDateIso(null)
         setRoomsByDay(merged)
 
         if (runtimeMode === 'online') {
@@ -531,12 +760,56 @@ export default function App() {
         setImportPdfError(null)
     }
 
+    async function handleConfirmPrevioStateImport() {
+        if (!stateImportPreview) return
+        const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview)
+        setImportedTabDates(stateImportPreview.parsedTabDates)
+        setImportedRoomsByDate(byDate)
+        setSelectedImportedDateIso(null)
+        setRoomsByDay(next)
+
+        if (runtimeMode === 'online') {
+            ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                next[day].forEach((room) => {
+                    activeStore.updateRoomPlan(day, room.id, {
+                        situation: room.situation,
+                        departure: room.departure,
+                        arrival: room.arrival,
+                        departureTime: room.departureTime,
+                        arrivalTime: room.arrivalTime,
+                        guestCount: room.guestCount,
+                        box: room.box,
+                        nextArrivalPreview: room.nextArrivalPreview,
+                        occupiedConfirmed: room.occupiedConfirmed,
+                        freeConfirmed: room.freeConfirmed,
+                        stateSource: room.stateSource,
+                        stateImportedAt: room.stateImportedAt,
+                        stayoverGuestName: room.stayoverGuestName,
+                        stayoverUntil: room.stayoverUntil
+                    })
+                })
+            })
+        }
+
+        setStateImportPreview(null)
+        setStateImportPdfStatus('idle')
+        setStateImportPdfError(null)
+    }
+
     function handleCancelPrevioImport() {
         setImportPreview(null)
         setImportPdfStatus('idle')
         setImportPdfError(null)
         setImportRawText('')
         setImportParseResult(null)
+    }
+
+    function handleCancelPrevioStateImport() {
+        setStateImportPreview(null)
+        setStateImportPdfStatus('idle')
+        setStateImportPdfError(null)
+        setStateImportRawText('')
+        setStateImportParseResult(null)
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -1253,9 +1526,9 @@ export default function App() {
                 {runtimeMode === 'online' && (!authUser || authUser.isAnonymous || !onlineProfile) ? null : (
                     <>
                         <div className="tabs">
-                            <div className={`tab ${tab === 'Dnes' ? 'active' : ''}`} onClick={() => setTab('Dnes')}>Dnes</div>
-                            <div className={`tab ${tab === 'Zitra' ? 'active' : ''}`} onClick={() => setTab('Zitra')}>Zítra</div>
-                            <div className={`tab ${tab === 'Pozitri' ? 'active' : ''}`} onClick={() => setTab('Pozitri')}>Pozítří</div>
+                            <div className={`tab ${tab === 'Dnes' ? 'active' : ''}`} onClick={() => { setSelectedImportedDateIso(null); setTab('Dnes') }}>Dnes</div>
+                            <div className={`tab ${tab === 'Zitra' ? 'active' : ''}`} onClick={() => { setSelectedImportedDateIso(null); setTab('Zitra') }}>Zítra</div>
+                            <div className={`tab ${tab === 'Pozitri' ? 'active' : ''}`} onClick={() => { setSelectedImportedDateIso(null); setTab('Pozitri') }}>Pozítří</div>
                         </div>
 
                         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -1282,10 +1555,25 @@ export default function App() {
                             <div style={{ marginTop: 10, padding: 10, background: '#fff', borderRadius: 10 }}>Orientační plán – může se změnit novou rezervací.</div>
                         )}
 
+                        {importedExtraDates.length > 0 && (
+                            <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <div style={{ fontSize: 12, color: '#475569', fontWeight: 700 }}>Další dny:</div>
+                                {importedExtraDates.map((dateIso) => (
+                                    <button
+                                        key={`extra-day-${dateIso}`}
+                                        className={`chip ${selectedImportedDateIso === dateIso ? 'active' : ''}`}
+                                        onClick={() => setSelectedImportedDateIso((prev) => (prev === dateIso ? null : dateIso))}
+                                    >
+                                        {new Date(dateIso).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' })}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
                         <div style={{ marginTop: 12 }}>
                             {view === 'today' && (
                                 <DashboardToday
-                                    rooms={roomsByDay[tab]}
+                                    rooms={displayedRooms}
                                     tasks={visibleTodayTasks}
                                     onAction={handleAction}
                                     onCreateTask={handleCreateTask}
@@ -1296,6 +1584,7 @@ export default function App() {
                                     onSetAvailability={setStaffAvailability}
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
+                                    readOnly={isExtraImportedDay}
                                 />
                             )}
                             {view === 'admin' && (
@@ -1303,6 +1592,91 @@ export default function App() {
                                     {currentUser?.role === 'admin' && (
                                         <div className="section">
                                             <h3>Import z Previa</h3>
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
+                                                <label style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Nahrát PDF Stav</label>
+                                                <div className="room-meta" style={{ color: '#0c4a6e' }}>Doporučeno – obsahuje příjezdy, odjezdy i probíhající pobyty.</div>
+                                                <input
+                                                    type="file"
+                                                    accept="application/pdf,.pdf"
+                                                    onChange={(e) => {
+                                                        const nextFile = e.target.files?.[0] || null
+                                                        void handlePrevioStatePdfSelected(nextFile)
+                                                    }}
+                                                />
+                                                {stateImportPdfStatus === 'loading' && <div className="room-meta">Načítám PDF Stav...</div>}
+                                                {stateImportPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF Stav načteno</div>}
+                                                {stateImportPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{stateImportPdfError || 'PDF Stav se nepodařilo načíst.'}</div>}
+                                            </div>
+
+                                            {stateImportPreview && (
+                                                <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                                                    <div style={{ fontWeight: 800 }}>Náhled importu Stav</div>
+                                                    <div className="room-meta">Detekované dny: {stateImportPreview.days.length}</div>
+                                                    <div className="room-meta">Turnover pokoje: {stateImportPreview.turnoverCount}</div>
+                                                    <div className="room-meta">Probíhající pobyty: {stateImportPreview.stayoverCount}</div>
+                                                    <div className="room-meta">Odvozené potvrzeně volné pokoje: {stateImportPreview.derivedFreeCount}</div>
+                                                    <div className="room-meta">Mimo seznam pokojů: {stateImportPreview.unknownRooms.length ? stateImportPreview.unknownRooms.join(', ') : 'žádné'}</div>
+                                                    {stateImportPreview.confidenceLow && (
+                                                        <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
+                                                            Import Stav není bezpečný – parser nenašel dost dat. Import nepotvrzovat.
+                                                        </div>
+                                                    )}
+                                                    {stateImportPreview.warnings.length > 0 && (
+                                                        <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                            {stateImportPreview.warnings.slice(0, 10).map((warning) => (
+                                                                <div key={`state-warning-${warning}`}>{warning}</div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {stateImportRawText && (
+                                                        <details>
+                                                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text Stav z PDF</summary>
+                                                            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                                                <button className="btn" onClick={() => void handleCopyStateImportDebugText()}>Kopírovat</button>
+                                                                <button className="btn" onClick={handleDownloadStateImportDebugText}>Stáhnout TXT</button>
+                                                            </div>
+                                                            <div className="room-meta" style={{ marginTop: 8 }}>
+                                                                Délka textu: {stateImportRawText.length} znaků, řádků: {stateImportParseResult?.lineCount || 0}
+                                                            </div>
+                                                            <pre style={{ marginTop: 8, maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                                                {stateImportRawText.slice(0, 5000)}
+                                                            </pre>
+                                                        </details>
+                                                    )}
+
+                                                    <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                                            <thead>
+                                                                <tr style={{ background: '#f8fafc' }}>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Turnover</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Probíhající</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Volné (odvozené)</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Kompletní</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {stateImportPreview.days.map((day) => (
+                                                                    <tr key={`state-day-${day.dateIso}`}>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.dateLabel}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.turnoverCount}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.stayoverCount}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.derivedFreeRooms.length}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.complete ? 'ano' : 'ne'}</td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+
+                                                    <div style={{ display: 'flex', gap: 8 }}>
+                                                        <button className="btn" disabled={stateImportPreview.confidenceLow} onClick={() => void handleConfirmPrevioStateImport()}>Potvrdit import Stav</button>
+                                                        <button className="btn" onClick={handleCancelPrevioStateImport}>Zrušit</button>
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
                                                 <label style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Nahrát PDF příjezdy/odjezdy</label>
                                                 <input

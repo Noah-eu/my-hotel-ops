@@ -18,6 +18,7 @@ const KNOWN_ROOM_NUMBERS = new Set([
     '205',
     '301',
     '302',
+    '303',
     '304',
     '305'
 ])

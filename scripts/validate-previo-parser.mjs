@@ -4,7 +4,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 const PDF_PAGE_BREAK = '[[[PREVIO_PAGE_BREAK]]]'
 const KNOWN_ROOM_NUMBERS = new Set([
-    '001', '101', '102', '103', '104', '105', '201', '202', '203', '204', '205', '301', '302', '304', '305'
+    '001', '101', '102', '103', '104', '105', '201', '202', '203', '204', '205', '301', '302', '303', '304', '305'
 ])
 
 const root = process.cwd()

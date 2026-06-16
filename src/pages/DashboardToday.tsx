@@ -191,7 +191,8 @@ export default function DashboardToday({
     staff,
     onSetAvailability,
     currentUserId,
-    currentUserName
+    currentUserName,
+    readOnly
 }: {
     rooms: RoomPlan[]
     tasks: Task[]
@@ -204,6 +205,7 @@ export default function DashboardToday({
     onSetAvailability: (id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') => void
     currentUserId: string
     currentUserName?: string
+    readOnly?: boolean
 }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
     const [estimatingRoom, setEstimatingRoom] = useState<string | null>(null)
@@ -266,6 +268,7 @@ export default function DashboardToday({
     }
 
     function submitTask(roomId: string) {
+        if (readOnly) return
         if (!taskTitle.trim()) return
 
         onCreateTask(roomId, {
@@ -377,6 +380,7 @@ export default function DashboardToday({
         <div className="section">
             <h3>Denní plán pokojů</h3>
             <div className="room-meta" style={{ marginBottom: 8, fontSize: 13 }}>{dayLabel}</div>
+            {readOnly && <div className="room-meta" style={{ marginBottom: 8, color: '#0c4a6e', fontWeight: 700 }}>Náhled importovaného dne mimo Dnes/Zítra/Pozítří je pouze pro čtení.</div>}
 
             <div className="section" style={{ marginBottom: 10 }}>
                 <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -476,6 +480,8 @@ export default function DashboardToday({
                                     <div className="mini-badge">{statusLabel(room.status)}</div>
                                     <button className="room-action-btn" onClick={() => toggleExpandedRoom(room.id)}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
+                                    {room.occupiedConfirmed && <div className="mini-muted" style={{ color: '#0f766e', fontWeight: 700 }}>Obsazeno / pobyt</div>}
+                                    {room.freeConfirmed && <div className="mini-muted" style={{ color: '#166534', fontWeight: 700 }}>Potvrzeně volný</div>}
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
                                             <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c' }}>{room.statusNote || 'Host neodešel'}</div>
@@ -529,8 +535,9 @@ export default function DashboardToday({
                                                         key={task.id}
                                                         className="note-chip"
                                                         style={{ cursor: 'pointer', border: '1px solid #bfdbfe', background: '#eff6ff' }}
-                                                        onClick={() => onUpdateTaskStatus(task.id, 'done')}
+                                                        onClick={() => !readOnly && onUpdateTaskStatus(task.id, 'done')}
                                                         title="Označit jako hotovo"
+                                                        disabled={readOnly}
                                                     >
                                                         {task.title}
                                                     </button>
@@ -584,15 +591,17 @@ export default function DashboardToday({
 
                             {isExpanded && (
                                 <div className="expanded-actions">
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
+                                        disabled={readOnly}
                                         onClick={() => setEstimatingRoom(estimatingRoom === room.id ? null : room.id)}
                                     >
                                         Odhad
                                     </button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
+                                        disabled={readOnly}
                                         onClick={() => {
                                             onAction(room.id, 'hotovo')
                                             setExpandedRoom(null)
@@ -601,14 +610,14 @@ export default function DashboardToday({
                                     >
                                         Hotovo
                                     </button>
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
-                                    {canCreateTask && <button className="chip" onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
+                                    {canCreateTask && <button className="chip" disabled={readOnly} onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
 
                                     <div style={{ width: '100%', marginTop: 8, paddingTop: 8, borderTop: '1px dashed rgba(148,163,184,0.6)' }}>
                                         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Výjimky</div>
                                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                                            <button className="action-secondary" onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
-                                            {room.checkoutException && <button className="chip" onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
+                                            <button className="action-secondary" disabled={readOnly} onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
+                                            {room.checkoutException && <button className="chip" disabled={readOnly} onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
                                             <div style={{ fontSize: 12, color: '#64748b' }}>Push notifikace pro admin zde doplníme po backend integraci.</div>
                                         </div>
                                     </div>
@@ -619,6 +628,7 @@ export default function DashboardToday({
                                                 <button
                                                     key={time}
                                                     className="chip"
+                                                    disabled={readOnly}
                                                     onClick={() => {
                                                         onAction(room.id, 'odhad', { estimateTime: time })
                                                         setEstimatingRoom(null)
@@ -631,6 +641,7 @@ export default function DashboardToday({
                                                 <button
                                                     key={mins}
                                                     className="chip"
+                                                    disabled={readOnly}
                                                     onClick={() => {
                                                         onAction(room.id, 'odhad', { relativeMinutes: mins })
                                                         setEstimatingRoom(null)
@@ -729,8 +740,9 @@ export default function DashboardToday({
                                                                 <button
                                                                     className="chip"
                                                                     style={{ borderColor: '#fecaca', color: '#b91c1c', background: '#fff1f2' }}
-                                                                    onClick={() => onUpdateTaskStatus(task.id, 'cancelled')}
+                                                                    onClick={() => !readOnly && onUpdateTaskStatus(task.id, 'cancelled')}
                                                                     title="Smazat úkol"
+                                                                    disabled={readOnly}
                                                                 >
                                                                     Smazat
                                                                 </button>
@@ -746,6 +758,20 @@ export default function DashboardToday({
                         </div>
                     )
                 })}
+            </div>
+
+            <div className="section" style={{ marginTop: 12 }}>
+                <h3>Když je čas</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {rooms.filter((room) => room.freeConfirmed && !room.occupiedConfirmed).map((room) => (
+                        <div key={`free-confirmed-${room.id}`} className="note-chip" style={{ border: '1px solid #86efac', background: '#f0fdf4', color: '#166534' }}>
+                            {room.number} • Potvrzeně volný
+                        </div>
+                    ))}
+                    {rooms.filter((room) => room.freeConfirmed && !room.occupiedConfirmed).length === 0 && (
+                        <div className="room-meta">Žádné potvrzeně volné pokoje pro tento den.</div>
+                    )}
+                </div>
             </div>
         </div>
     )
