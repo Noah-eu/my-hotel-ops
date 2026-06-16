@@ -2,6 +2,25 @@ import { roomPlansByDay } from '../mockData'
 import type { OpsTab } from './opsStore'
 
 const DEV = import.meta.env.DEV
+const PDF_PAGE_BREAK = '[[[PREVIO_PAGE_BREAK]]]'
+
+const KNOWN_ROOM_NUMBERS = new Set([
+    '001',
+    '101',
+    '102',
+    '103',
+    '104',
+    '105',
+    '201',
+    '202',
+    '203',
+    '204',
+    '205',
+    '301',
+    '302',
+    '304',
+    '305'
+])
 
 export type RoomCatalogItem = {
     roomNumber: string
@@ -31,13 +50,14 @@ export type PrevioParseResult = {
     lineCount: number
     lineDebug: Array<{
         index: number
-        line: string
-        detectedDate?: string
-        detectedRoom?: string
+        pageDate?: string
+        room?: string
+        rawBlock: string
+        detectedTimes: string[]
         departureTime?: string
         arrivalTime?: string
         notes: string[]
-        warning?: string
+        warnings: string[]
     }>
 }
 
@@ -119,6 +139,40 @@ function parseLineDate(line: string, fallbackYear: number) {
     return null
 }
 
+function parsePageDateHeader(line: string) {
+    const match = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|út|st|ct|čt|pa|so|ne)\b/i)
+    if (!match) return null
+
+    const day = Number(match[1])
+    const month = Number(match[2])
+    const year = Number(match[3])
+    const date = new Date(year, month - 1, day)
+    return Number.isNaN(date.getTime()) ? null : date
+}
+
+function isPageDateHeader(line: string) {
+    return parsePageDateHeader(line) !== null
+}
+
+function shouldIgnoreLine(line: string) {
+    const normalized = normalizeForMatch(line).replace(/\s+/g, ' ').trim()
+    if (!normalized) return true
+
+    if (normalized === 'chill apartments') return true
+    if (normalized === 'pokoj') return true
+    if (normalized === 'datum') return true
+    if (normalized === 'odjezd') return true
+    if (normalized === 'prijezd') return true
+    if (normalized === 'poznamka') return true
+    if (normalized === 'celkem') return true
+    if (/^strana \d+ z \d+$/.test(normalized)) return true
+    if (normalized === 'prijizdejici' || normalized === 'odjizdejici' || normalized === 'probihajici') return true
+    if (normalized === 'pokoj datum odjezd prijezd poznamka celkem') return true
+    if (/prijizdejici\s*\/\s*odjizdejici\s*\/\s*probihajici/.test(normalized)) return true
+
+    return false
+}
+
 function keywordNotes(textLower: string) {
     const keywords = [
         'dětská postýlka',
@@ -140,6 +194,8 @@ export function getDefaultRoomCatalog(): RoomCatalogItem[] {
         if (!match) return
         unique.add(normalizeRoomNumber(match[0]))
     })
+
+    unique.add('203')
 
     return Array.from(unique)
         .sort((a, b) => Number(a) - Number(b))
@@ -196,11 +252,11 @@ export async function extractTextFromPdfFile(file: File): Promise<string> {
         pageTexts.push(mergedLines.join('\n'))
     }
 
-    return pageTexts.join('\n')
+    return pageTexts.join(`\n${PDF_PAGE_BREAK}\n`)
 }
 
 export function parsePrevioPdfText(rawText: string, referenceDate = new Date()): PrevioParseResult {
-    const lines = rawText
+    const allLines = rawText
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)
@@ -210,121 +266,198 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
     const parsedDateHeadings: string[] = []
     const lineDebug: PrevioParseResult['lineDebug'] = []
 
-    let currentDate: Date | null = null
-    const fallbackYear = referenceDate.getFullYear()
+    function detectRoomMarker(line: string) {
+        const collapsed = line.replace(/\s+/g, ' ').trim()
+        const exact = collapsed.match(/^(\d{3})(?:\s+studio)?$/i)
+        if (exact) {
+            const room = normalizeRoomNumber(exact[1])
+            return KNOWN_ROOM_NUMBERS.has(room) ? room : undefined
+        }
 
-    function inferTimes(text: string) {
-        const normalized = normalizeForMatch(text)
-        const times = [...text.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)].map((m) => normalizeTime(`${m[1]}:${m[2]}`))
+        const roomMatch = collapsed.match(/\b(\d{3})\b/)
+        if (!roomMatch) return undefined
+        const room = normalizeRoomNumber(roomMatch[1])
+        return KNOWN_ROOM_NUMBERS.has(room) ? room : undefined
+    }
 
-        let departureTime: string | undefined
-        let arrivalTime: string | undefined
+    function toMinutes(hhmm: string) {
+        const [h, m] = hhmm.split(':').map(Number)
+        return h * 60 + m
+    }
 
-        const departureKeyword = /odjezd|departure|check\s*-?\s*out|checkout|odchod/.test(normalized)
-        const arrivalKeyword = /prijezd|arrival|check\s*-?\s*in|checkin|prichod/.test(normalized)
+    function detectTimes(blockText: string) {
+        const unique = new Set<string>()
+        const matches = blockText.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
+        for (const match of matches) {
+            unique.add(normalizeTime(`${match[1]}:${match[2]}`))
+        }
+        return Array.from(unique).sort((a, b) => toMinutes(a) - toMinutes(b))
+    }
 
-        if (times.length >= 2) {
-            if (departureKeyword && arrivalKeyword) {
-                departureTime = times[0]
-                arrivalTime = times[1]
-            } else {
-                departureTime = times[0]
-                arrivalTime = times[1]
+    function chooseTimes(detectedTimes: string[]) {
+        const departures = detectedTimes.filter((time) => toMinutes(time) <= 12 * 60)
+        const arrivals = detectedTimes.filter((time) => toMinutes(time) >= 13 * 60)
+
+        if (detectedTimes.length === 1) {
+            const only = detectedTimes[0]
+            if (toMinutes(only) <= 12 * 60) {
+                return { departureTime: only, arrivalTime: undefined }
             }
-        } else if (times.length === 1) {
-            if (departureKeyword && !arrivalKeyword) departureTime = times[0]
-            else if (arrivalKeyword && !departureKeyword) arrivalTime = times[0]
-            else arrivalTime = times[0]
+            return { departureTime: undefined, arrivalTime: only }
         }
 
-        return { departureTime, arrivalTime }
+        return {
+            departureTime: departures[0],
+            arrivalTime: arrivals[0]
+        }
     }
 
-    function detectNotes(text: string) {
-        const lower = normalizeForMatch(text)
-        const notes = keywordNotes(lower)
-        const boxMatch = text.match(/\bbox\s*([a-z0-9-]+)/i)
-        const box = boxMatch ? `BOX ${boxMatch[1].toUpperCase()}` : undefined
-        return { notes, box }
+    function extractBlockNotes(blockText: string) {
+        const notes: string[] = []
+        const normalized = normalizeForMatch(blockText)
+
+        const keywordEntries = [
+            { key: 'detska postylka', label: 'dětská postýlka' },
+            { key: 'gauc', label: 'gauč' },
+            { key: 'extra rucniky', label: 'extra ručníky' },
+            { key: 'late arrival', label: 'late arrival' },
+            { key: 'alfred', label: 'Alfred' }
+        ]
+        keywordEntries.forEach((entry) => {
+            if (normalized.includes(entry.key)) {
+                notes.push(entry.label)
+            }
+        })
+
+        const boxMentions = [...blockText.matchAll(/(?:recepce\s*:\s*)?box\s*[a-z0-9-]+/ig)]
+            .map((match) => match[0].replace(/\s+/g, ' ').trim())
+        notes.push(...boxMentions)
+
+        return Array.from(new Set(notes))
     }
 
-    function detectRoom(line: string) {
-        const roomMatch = line.match(/(?:pokoj\s*)?\b(\d{3})\b/i)
-        return roomMatch ? normalizeRoomNumber(roomMatch[1]) : undefined
+    function extractBox(blockText: string) {
+        const boxMatch = blockText.match(/\bbox\s*([a-z0-9-]+)/i)
+        return boxMatch ? `BOX ${boxMatch[1].toUpperCase()}` : undefined
     }
 
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-        const line = lines[lineIndex]
+    function extractGuestCount(blockText: string) {
+        const match = blockText.match(/\[(\d{1,2})\s*\+\s*\d{1,2}\]/)
+        if (match) return Number(match[1])
 
-        const maybeDate = parseLineDate(line, fallbackYear)
-        if (maybeDate) {
-            currentDate = maybeDate
-            parsedDateHeadings.push(formatLocalDate(maybeDate))
+        const fallback = blockText.match(/\b(\d{1,2})\s*(?:p|os|host|pax)\b/i)
+        return fallback ? Number(fallback[1]) : undefined
+    }
+
+    function extractDateTokens(text: string) {
+        const tokens = new Set<string>()
+        const matches = text.matchAll(/\b(\d{1,2})\.\s*(\d{1,2})\.?\b/g)
+        for (const match of matches) {
+            tokens.add(`${Number(match[1])}. ${Number(match[2])}.`)
+        }
+        return Array.from(tokens)
+    }
+
+    const pages = rawText
+        .split(PDF_PAGE_BREAK)
+        .map((page) => page.trim())
+        .filter(Boolean)
+
+    const effectivePages = pages.length ? pages : [rawText]
+
+    effectivePages.forEach((pageText, pageIndex) => {
+        const pageLines = pageText
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+
+        const pageDateLine = pageLines.find((line) => isPageDateHeader(line))
+        const pageDate = pageDateLine ? parsePageDateHeader(pageDateLine) : null
+        if (pageDate) {
+            const pageDateIso = formatLocalDate(pageDate)
+            if (!parsedDateHeadings.includes(pageDateIso)) {
+                parsedDateHeadings.push(pageDateIso)
+            }
+        } else {
+            warnings.push(`Strana ${pageIndex + 1}: nenašel jsem hlavičku data strany.`)
         }
 
-        const roomNumber = detectRoom(line)
-        if (!roomNumber) {
-            lineDebug.push({
-                index: lineIndex + 1,
-                line,
-                detectedDate: maybeDate ? formatLocalDate(maybeDate) : undefined,
-                notes: [],
-                warning: 'Bez čísla pokoje'
+        const contentLines = pageLines.filter((line) => !isPageDateHeader(line) && !shouldIgnoreLine(line))
+        const roomMarkers = contentLines
+            .map((line, index) => ({ index, room: detectRoomMarker(line) }))
+            .filter((entry): entry is { index: number; room: string } => Boolean(entry.room))
+
+        if (roomMarkers.length === 0) {
+            warnings.push(`Strana ${pageIndex + 1}: nenašel jsem žádný pokojový blok.`)
+            return
+        }
+
+        roomMarkers.forEach((marker, markerIndex) => {
+            const prevRoomIndex = markerIndex > 0 ? roomMarkers[markerIndex - 1].index : -1
+            const nextRoomIndex = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].index : contentLines.length
+
+            const blockStart = prevRoomIndex + 1
+            const blockEnd = nextRoomIndex - 1
+            const blockLines = contentLines.slice(blockStart, blockEnd + 1)
+            const blockBeforeRoom = contentLines.slice(blockStart, marker.index)
+            const blockAfterRoom = contentLines.slice(marker.index + 1, blockEnd + 1)
+            const rawBlock = blockLines.join('\n')
+            const detectedTimes = detectTimes(rawBlock)
+            const { departureTime, arrivalTime } = chooseTimes(detectedTimes)
+            const notes = extractBlockNotes(rawBlock)
+            const box = extractBox(rawBlock)
+            const guestCount = extractGuestCount(rawBlock)
+            const contextDates = extractDateTokens(blockAfterRoom.join(' '))
+            const blockWarnings: string[] = []
+
+            if (!departureTime && !arrivalTime) {
+                blockWarnings.push('Blok bez rozpoznaného času příjezdu/odjezdu')
+            }
+            if (!pageDate) {
+                blockWarnings.push('Chybí datum strany, použito referenční datum')
+            }
+            if (contextDates.length > 0) {
+                blockWarnings.push(`Kontekstová data: ${contextDates.join(', ')}`)
+            }
+            if (blockBeforeRoom.length === 0) {
+                blockWarnings.push('Blok nemá text před řádkem pokoje')
+            }
+
+            const operationalDate = pageDate
+                ? formatLocalDate(pageDate)
+                : formatLocalDate(new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() + pageIndex))
+
+            rows.push({
+                dateIso: operationalDate,
+                roomNumber: marker.room,
+                departureTime,
+                arrivalTime,
+                guestCount,
+                box,
+                notes,
+                warnings: blockWarnings
             })
-            continue
-        }
 
-        const lookahead: string[] = [line]
-        for (let j = lineIndex + 1; j < Math.min(lines.length, lineIndex + 4); j++) {
-            const nextLine = lines[j]
-            if (detectRoom(nextLine) || parseLineDate(nextLine, fallbackYear)) break
-            lookahead.push(nextLine)
-        }
-        const combinedLine = lookahead.join(' ')
+            if (blockWarnings.length > 0) {
+                warnings.push(`Blok ${markerIndex + 1} (pokoj ${marker.room}): ${blockWarnings.join(', ')}`)
+            }
 
-        const { departureTime, arrivalTime } = inferTimes(combinedLine)
-        const { notes, box } = detectNotes(combinedLine)
-
-        const guestCountMatch = combinedLine.match(/\b(\d{1,2})\s*(?:p|os|host|pax)\b/i)
-        const guestCount = guestCountMatch ? Number(guestCountMatch[1]) : undefined
-        const rowWarnings: string[] = []
-
-        if (!currentDate) {
-            rowWarnings.push('Řádek bez rozpoznaného data, přiřazuji k dnešku')
-        }
-        if (!departureTime && !arrivalTime) {
-            rowWarnings.push('Řádek bez času příjezdu/odjezdu')
-        }
-
-        rows.push({
-            dateIso: formatLocalDate(currentDate || referenceDate),
-            roomNumber,
-            departureTime,
-            arrivalTime,
-            guestCount,
-            box,
-            notes,
-            warnings: rowWarnings
+            lineDebug.push({
+                index: lineDebug.length + 1,
+                pageDate: pageDate ? formatLocalDate(pageDate) : undefined,
+                room: marker.room,
+                rawBlock,
+                detectedTimes,
+                departureTime,
+                arrivalTime,
+                notes,
+                warnings: blockWarnings
+            })
         })
-
-        if (rowWarnings.length > 0) {
-            warnings.push(`Řádek ${lineIndex + 1}: ${rowWarnings.join(', ')}`)
-        }
-
-        lineDebug.push({
-            index: lineIndex + 1,
-            line,
-            detectedDate: currentDate ? formatLocalDate(currentDate) : undefined,
-            detectedRoom: roomNumber,
-            departureTime,
-            arrivalTime,
-            notes,
-            warning: rowWarnings.length ? rowWarnings.join(', ') : undefined
-        })
-    }
+    })
 
     if (rows.length === 0) {
-        warnings.push('V PDF nebyly rozpoznány žádné řádky s číslem pokoje.')
+        warnings.push('V PDF nebyly rozpoznány žádné pokojové bloky.')
     }
 
     if (DEV) {
@@ -336,7 +469,7 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
         warnings,
         parsedDateHeadings,
         rawTextLength: rawText.length,
-        lineCount: lines.length,
+        lineCount: allLines.length,
         lineDebug
     }
 }

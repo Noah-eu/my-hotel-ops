@@ -1269,11 +1269,12 @@ export default function App() {
                                                             <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug parseru</summary>
                                                             <div style={{ marginTop: 8, maxHeight: 280, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12 }}>
                                                                 {importParseResult.lineDebug.map((dbg) => (
-                                                                    <div key={`dbg-${dbg.index}-${dbg.line.slice(0, 12)}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
-                                                                        <div><strong>Řádek {dbg.index}:</strong> {dbg.line}</div>
-                                                                        <div>Datum: {dbg.detectedDate || '—'} | Pokoj: {dbg.detectedRoom || '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
+                                                                    <div key={`dbg-${dbg.index}-${dbg.room || 'none'}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
+                                                                        <div><strong>Blok {dbg.index}:</strong> Strana/den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'}</div>
+                                                                        <div>Detekované časy: {dbg.detectedTimes.length ? dbg.detectedTimes.join(', ') : '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
                                                                         <div>Poznámky: {dbg.notes.length ? dbg.notes.join(', ') : '—'}</div>
-                                                                        <div>Warning: {dbg.warning || '—'}</div>
+                                                                        <div>Varování: {dbg.warnings.length ? dbg.warnings.join(' | ') : '—'}</div>
+                                                                        <pre style={{ marginTop: 6, maxHeight: 120, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: 6, background: '#fff', whiteSpace: 'pre-wrap' }}>{dbg.rawBlock}</pre>
                                                                     </div>
                                                                 ))}
                                                             </div>

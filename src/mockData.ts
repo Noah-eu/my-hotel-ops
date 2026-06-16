@@ -76,6 +76,7 @@ const todayPlans: RoomPlan[] = [
     },
     { id: 'r201', number: '201', situation: 'odjezd', departure: { time: '10:30', guestLabel: 'Host F.' }, departureTime: '10:30', status: 'ceka', box: 'BOX A', nextArrivalPreview: { day: 'zitra', time: '13:30' } },
     { id: 'r202', number: '202', situation: 'prijezd', arrival: { time: '16:00', guestLabel: 'Host G.', box: 'BOX B', notes: ['extra ručníky'] }, arrivalTime: '16:00', status: 'ceka', box: 'BOX B' },
+    { id: 'r203', number: '203', situation: 'volny', status: 'neni' },
     { id: 'r204', number: '204', situation: 'volny', status: 'neni' },
     { id: 'r205', number: '205', situation: 'odjezd_prijezd', departure: { time: '08:00', guestLabel: 'Host H.' }, arrival: { time: '18:00', guestLabel: 'Host I.', box: 'BOX C', notes: ['late arrival'] }, departureTime: '08:00', arrivalTime: '18:00', status: 'ceka', box: 'BOX C' },
     { id: 'r301', number: '301', situation: 'odjezd', departure: { time: '12:00', guestLabel: 'Host J.' }, departureTime: '12:00', status: 'ceka', nextArrivalPreview: { day: 'zitra', time: '15:00' } },
@@ -176,47 +177,47 @@ export const maintenanceItems: {
     updatedAt?: string
     materialNeeded?: string
 }[] = [
-    {
-        id: 'm1',
-        roomNumber: '101',
-        title: 'Zasekaná zásuvka',
-        category: 'electricity',
-        priority: 'urgent',
-        status: 'new',
-        note: 'Host hlásí jiskření při zapojení nabíječky',
-        reportedBy: 'David',
-        createdAt: '09:00'
-    },
-    {
-        id: 'm2',
-        roomNumber: '205',
-        title: 'Protéká záchod',
-        category: 'drain',
-        priority: 'urgent',
-        status: 'new',
-        note: 'Nutné ihned zkontrolovat',
-        reportedBy: 'Iryna',
-        createdAt: '08:50'
-    },
-    {
-        id: 'm3',
-        roomNumber: '302',
-        title: 'Problém se sejfem',
-        category: 'safe',
-        priority: 'normal',
-        status: 'new',
-        note: 'Sejf odmítá přijmout kód',
-        reportedBy: 'David',
-        createdAt: '08:30'
-    },
-    {
-        id: 'm4',
-        roomNumber: 'Chodba 2. patro',
-        title: 'Nesvítí světlo',
-        category: 'electricity',
-        priority: 'normal',
-        status: 'new',
-        reportedBy: 'Uklízečka 2',
-        createdAt: '07:45'
-    }
-]
+        {
+            id: 'm1',
+            roomNumber: '101',
+            title: 'Zasekaná zásuvka',
+            category: 'electricity',
+            priority: 'urgent',
+            status: 'new',
+            note: 'Host hlásí jiskření při zapojení nabíječky',
+            reportedBy: 'David',
+            createdAt: '09:00'
+        },
+        {
+            id: 'm2',
+            roomNumber: '205',
+            title: 'Protéká záchod',
+            category: 'drain',
+            priority: 'urgent',
+            status: 'new',
+            note: 'Nutné ihned zkontrolovat',
+            reportedBy: 'Iryna',
+            createdAt: '08:50'
+        },
+        {
+            id: 'm3',
+            roomNumber: '302',
+            title: 'Problém se sejfem',
+            category: 'safe',
+            priority: 'normal',
+            status: 'new',
+            note: 'Sejf odmítá přijmout kód',
+            reportedBy: 'David',
+            createdAt: '08:30'
+        },
+        {
+            id: 'm4',
+            roomNumber: 'Chodba 2. patro',
+            title: 'Nesvítí světlo',
+            category: 'electricity',
+            priority: 'normal',
+            status: 'new',
+            reportedBy: 'Uklízečka 2',
+            createdAt: '07:45'
+        }
+    ]
