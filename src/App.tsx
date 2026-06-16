@@ -1197,10 +1197,34 @@ export default function App() {
         }
     }
 
+    function isValidStoredStateImportPreview(preview: ImportJob['previewSummary'] extends { preview?: infer T } ? T : unknown): preview is NonNullable<ImportJob['previewSummary']>['preview'] {
+        if (!preview || typeof preview !== 'object') return false
+        const maybe = preview as NonNullable<ImportJob['previewSummary']>['preview']
+        return Array.isArray(maybe.days)
+            && typeof maybe.turnoverCount === 'number'
+            && typeof maybe.stayoverCount === 'number'
+            && typeof maybe.derivedFreeCount === 'number'
+            && Array.isArray(maybe.warnings)
+    }
+
     function handleShowImportJobPreview(jobId: string) {
+        const job = importJobs.find((item) => item.id === jobId)
+        if (!job || !isValidStoredStateImportPreview(job.previewSummary?.preview)) {
+            setSelectedImportJobId(jobId)
+            setActiveStateImportJobId(null)
+            setStateImportPreview(null)
+            setStateImportPdfStatus('error')
+            setStateImportPdfError('Náhled importu není dostupný. Zkuste vytvořit náhled znovu.')
+            return
+        }
+
         setSelectedImportJobId(jobId)
+        setActiveStateImportJobId(jobId)
         setStateImportPreview(null)
-        setActiveStateImportJobId(null)
+        setStateImportPdfStatus('loaded')
+        setStateImportPdfError(null)
+        setStateImportRawText('')
+        setStateImportParseResult(null)
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -2125,17 +2149,19 @@ export default function App() {
                                                         )}
                                                         {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
                                                         <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            {job.previewSummary?.preview && (
+                                                                <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>Zobrazit náhled</button>
+                                                            )}
                                                             {job.source === 'email' && job.storagePath && (
                                                                 <button
                                                                     className="btn"
                                                                     disabled={generatingImportPreviewJobId === job.id}
                                                                     onClick={() => void handleGenerateImportJobPreview(job.id)}
                                                                 >
-                                                                    {generatingImportPreviewJobId === job.id ? 'Vytvářím náhled...' : 'Vytvořit náhled'}
+                                                                    {generatingImportPreviewJobId === job.id
+                                                                        ? 'Vytvářím náhled...'
+                                                                        : (job.previewSummary?.preview ? 'Přegenerovat náhled' : 'Vytvořit náhled')}
                                                                 </button>
-                                                            )}
-                                                            {job.previewSummary?.preview && (
-                                                                <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>Zobrazit náhled</button>
                                                             )}
                                                             <button
                                                                 className="btn"
