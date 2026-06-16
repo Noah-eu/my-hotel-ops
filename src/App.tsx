@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import type { User } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
@@ -17,8 +17,16 @@ import {
     signOutFirebaseUser
 } from './lib/firebase'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
-import { OpsPersistedState } from './services/opsStore'
+import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
+import {
+    buildPrevioImportPreview,
+    extractTextFromPdfFile,
+    getDefaultRoomCatalog,
+    parsePrevioPdfText,
+    type PrevioImportPreview,
+    type RoomCatalogItem
+} from './services/previoPdfParser'
 
 type AppDiagnostics = {
     firebaseConfigured: boolean
@@ -159,15 +167,28 @@ export default function App() {
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
     const [staff, setStaff] = useState<StaffMember[]>(() => saved?.staff ?? users)
     const [resetConfirm, setResetConfirm] = useState(false)
+    const [roomCatalog, setRoomCatalog] = useState<RoomCatalogItem[]>(() => getDefaultRoomCatalog())
+    const [importPdfStatus, setImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+    const [importPdfError, setImportPdfError] = useState<string | null>(null)
+    const [importPreview, setImportPreview] = useState<PrevioImportPreview | null>(null)
+    const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>({})
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
+
+    const activeRooms = useMemo(
+        () => roomCatalog.filter((room) => room.active).sort((a, b) => a.sortOrder - b.sortOrder),
+        [roomCatalog]
+    )
 
     const currentUser = runtimeMode === 'online'
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
-    const dayLabel = `${dayTitle} • ${new Date().toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
+    const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
+    const fallbackTabDate = new Date(Date.now() + tabOffsetDays * 24 * 60 * 60 * 1000)
+    const selectedTabDate = importedTabDates[tab] ? new Date(importedTabDates[tab] as string) : fallbackTabDate
+    const dayLabel = `${dayTitle} • ${selectedTabDate.toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -246,6 +267,177 @@ export default function App() {
 
     async function handleSignOutAnonymous() {
         await handleLogout()
+    }
+
+    async function loadRoomCatalogForCurrentMode() {
+        if (runtimeMode !== 'online' || !firestoreDb || !authUser || authUser.isAnonymous) {
+            setRoomCatalog(getDefaultRoomCatalog())
+            return
+        }
+
+        const roomsRef = collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'rooms')
+        const snap = await getDocs(roomsRef)
+        if (snap.empty) {
+            const defaults = getDefaultRoomCatalog()
+            await Promise.all(
+                defaults.map((room) =>
+                    setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'rooms', room.roomNumber), room)
+                )
+            )
+            setRoomCatalog(defaults)
+            return
+        }
+
+        const loaded = snap.docs
+            .map((d) => {
+                const data = d.data() as Partial<RoomCatalogItem>
+                return {
+                    roomNumber: data.roomNumber || d.id,
+                    displayName: data.displayName,
+                    active: data.active !== false,
+                    defaultBox: data.defaultBox,
+                    sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : Number(d.id)
+                } satisfies RoomCatalogItem
+            })
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+
+        setRoomCatalog(loaded)
+    }
+
+    async function handlePrevioPdfSelected(file: File | null) {
+        if (!file) return
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+        if (!isPdf) {
+            setImportPdfStatus('error')
+            setImportPdfError('Soubor musí být ve formátu PDF.')
+            setImportPreview(null)
+            return
+        }
+
+        setImportPdfStatus('loading')
+        setImportPdfError(null)
+        setImportPreview(null)
+
+        try {
+            const rawText = await extractTextFromPdfFile(file)
+            const parsed = parsePrevioPdfText(rawText, new Date())
+            const preview = buildPrevioImportPreview(parsed, activeRooms, new Date())
+            setImportPreview(preview)
+            setImportPdfStatus('loaded')
+        } catch (error: any) {
+            setImportPdfStatus('error')
+            setImportPdfError(error?.message || 'PDF se nepodařilo načíst.')
+            setImportPreview(null)
+        }
+    }
+
+    function buildMergedPlansFromImport(preview: PrevioImportPreview): Record<OpsTab, typeof roomsByDay[OpsTab]> {
+        const next: Record<OpsTab, typeof roomsByDay[OpsTab]> = {
+            Dnes: [],
+            Zitra: [],
+            Pozitri: []
+        }
+
+        ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+            const existingByRoom = new Map(
+                roomsByDay[day].map((room) => {
+                    const roomNumber = room.number.match(/\d{3}/)?.[0] || room.number
+                    return [roomNumber, room]
+                })
+            )
+
+            next[day] = activeRooms.map((catalogRoom) => {
+                const base = existingByRoom.get(catalogRoom.roomNumber)
+                const parsed = preview.byTab[day].get(catalogRoom.roomNumber)
+
+                const row = base
+                    ? { ...base }
+                    : {
+                        id: `r-${catalogRoom.roomNumber}`,
+                        number: catalogRoom.displayName || catalogRoom.roomNumber,
+                        situation: 'volny' as const,
+                        status: 'neni' as const
+                    }
+
+                if (!parsed || (!parsed.arrivalTime && !parsed.departureTime)) {
+                    return {
+                        ...row,
+                        departure: undefined,
+                        arrival: undefined,
+                        departureTime: undefined,
+                        arrivalTime: undefined,
+                        nextArrivalPreview: undefined,
+                        situation: 'volny' as const
+                    }
+                }
+
+                const hasDeparture = Boolean(parsed.departureTime)
+                const hasArrival = Boolean(parsed.arrivalTime)
+                const mergedSituation = hasDeparture && hasArrival
+                    ? 'odjezd_prijezd'
+                    : hasDeparture
+                        ? 'odjezd'
+                        : 'prijezd'
+
+                return {
+                    ...row,
+                    situation: mergedSituation,
+                    departure: hasDeparture ? {
+                        time: parsed.departureTime as string,
+                        guestLabel: parsed.guestLabel,
+                        guestCount: parsed.guestCount
+                    } : undefined,
+                    arrival: hasArrival ? {
+                        time: parsed.arrivalTime as string,
+                        guestLabel: parsed.guestLabel,
+                        guestCount: parsed.guestCount,
+                        box: parsed.box || row.box,
+                        notes: parsed.notes.length ? parsed.notes : row.arrival?.notes
+                    } : undefined,
+                    departureTime: parsed.departureTime,
+                    arrivalTime: parsed.arrivalTime,
+                    guestCount: parsed.guestCount ?? row.guestCount,
+                    box: parsed.box || row.box || catalogRoom.defaultBox,
+                    nextArrivalPreview: undefined
+                }
+            })
+        })
+
+        return next
+    }
+
+    async function handleConfirmPrevioImport() {
+        if (!importPreview) return
+        const merged = buildMergedPlansFromImport(importPreview)
+        setImportedTabDates(importPreview.parsedTabDates)
+        setRoomsByDay(merged)
+
+        if (runtimeMode === 'online') {
+            ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                merged[day].forEach((room) => {
+                    activeStore.updateRoomPlan(day, room.id, {
+                        situation: room.situation,
+                        departure: room.departure,
+                        arrival: room.arrival,
+                        departureTime: room.departureTime,
+                        arrivalTime: room.arrivalTime,
+                        guestCount: room.guestCount,
+                        box: room.box,
+                        nextArrivalPreview: room.nextArrivalPreview
+                    })
+                })
+            })
+        }
+
+        setImportPreview(null)
+        setImportPdfStatus('idle')
+        setImportPdfError(null)
+    }
+
+    function handleCancelPrevioImport() {
+        setImportPreview(null)
+        setImportPdfStatus('idle')
+        setImportPdfError(null)
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -606,8 +798,8 @@ export default function App() {
                 ...prev,
                 activeMode: 'demo',
                 authStatus: 'not_started',
-                    isAnonymous: false,
-                    profileLoaded: false,
+                isAnonymous: false,
+                profileLoaded: false,
                 firestoreStatus: 'not_started',
                 lastErrorCode: undefined,
                 lastErrorMessage: undefined
@@ -792,6 +984,15 @@ export default function App() {
         }
     }, [runtimeMode, authUser, onlineStore, defaultState])
 
+    useEffect(() => {
+        void loadRoomCatalogForCurrentMode().catch((error: any) => {
+            if (import.meta.env.DEV) {
+                console.warn('[RoomCatalog] failed to load, using defaults', error?.message || error)
+            }
+            setRoomCatalog(getDefaultRoomCatalog())
+        })
+    }, [runtimeMode, authUser?.uid, authUser?.isAnonymous])
+
     async function resetDemoData() {
         // restore mock data and clear saved state
         setRoomsByDay(roomPlansByDay)
@@ -973,14 +1174,82 @@ export default function App() {
                                 />
                             )}
                             {view === 'admin' && (
-                                <AdminDashboard
-                                    rooms={roomsByDay[tab]}
-                                    tasks={tasks}
-                                    supplyRequests={supplyRequests}
-                                    staff={staff}
-                                    canManageSupplies={currentUser?.role === 'admin'}
-                                    onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
-                                />
+                                <>
+                                    {currentUser?.role === 'admin' && (
+                                        <div className="section">
+                                            <h3>Import z Previa</h3>
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                                                <label style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Nahrát PDF příjezdy/odjezdy</label>
+                                                <input
+                                                    type="file"
+                                                    accept="application/pdf,.pdf"
+                                                    onChange={(e) => {
+                                                        const nextFile = e.target.files?.[0] || null
+                                                        void handlePrevioPdfSelected(nextFile)
+                                                    }}
+                                                />
+                                                {importPdfStatus === 'loading' && <div className="room-meta">Načítám PDF...</div>}
+                                                {importPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF načteno</div>}
+                                                {importPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{importPdfError || 'PDF se nepodařilo načíst.'}</div>}
+                                            </div>
+
+                                            {importPreview && (
+                                                <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                                                    <div style={{ fontWeight: 800 }}>Náhled importu</div>
+                                                    <div className="room-meta">Počet rozpoznaných řádků: {importPreview.parsedRows}</div>
+                                                    <div className="room-meta">Mimo seznam pokojů: {importPreview.unknownRooms.length ? importPreview.unknownRooms.join(', ') : 'žádné'}</div>
+                                                    <div className="room-meta">Bez příjezdu/odjezdu: {importPreview.noTurnoverRooms.length}</div>
+                                                    {importPreview.warnings.length > 0 && (
+                                                        <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                            {importPreview.warnings.slice(0, 8).map((warning) => (
+                                                                <div key={warning}>{warning}</div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    <div style={{ maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                                            <thead>
+                                                                <tr style={{ background: '#f8fafc' }}>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Datum</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Poznámky</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {importPreview.previewRows.map((row) => (
+                                                                    <tr key={`${row.tab}-${row.roomNumber}-${row.departureTime || '-'}-${row.arrivalTime || '-'}`}>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.dateLabel}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.notes || '—'}</td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+
+                                                    <div style={{ display: 'flex', gap: 8 }}>
+                                                        <button className="btn" onClick={() => void handleConfirmPrevioImport()}>Potvrdit import</button>
+                                                        <button className="btn" onClick={handleCancelPrevioImport}>Zrušit</button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    <AdminDashboard
+                                        rooms={roomsByDay[tab]}
+                                        tasks={tasks}
+                                        supplyRequests={supplyRequests}
+                                        staff={staff}
+                                        canManageSupplies={currentUser?.role === 'admin'}
+                                        onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
+                                    />
+                                </>
                             )}
                             {view === 'maintenance' && (
                                 <MaintenanceView
