@@ -107,6 +107,18 @@ function normalizeRoomNumber(raw: string) {
     return raw.trim().replace(/^0+/, '').padStart(3, '0')
 }
 
+function normalizeRoomKey(raw: string) {
+    const match = raw.match(/\b(\d{3})\b/)
+    if (match) return normalizeRoomNumber(match[1])
+
+    const compactDigits = raw.replace(/\D/g, '')
+    if (compactDigits.length >= 3) {
+        return normalizeRoomNumber(compactDigits.slice(-3))
+    }
+
+    return raw.trim()
+}
+
 function normalizeTime(raw: string) {
     const normalized = raw.replace('.', ':')
     const [h, m] = normalized.split(':')
@@ -505,8 +517,14 @@ export function buildPrevioImportPreview(
         .filter((room) => room.active)
         .sort((a, b) => a.sortOrder - b.sortOrder)
 
-    const activeSet = new Set(activeRooms.map((room) => room.roomNumber))
-    const unknownRooms = Array.from(new Set(parsed.rows.map((row) => row.roomNumber).filter((room) => !activeSet.has(room))))
+    const activeSet = new Set(activeRooms.map((room) => normalizeRoomKey(room.roomNumber)))
+    const unknownRooms = Array.from(
+        new Set(
+            parsed.rows
+                .map((row) => normalizeRoomKey(row.roomNumber))
+                .filter((room) => !activeSet.has(room))
+        )
+    )
 
     parsed.rows.forEach((row) => {
         if (!row.dateIso) return
@@ -521,8 +539,9 @@ export function buildPrevioImportPreview(
 
         parsedTabDates[tab] = row.dateIso
 
-        const prev = byTab[tab].get(row.roomNumber) || { notes: [] }
-        byTab[tab].set(row.roomNumber, {
+        const normalizedRoom = normalizeRoomKey(row.roomNumber)
+        const prev = byTab[tab].get(normalizedRoom) || { notes: [] }
+        byTab[tab].set(normalizedRoom, {
             departureTime: row.departureTime || prev.departureTime,
             arrivalTime: row.arrivalTime || prev.arrivalTime,
             guestLabel: row.guestLabel || prev.guestLabel,
@@ -535,9 +554,9 @@ export function buildPrevioImportPreview(
     const noTurnoverRooms: string[] = []
         ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((tab) => {
             activeRooms.forEach((room) => {
-                const row = byTab[tab].get(room.roomNumber)
+                const row = byTab[tab].get(normalizeRoomKey(room.roomNumber))
                 if (!row || (!row.arrivalTime && !row.departureTime)) {
-                    noTurnoverRooms.push(`${tab}: ${room.roomNumber}`)
+                    noTurnoverRooms.push(`${tab}: ${normalizeRoomKey(room.roomNumber)}`)
                 }
             })
         })

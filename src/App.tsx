@@ -116,6 +116,16 @@ function roleLabel(role: UserRole) {
 }
 
 export default function App() {
+    function normalizeCatalogRoomNumber(value: string) {
+        const trimmed = value.trim()
+        const match = trimmed.match(/\b(\d{3})\b/)
+        if (match) return match[1]
+
+        const digits = trimmed.replace(/\D/g, '')
+        if (digits.length >= 3) return digits.slice(-3)
+        return trimmed
+    }
+
     const localStore = useMemo(() => createLocalOpsStore(), [])
     const onlineStore = useMemo(() => createFirebaseOpsStore(), [])
     const [runtimeMode, setRuntimeMode] = useState<'demo' | 'online'>(appMode)
@@ -291,19 +301,47 @@ export default function App() {
             return
         }
 
-        const loaded = snap.docs
+        const loadedRaw = snap.docs
             .map((d) => {
                 const data = d.data() as Partial<RoomCatalogItem>
+                const normalizedNumber = normalizeCatalogRoomNumber(data.roomNumber || d.id)
                 return {
-                    roomNumber: data.roomNumber || d.id,
+                    roomNumber: normalizedNumber,
                     displayName: data.displayName,
                     active: data.active !== false,
                     defaultBox: data.defaultBox,
-                    sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : Number(d.id)
+                    sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : Number(normalizedNumber)
                 } satisfies RoomCatalogItem
             })
-            .sort((a, b) => a.sortOrder - b.sortOrder)
 
+        const byRoom = new Map<string, RoomCatalogItem>()
+        loadedRaw.forEach((room) => {
+            if (!byRoom.has(room.roomNumber)) {
+                byRoom.set(room.roomNumber, room)
+                return
+            }
+
+            const prev = byRoom.get(room.roomNumber) as RoomCatalogItem
+            byRoom.set(room.roomNumber, {
+                ...prev,
+                displayName: prev.displayName || room.displayName,
+                active: prev.active || room.active,
+                defaultBox: prev.defaultBox || room.defaultBox,
+                sortOrder: Math.min(prev.sortOrder, room.sortOrder)
+            })
+        })
+
+        if (!byRoom.has('203')) {
+            const room203: RoomCatalogItem = {
+                roomNumber: '203',
+                active: true,
+                sortOrder: 203
+            }
+            byRoom.set('203', room203)
+            await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'rooms', '203'), room203)
+        }
+
+        const loaded = Array.from(byRoom.values()).sort((a, b) => a.sortOrder - b.sortOrder)
         setRoomCatalog(loaded)
     }
 
@@ -374,19 +412,20 @@ export default function App() {
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 const existingByRoom = new Map(
                     roomsByDay[day].map((room) => {
-                        const roomNumber = room.number.match(/\d{3}/)?.[0] || room.number
+                        const roomNumber = normalizeCatalogRoomNumber(room.number)
                         return [roomNumber, room]
                     })
                 )
 
                 next[day] = activeRooms.map((catalogRoom) => {
-                    const base = existingByRoom.get(catalogRoom.roomNumber)
-                    const parsed = preview.byTab[day].get(catalogRoom.roomNumber)
+                    const normalizedRoom = normalizeCatalogRoomNumber(catalogRoom.roomNumber)
+                    const base = existingByRoom.get(normalizedRoom)
+                    const parsed = preview.byTab[day].get(normalizedRoom)
 
                     const row = base
                         ? { ...base }
                         : {
-                            id: `r-${catalogRoom.roomNumber}`,
+                            id: `r-${normalizedRoom}`,
                             number: catalogRoom.displayName || catalogRoom.roomNumber,
                             situation: 'volny' as const,
                             status: 'neni' as const
