@@ -249,8 +249,8 @@ export default function App() {
     const [stateImportPreview, setStateImportPreview] = useState<PrevioStateImportPreview | null>(null)
     const [stateImportRawText, setStateImportRawText] = useState('')
     const [stateImportParseResult, setStateImportParseResult] = useState<PrevioStateParseResult | null>(null)
-    const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>({})
-    const [importedRoomsByDate, setImportedRoomsByDate] = useState<Record<string, typeof roomPlansByDay[OpsTab]>>({})
+    const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>(() => saved?.importedTabDates ?? {})
+    const [importedRoomsByDate, setImportedRoomsByDate] = useState<Record<string, typeof roomPlansByDay[OpsTab]>>(() => saved?.importedRoomsByDate ?? {})
     const [selectedImportedDateIso, setSelectedImportedDateIso] = useState<string | null>(null)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
@@ -613,6 +613,7 @@ export default function App() {
             freeConfirmed: false,
             stateSource: 'previo-state-pdf',
             stateImportedAt: importedAt,
+            planDateIso: base?.planDateIso,
             stayoverGuestName: undefined,
             stayoverUntil: undefined
         }
@@ -646,6 +647,7 @@ export default function App() {
             if (!parsed) {
                 return {
                     ...row,
+                    planDateIso: dateIso,
                     freeConfirmed: Boolean(dayPreview.complete && dayPreview.derivedFreeRooms.includes(roomNumber))
                 }
             }
@@ -655,6 +657,7 @@ export default function App() {
             if (!hasDeparture && !hasArrival) {
                 return {
                     ...row,
+                    planDateIso: dateIso,
                     occupiedConfirmed: true,
                     stayoverGuestName: parsed.stayoverGuestName || parsed.departureGuestName || parsed.arrivalGuestName,
                     stayoverUntil: parsed.stayoverUntil
@@ -674,6 +677,7 @@ export default function App() {
 
             return {
                 ...row,
+                planDateIso: dateIso,
                 situation: mergedSituation,
                 departure: hasDeparture ? {
                     time: parsed.departureTime as string,
@@ -887,6 +891,16 @@ export default function App() {
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 next[day].forEach((room) => {
                     activeStore.replaceRoomPlan(day, room)
+                })
+            })
+
+            const primaryDateSet = new Set(
+                Object.values(stateImportPreview.parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso))
+            )
+            Object.entries(byDate).forEach(([dateIso, rooms]) => {
+                if (primaryDateSet.has(dateIso)) return
+                rooms.forEach((room) => {
+                    activeStore.replaceRoomPlan(dateIso, room)
                 })
             })
         }
@@ -1379,6 +1393,8 @@ export default function App() {
             tab,
             view,
             roomsByDay,
+            importedTabDates,
+            importedRoomsByDate,
             tasks,
             supplyRequests,
             maintenanceItems,
@@ -1386,7 +1402,7 @@ export default function App() {
             staff
         }
         activeStore.saveState(toSave)
-    }, [userId, tab, view, roomsByDay, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
+    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
 
     useEffect(() => {
         if (!firebaseEnvDiagnostics.firebaseConfigured) {
@@ -1525,6 +1541,8 @@ export default function App() {
                 unsub = onlineStore.subscribeState(
                     (state) => {
                         if (state.roomsByDay) setRoomsByDay(state.roomsByDay)
+                        if (state.importedTabDates) setImportedTabDates(state.importedTabDates)
+                        if (state.importedRoomsByDate) setImportedRoomsByDate(state.importedRoomsByDate)
                         if (state.tasks) setTasks(state.tasks)
                         if (state.supplyRequests) {
                             setSupplyRequests(state.supplyRequests)
@@ -1592,6 +1610,8 @@ export default function App() {
     async function resetDemoData() {
         // restore mock data and clear saved state
         setRoomsByDay(roomPlansByDay)
+        setImportedTabDates({})
+        setImportedRoomsByDate({})
         setTasks([])
         setSupplyRequests(initialSupplyRequests)
         setMaintenanceItems(initialMaintenanceItems)

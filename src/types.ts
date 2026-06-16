@@ -48,6 +48,7 @@ export interface RoomPlan {
     freeConfirmed?: boolean
     stateSource?: 'previo-state-pdf'
     stateImportedAt?: string
+    planDateIso?: string
     stayoverGuestName?: string
     stayoverUntil?: string
 }

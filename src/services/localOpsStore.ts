@@ -1,11 +1,10 @@
-import { MaintenanceItem, SupplyRequest, Task } from '../types'
+import { MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
 import {
     CreateMaintenanceItemInput,
     CreateSupplyRequestInput,
     CreateTaskInput,
     OpsPersistedState,
-    OpsStore,
-    OpsTab
+    OpsStore
 } from './opsStore'
 
 const STORAGE_KEY = 'mho_demo_state_v1'
@@ -60,7 +59,8 @@ export function createLocalOpsStore(): OpsStore {
                 }
             }))
         },
-        replaceRoomPlan(day: OpsTab, room) {
+        replaceRoomPlan(day: string, room: RoomPlan) {
+            if (day !== 'Dnes' && day !== 'Zitra' && day !== 'Pozitri') return
             withState((state) => ({
                 ...state,
                 roomsByDay: {

@@ -13,7 +13,7 @@ import {
     writeBatch
 } from 'firebase/firestore'
 import { ensureAuthenticatedUser, firebaseAuth, firestoreDb } from '../lib/firebase'
-import { MaintenanceItem, SupplyRequest, Task } from '../types'
+import { MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
 import {
     CreateMaintenanceItemInput,
     CreateSupplyRequestInput,
@@ -128,8 +128,12 @@ const PATHS = {
     dailyAvailability: `hotels/${ONLINE_HOTEL_ID}/dailyAvailability`
 }
 
-function roomPlanId(day: OpsTab, roomId: string) {
+function roomPlanId(day: string, roomId: string) {
     return `${day}-${roomId}`
+}
+
+function isIsoDateKey(value: string) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value)
 }
 
 async function ensureSeeded(defaultState: OpsPersistedState) {
@@ -191,15 +195,34 @@ async function clearCollection(path: string[]) {
     await batch.commit()
 }
 
-function toRoomPlansByDay(docs: Array<Record<string, any>>) {
+function toRoomPlansState(docs: Array<Record<string, any>>) {
     const grouped: OpsPersistedState['roomsByDay'] = { Dnes: [], Zitra: [], Pozitri: [] }
+    const importedRoomsByDate: Record<string, RoomPlan[]> = {}
+    const importedTabDates: Partial<Record<OpsTab, string>> = {}
+
     docs.forEach((item) => {
-        const day = item.day as OpsTab
-        if (!day || !grouped[day]) return
+        const day = typeof item.day === 'string' ? item.day : ''
+        const planDateIso = typeof item.planDateIso === 'string' ? item.planDateIso : undefined
         const { day: _day, ...room } = item
-        grouped[day].push(room)
+
+        if (day === 'Dnes' || day === 'Zitra' || day === 'Pozitri') {
+            grouped[day].push(room as RoomPlan)
+            if (planDateIso && isIsoDateKey(planDateIso)) {
+                importedTabDates[day] = planDateIso
+            }
+            return
+        }
+
+        const importedDateIso = isIsoDateKey(day)
+            ? day
+            : (typeof item.dateIso === 'string' && isIsoDateKey(item.dateIso) ? item.dateIso : undefined)
+        if (!importedDateIso) return
+
+        if (!importedRoomsByDate[importedDateIso]) importedRoomsByDate[importedDateIso] = []
+        importedRoomsByDate[importedDateIso].push(room as RoomPlan)
     })
-    return grouped
+
+    return { grouped, importedRoomsByDate, importedTabDates }
 }
 
 export function createFirebaseOpsStore(): OpsStore {
@@ -235,6 +258,8 @@ export function createFirebaseOpsStore(): OpsStore {
 
             const unsubs: Array<() => void> = []
             const roomPlansByDay: OpsPersistedState['roomsByDay'] = { Dnes: [], Zitra: [], Pozitri: [] }
+            let importedRoomsByDate: Record<string, RoomPlan[]> = {}
+            let importedTabDates: Partial<Record<OpsTab, string>> = {}
             let tasks: Task[] = []
             let supplyRequests: SupplyRequest[] = []
             let maintenanceItems: MaintenanceItem[] = []
@@ -250,6 +275,8 @@ export function createFirebaseOpsStore(): OpsStore {
                 }))
                 onState({
                     roomsByDay: roomPlansByDay,
+                    importedRoomsByDate,
+                    importedTabDates,
                     tasks,
                     supplyRequests,
                     maintenanceItems,
@@ -261,10 +288,12 @@ export function createFirebaseOpsStore(): OpsStore {
                 collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans'),
                 (snap) => {
                     const docs = snap.docs.map((d) => d.data() as Record<string, any>)
-                    const grouped = toRoomPlansByDay(docs)
+                    const { grouped, importedRoomsByDate: byDate, importedTabDates: tabDates } = toRoomPlansState(docs)
                     roomPlansByDay.Dnes = grouped.Dnes
                     roomPlansByDay.Zitra = grouped.Zitra
                     roomPlansByDay.Pozitri = grouped.Pozitri
+                    importedRoomsByDate = byDate
+                    importedTabDates = tabDates
                     emitState()
                 },
                 (err) => {
@@ -377,7 +406,7 @@ export function createFirebaseOpsStore(): OpsStore {
             if (Object.keys(updatePatch).length === 0) return
             void runWrite('updateRoomPlan', () => updateDoc(ref, updatePatch))
         },
-        replaceRoomPlan(day: OpsTab, room) {
+        replaceRoomPlan(day: string, room: RoomPlan) {
             if (!firestoreDb) return
             const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${room.id}`)
             const { cleaned } = sanitizeForFirestore({ ...room, day }, `roomPlans.${day}-${room.id}.replace`)
