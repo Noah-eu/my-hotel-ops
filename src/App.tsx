@@ -7,7 +7,7 @@ import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
-import { MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from './types'
+import { ImportJob, RoomPlan, MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
 import {
     appMode,
     firebaseEnvDiagnostics,
@@ -125,6 +125,25 @@ function roleLabel(role: UserRole) {
     return 'Údržba'
 }
 
+function importJobStatusLabel(status: ImportJob['status']) {
+    if (status === 'received') return 'Přijato'
+    if (status === 'parsed') return 'Parsováno'
+    if (status === 'needs_review') return 'Čeká na kontrolu'
+    if (status === 'confirmed') return 'Potvrzeno'
+    if (status === 'failed') return 'Chyba'
+    if (status === 'cancelled') return 'Zrušeno'
+    return status
+}
+
+function importJobStatusStyle(status: ImportJob['status']) {
+    if (status === 'confirmed') return { background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }
+    if (status === 'needs_review') return { background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }
+    if (status === 'failed') return { background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }
+    if (status === 'cancelled') return { background: '#e2e8f0', color: '#475569', border: '1px solid #cbd5e1' }
+    if (status === 'parsed') return { background: '#dbeafe', color: '#1e3a8a', border: '1px solid #93c5fd' }
+    return { background: '#e0f2fe', color: '#0c4a6e', border: '1px solid #7dd3fc' }
+}
+
 function normalizeTaskTitleForCleanup(value: string) {
     return value
         .normalize('NFD')
@@ -217,6 +236,7 @@ export default function App() {
         tab: 'Dnes',
         view: 'today',
         roomsByDay: roomPlansByDay,
+        importJobs: [],
         tasks: [],
         supplyRequests: initialSupplyRequests,
         maintenanceItems: initialMaintenanceItems,
@@ -251,7 +271,10 @@ export default function App() {
     const [stateImportParseResult, setStateImportParseResult] = useState<PrevioStateParseResult | null>(null)
     const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>(() => saved?.importedTabDates ?? {})
     const [importedRoomsByDate, setImportedRoomsByDate] = useState<Record<string, typeof roomPlansByDay[OpsTab]>>(() => saved?.importedRoomsByDate ?? {})
+    const [importJobs, setImportJobs] = useState<ImportJob[]>(() => (saved?.importJobs || []).sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || '')))
     const [selectedImportedDateIso, setSelectedImportedDateIso] = useState<string | null>(null)
+    const [selectedImportJobId, setSelectedImportJobId] = useState<string | null>(null)
+    const [activeStateImportJobId, setActiveStateImportJobId] = useState<string | null>(null)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
@@ -336,6 +359,19 @@ export default function App() {
     ), [statePreviewMissingDates])
 
     const stateImportBlockedByMissingDays = statePreviewMissingDates.length > 0
+
+    const selectedImportJob = useMemo(
+        () => importJobs.find((job) => job.id === selectedImportJobId) || null,
+        [importJobs, selectedImportJobId]
+    )
+
+    const selectedImportJobPreview = selectedImportJob?.previewSummary?.preview || null
+    const selectedImportJobMissingDateLabels = selectedImportJob?.previewSummary?.missingDateLabels || []
+    const selectedImportJobBlockedByMissingDays = selectedImportJobMissingDateLabels.length > 0
+    const stateImportPreviewForUi = selectedImportJobPreview || stateImportPreview
+    const stateImportWarningsForUi = stateImportPreviewForUi?.warnings || []
+    const stateImportMissingDateLabelsForUi = selectedImportJob ? selectedImportJobMissingDateLabels : statePreviewMissingDateLabels
+    const stateImportBlockedByMissingDaysForUi = selectedImportJob ? selectedImportJobBlockedByMissingDays : stateImportBlockedByMissingDays
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -537,6 +573,42 @@ export default function App() {
             const extracted = await extractStateTextFromPdfFile(file)
             const parsed = parsePrevioStatePdfText(extracted.rawText, new Date())
             const preview = buildPrevioStateImportPreview(parsed, activeRooms, new Date())
+            const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
+            const missingDateLabels = missingDateIsos.map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
+                day: 'numeric',
+                month: 'numeric',
+                year: 'numeric'
+            }))
+            const importedAt = formatImportTimestamp(new Date())
+            const { byDate } = buildMergedPlansFromStateImport(preview, importedAt)
+
+            const createdJob = activeStore.createImportJob({
+                type: 'previo-state-pdf',
+                source: 'manual',
+                status: 'needs_review',
+                fileName: file.name,
+                receivedAt: new Date().toISOString(),
+                parsedAt: new Date().toISOString(),
+                detectedDaysCount: preview.days.length,
+                turnoverCount: preview.turnoverCount,
+                stayoverCount: preview.stayoverCount,
+                freeCount: preview.derivedFreeCount,
+                warnings: preview.warnings,
+                parserVersion: 'previo-state-pdf-v1',
+                previewSummary: {
+                    parsedTabDates: preview.parsedTabDates,
+                    byDate,
+                    missingDateLabels,
+                    preview
+                }
+            })
+
+            if (createdJob) {
+                upsertImportJobInState(createdJob)
+                setSelectedImportJobId(createdJob.id)
+                setActiveStateImportJobId(createdJob.id)
+            }
+
             setStateImportPreview(preview)
             setStateImportRawText(extracted.rawText)
             setStateImportParseResult(parsed)
@@ -557,6 +629,18 @@ export default function App() {
         const hh = `${date.getHours()}`.padStart(2, '0')
         const mm = `${date.getMinutes()}`.padStart(2, '0')
         return `${d}.${m}.${y} ${hh}:${mm}`
+    }
+
+    function sortImportJobs(jobs: ImportJob[]) {
+        return [...jobs].sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
+    }
+
+    function upsertImportJobInState(job: ImportJob) {
+        setImportJobs((prev) => {
+            const exists = prev.some((item) => item.id === job.id)
+            if (!exists) return sortImportJobs([job, ...prev])
+            return sortImportJobs(prev.map((item) => (item.id === job.id ? { ...item, ...job } : item)))
+        })
     }
 
     function roomIdForNumber(roomNumber: string) {
@@ -905,9 +989,26 @@ export default function App() {
             })
         }
 
+        if (activeStateImportJobId) {
+            const confirmedAt = new Date().toISOString()
+            const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
+            activeStore.updateImportJob(activeStateImportJobId, {
+                status: 'confirmed',
+                confirmedAt,
+                confirmedBy,
+                error: undefined
+            })
+            setImportJobs((prev) => sortImportJobs(prev.map((job) => (
+                job.id === activeStateImportJobId
+                    ? { ...job, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
+                    : job
+            ))))
+        }
+
         setStateImportPreview(null)
         setStateImportPdfStatus('idle')
         setStateImportPdfError(null)
+        setActiveStateImportJobId(null)
     }
 
     function handleCancelPrevioImport() {
@@ -924,6 +1025,87 @@ export default function App() {
         setStateImportPdfError(null)
         setStateImportRawText('')
         setStateImportParseResult(null)
+        setSelectedImportJobId(null)
+        setActiveStateImportJobId(null)
+    }
+
+    async function handleConfirmImportJob(jobId: string) {
+        const job = importJobs.find((item) => item.id === jobId)
+        if (!job || !job.previewSummary?.byDate || !job.previewSummary?.parsedTabDates) return
+
+        const byDate = job.previewSummary.byDate
+        const parsedTabDates = job.previewSummary.parsedTabDates
+
+        const next: Record<OpsTab, RoomPlan[]> = {
+            Dnes: roomsByDay.Dnes,
+            Zitra: roomsByDay.Zitra,
+            Pozitri: roomsByDay.Pozitri
+        }
+
+        ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+            const dateIso = parsedTabDates[day]
+            if (!dateIso || !byDate[dateIso]) return
+            next[day] = byDate[dateIso]
+        })
+
+        setImportedTabDates(parsedTabDates)
+        setImportedRoomsByDate(byDate)
+        setSelectedImportedDateIso(null)
+        setRoomsByDay(next)
+
+        if (runtimeMode === 'online') {
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                next[day].forEach((room) => activeStore.replaceRoomPlan(day, room))
+            })
+
+            const primaryDateSet = new Set(Object.values(parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso)))
+            Object.entries(byDate).forEach(([dateIso, rooms]) => {
+                if (primaryDateSet.has(dateIso)) return
+                rooms.forEach((room) => activeStore.replaceRoomPlan(dateIso, room))
+            })
+        }
+
+        const confirmedAt = new Date().toISOString()
+        const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
+        activeStore.updateImportJob(jobId, {
+            status: 'confirmed',
+            confirmedAt,
+            confirmedBy,
+            error: undefined
+        })
+        setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+            item.id === jobId
+                ? { ...item, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
+                : item
+        ))))
+        setStateImportPreview(null)
+        setActiveStateImportJobId(null)
+    }
+
+    function handleCancelImportJob(jobId: string) {
+        activeStore.updateImportJob(jobId, {
+            status: 'cancelled',
+            error: undefined
+        })
+        setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+            item.id === jobId ? { ...item, status: 'cancelled', error: undefined } : item
+        ))))
+    }
+
+    function handleDeleteImportJob(jobId: string) {
+        activeStore.deleteImportJob(jobId)
+        setImportJobs((prev) => prev.filter((item) => item.id !== jobId))
+        if (selectedImportJobId === jobId) {
+            setSelectedImportJobId(null)
+            setStateImportPreview(null)
+            setActiveStateImportJobId(null)
+        }
+    }
+
+    function handleShowImportJobPreview(jobId: string) {
+        setSelectedImportJobId(jobId)
+        setStateImportPreview(null)
+        setActiveStateImportJobId(null)
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -1395,6 +1577,7 @@ export default function App() {
             roomsByDay,
             importedTabDates,
             importedRoomsByDate,
+            importJobs,
             tasks,
             supplyRequests,
             maintenanceItems,
@@ -1402,7 +1585,7 @@ export default function App() {
             staff
         }
         activeStore.saveState(toSave)
-    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
+    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, importJobs, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
 
     useEffect(() => {
         if (!firebaseEnvDiagnostics.firebaseConfigured) {
@@ -1543,6 +1726,7 @@ export default function App() {
                         if (state.roomsByDay) setRoomsByDay(state.roomsByDay)
                         if (state.importedTabDates) setImportedTabDates(state.importedTabDates)
                         if (state.importedRoomsByDate) setImportedRoomsByDate(state.importedRoomsByDate)
+                        if (state.importJobs) setImportJobs(sortImportJobs(state.importJobs))
                         if (state.tasks) setTasks(state.tasks)
                         if (state.supplyRequests) {
                             setSupplyRequests(state.supplyRequests)
@@ -1612,6 +1796,7 @@ export default function App() {
         setRoomsByDay(roomPlansByDay)
         setImportedTabDates({})
         setImportedRoomsByDate({})
+        setImportJobs([])
         setTasks([])
         setSupplyRequests(initialSupplyRequests)
         setMaintenanceItems(initialMaintenanceItems)
@@ -1811,6 +1996,47 @@ export default function App() {
                                     {currentUser?.role === 'admin' && (
                                         <div className="section">
                                             <h3>Import z Previa</h3>
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginBottom: 8 }}>
+                                                <div style={{ fontSize: 14, fontWeight: 800 }}>Importy z Previa</div>
+                                                {importJobs.length === 0 && <div className="room-meta">Zatím nejsou žádné import joby.</div>}
+                                                {importJobs.map((job) => (
+                                                    <div key={job.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                                            <div style={{ fontWeight: 700 }}>{job.fileName}</div>
+                                                            <div style={{ ...importJobStatusStyle(job.status), padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                {importJobStatusLabel(job.status)}
+                                                            </div>
+                                                        </div>
+                                                        <div className="room-meta" style={{ marginTop: 4 }}>
+                                                            Zdroj: {job.source === 'email' ? 'E-mail' : 'Manuální'} • Přijato: {job.receivedAt ? new Date(job.receivedAt).toLocaleString('cs-CZ') : '—'}
+                                                        </div>
+                                                        <div className="room-meta" style={{ marginTop: 2 }}>
+                                                            Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
+                                                        </div>
+                                                        {job.warnings.length > 0 && (
+                                                            <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                {job.warnings.slice(0, 4).map((warning) => (
+                                                                    <div key={`${job.id}-${warning}`}>{warning}</div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
+                                                        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                            <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>Zobrazit náhled</button>
+                                                            <button
+                                                                className="btn"
+                                                                disabled={job.status !== 'needs_review' || !job.previewSummary?.byDate || !job.previewSummary?.parsedTabDates}
+                                                                onClick={() => void handleConfirmImportJob(job.id)}
+                                                            >
+                                                                Potvrdit import
+                                                            </button>
+                                                            <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
+                                                            <button className="btn danger" onClick={() => handleDeleteImportJob(job.id)}>Smazat import job</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
                                                 <label style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Nahrát PDF Stav</label>
                                                 <div className="room-meta" style={{ color: '#0c4a6e' }}>Doporučeno – obsahuje příjezdy, odjezdy i probíhající pobyty.</div>
@@ -1827,27 +2053,27 @@ export default function App() {
                                                 {stateImportPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{stateImportPdfError || 'PDF Stav se nepodařilo načíst.'}</div>}
                                             </div>
 
-                                            {stateImportPreview && (
+                                            {stateImportPreviewForUi && (
                                                 <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
                                                     <div style={{ fontWeight: 800 }}>Náhled importu Stav</div>
-                                                    <div className="room-meta">Detekované dny: {stateImportPreview.days.length}</div>
-                                                    <div className="room-meta">Turnover pokoje: {stateImportPreview.turnoverCount}</div>
-                                                    <div className="room-meta">Probíhající pobyty: {stateImportPreview.stayoverCount}</div>
-                                                    <div className="room-meta">Odvozené potvrzeně volné pokoje: {stateImportPreview.derivedFreeCount}</div>
-                                                    <div className="room-meta">Mimo seznam pokojů: {stateImportPreview.unknownRooms.length ? stateImportPreview.unknownRooms.join(', ') : 'žádné'}</div>
-                                                    {stateImportPreview.confidenceLow && (
+                                                    <div className="room-meta">Detekované dny: {stateImportPreviewForUi.days.length}</div>
+                                                    <div className="room-meta">Turnover pokoje: {stateImportPreviewForUi.turnoverCount}</div>
+                                                    <div className="room-meta">Probíhající pobyty: {stateImportPreviewForUi.stayoverCount}</div>
+                                                    <div className="room-meta">Odvozené potvrzeně volné pokoje: {stateImportPreviewForUi.derivedFreeCount}</div>
+                                                    <div className="room-meta">Mimo seznam pokojů: {stateImportPreviewForUi.unknownRooms.length ? stateImportPreviewForUi.unknownRooms.join(', ') : 'žádné'}</div>
+                                                    {stateImportPreviewForUi.confidenceLow && (
                                                         <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
                                                             Import Stav není bezpečný – parser nenašel dost dat. Import nepotvrzovat.
                                                         </div>
                                                     )}
-                                                    {stateImportBlockedByMissingDays && (
+                                                    {stateImportBlockedByMissingDaysForUi && (
                                                         <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
-                                                            Import Stav je zablokován: v náhledu chybí dny uprostřed rozsahu ({statePreviewMissingDateLabels.join(', ')}). Nahrajte PDF znovu a potvrďte až po detekci všech dní.
+                                                            Import Stav je zablokován: v náhledu chybí dny uprostřed rozsahu ({stateImportMissingDateLabelsForUi.join(', ')}). Nahrajte PDF znovu a potvrďte až po detekci všech dní.
                                                         </div>
                                                     )}
-                                                    {stateImportPreview.warnings.length > 0 && (
+                                                    {stateImportWarningsForUi.length > 0 && (
                                                         <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
-                                                            {stateImportPreview.warnings.slice(0, 10).map((warning) => (
+                                                            {stateImportWarningsForUi.slice(0, 10).map((warning) => (
                                                                 <div key={`state-warning-${warning}`}>{warning}</div>
                                                             ))}
                                                         </div>
@@ -1881,7 +2107,7 @@ export default function App() {
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
-                                                                {stateImportPreview.days.map((day) => (
+                                                                {stateImportPreviewForUi.days.map((day) => (
                                                                     <tr key={`state-day-${day.dateIso}`}>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.dateLabel}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.turnoverCount}</td>
@@ -1895,7 +2121,19 @@ export default function App() {
                                                     </div>
 
                                                     <div style={{ display: 'flex', gap: 8 }}>
-                                                        <button className="btn" disabled={stateImportPreview.confidenceLow || stateImportBlockedByMissingDays} onClick={() => void handleConfirmPrevioStateImport()}>Potvrdit import Stav</button>
+                                                        <button
+                                                            className="btn"
+                                                            disabled={stateImportPreviewForUi.confidenceLow || stateImportBlockedByMissingDaysForUi}
+                                                            onClick={() => {
+                                                                if (selectedImportJob?.id) {
+                                                                    void handleConfirmImportJob(selectedImportJob.id)
+                                                                    return
+                                                                }
+                                                                void handleConfirmPrevioStateImport()
+                                                            }}
+                                                        >
+                                                            Potvrdit import Stav
+                                                        </button>
                                                         <button className="btn" onClick={handleCancelPrevioStateImport}>Zrušit</button>
                                                     </div>
                                                 </div>

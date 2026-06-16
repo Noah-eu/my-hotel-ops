@@ -1,4 +1,4 @@
-import { MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../types'
+import { ImportJob, MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../types'
 
 export type OpsTab = 'Dnes' | 'Zitra' | 'Pozitri'
 export type OpsView = 'today' | 'admin' | 'maintenance' | 'supplies'
@@ -15,6 +15,7 @@ export interface OpsPersistedState {
     roomsByDay: Record<OpsTab, RoomPlan[]>
     importedTabDates?: Partial<Record<OpsTab, string>>
     importedRoomsByDate?: Record<string, RoomPlan[]>
+    importJobs?: ImportJob[]
     tasks: Task[]
     supplyRequests: SupplyRequest[]
     maintenanceItems: MaintenanceItem[]
@@ -59,6 +60,27 @@ export interface CreateMaintenanceItemInput {
     createdAt: string
 }
 
+export interface CreateImportJobInput {
+    id?: string
+    type: ImportJob['type']
+    source: ImportJob['source']
+    status: ImportJob['status']
+    fileName: string
+    receivedAt: string
+    parsedAt?: string
+    confirmedAt?: string
+    confirmedBy?: string
+    detectedDaysCount?: number
+    turnoverCount?: number
+    stayoverCount?: number
+    freeCount?: number
+    warnings: string[]
+    error?: string
+    storagePath?: string
+    previewSummary?: ImportJob['previewSummary']
+    parserVersion?: string
+}
+
 export interface OpsStore {
     mode: 'demo' | 'online'
     loadInitialState(): OpsPersistedState | null
@@ -67,6 +89,9 @@ export interface OpsStore {
     saveState(state: OpsPersistedState): void
     updateRoomPlan(day: OpsTab, roomId: string, patch: Partial<RoomPlan>): void
     replaceRoomPlan(day: string, room: RoomPlan): void
+    createImportJob(input: CreateImportJobInput): ImportJob | null
+    updateImportJob(jobId: string, patch: Partial<ImportJob>): void
+    deleteImportJob(jobId: string): void
     createTask(input: CreateTaskInput): Task | null
     updateTaskStatus(taskId: string, status: Task['status']): void
     createSupplyRequest(input: CreateSupplyRequestInput): SupplyRequest | null

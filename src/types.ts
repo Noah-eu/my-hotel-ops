@@ -53,6 +53,71 @@ export interface RoomPlan {
     stayoverUntil?: string
 }
 
+export type ImportJobType = 'previo-state-pdf'
+export type ImportJobSource = 'email' | 'manual'
+export type ImportJobStatus = 'received' | 'parsed' | 'needs_review' | 'confirmed' | 'failed' | 'cancelled'
+
+export interface ImportJobPreviewSummary {
+    parsedTabDates?: Partial<Record<'Dnes' | 'Zitra' | 'Pozitri', string>>
+    byDate?: Record<string, RoomPlan[]>
+    missingDateLabels?: string[]
+    preview?: {
+        days: Array<{
+            dateIso: string
+            dateLabel: string
+            rows: Array<{
+                dateIso: string
+                roomNumber: string
+                departureTime?: string
+                arrivalTime?: string
+                departureGuestName?: string
+                arrivalGuestName?: string
+                stayoverGuestName?: string
+                stayoverUntil?: string
+                departureNotes: string[]
+                arrivalNotes: string[]
+                isStayover: boolean
+                warnings: string[]
+            }>
+            turnoverCount: number
+            stayoverCount: number
+            presentRooms: string[]
+            derivedFreeRooms: string[]
+            complete: boolean
+            warnings: string[]
+        }>
+        warnings: string[]
+        unknownRooms: string[]
+        parsedRows: number
+        turnoverCount: number
+        stayoverCount: number
+        derivedFreeCount: number
+        confidenceLow: boolean
+        parsedTabDates: Partial<Record<'Dnes' | 'Zitra' | 'Pozitri', string>>
+    }
+}
+
+export interface ImportJob {
+    id: string
+    type: ImportJobType
+    source: ImportJobSource
+    status: ImportJobStatus
+    fileName: string
+    receivedAt: string
+    parsedAt?: string
+    confirmedAt?: string
+    confirmedBy?: string
+    detectedDaysCount?: number
+    turnoverCount?: number
+    stayoverCount?: number
+    freeCount?: number
+    warnings: string[]
+    error?: string
+    storagePath?: string
+    previewSummary?: ImportJobPreviewSummary
+    parserVersion?: string
+}
+
 export interface Task {
     id: string
     roomNumber: string

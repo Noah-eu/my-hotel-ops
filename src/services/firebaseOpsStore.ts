@@ -13,8 +13,9 @@ import {
     writeBatch
 } from 'firebase/firestore'
 import { ensureAuthenticatedUser, firebaseAuth, firestoreDb } from '../lib/firebase'
-import { MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
+import { ImportJob, MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
 import {
+    CreateImportJobInput,
     CreateMaintenanceItemInput,
     CreateSupplyRequestInput,
     CreateTaskInput,
@@ -124,6 +125,7 @@ const PATHS = {
     tasks: `hotels/${ONLINE_HOTEL_ID}/tasks`,
     supplyRequests: `hotels/${ONLINE_HOTEL_ID}/supplyRequests`,
     maintenanceItems: `hotels/${ONLINE_HOTEL_ID}/maintenanceItems`,
+    importJobs: `hotels/${ONLINE_HOTEL_ID}/importJobs`,
     staff: `hotels/${ONLINE_HOTEL_ID}/staff`,
     dailyAvailability: `hotels/${ONLINE_HOTEL_ID}/dailyAvailability`
 }
@@ -260,6 +262,7 @@ export function createFirebaseOpsStore(): OpsStore {
             const roomPlansByDay: OpsPersistedState['roomsByDay'] = { Dnes: [], Zitra: [], Pozitri: [] }
             let importedRoomsByDate: Record<string, RoomPlan[]> = {}
             let importedTabDates: Partial<Record<OpsTab, string>> = {}
+            let importJobs: ImportJob[] = []
             let tasks: Task[] = []
             let supplyRequests: SupplyRequest[] = []
             let maintenanceItems: MaintenanceItem[] = []
@@ -277,6 +280,7 @@ export function createFirebaseOpsStore(): OpsStore {
                     roomsByDay: roomPlansByDay,
                     importedRoomsByDate,
                     importedTabDates,
+                    importJobs,
                     tasks,
                     supplyRequests,
                     maintenanceItems,
@@ -303,6 +307,22 @@ export function createFirebaseOpsStore(): OpsStore {
                 }
             ))
             devLog('Listener attached: roomPlans')
+
+            unsubs.push(onSnapshot(
+                collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importJobs'),
+                (snap) => {
+                    importJobs = snap.docs
+                        .map((d) => ({ id: d.id, ...(d.data() as Record<string, any>) } as ImportJob))
+                        .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
+                    emitState()
+                },
+                (err) => {
+                    const fullError = buildListenerError(err, PATHS.importJobs)
+                    devLog('Listener error: importJobs', fullError)
+                    onError(fullError)
+                }
+            ))
+            devLog('Listener attached: importJobs')
 
             unsubs.push(onSnapshot(
                 collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks'),
@@ -411,6 +431,52 @@ export function createFirebaseOpsStore(): OpsStore {
             const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${room.id}`)
             const { cleaned } = sanitizeForFirestore({ ...room, day }, `roomPlans.${day}-${room.id}.replace`)
             void runWrite('replaceRoomPlan', () => setDoc(ref, cleaned))
+        },
+        createImportJob(input: CreateImportJobInput) {
+            if (!firestoreDb) return null
+            const job: ImportJob = {
+                id: input.id || `ij-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                type: input.type,
+                source: input.source,
+                status: input.status,
+                fileName: input.fileName,
+                receivedAt: input.receivedAt,
+                parsedAt: input.parsedAt,
+                confirmedAt: input.confirmedAt,
+                confirmedBy: input.confirmedBy,
+                detectedDaysCount: input.detectedDaysCount,
+                turnoverCount: input.turnoverCount,
+                stayoverCount: input.stayoverCount,
+                freeCount: input.freeCount,
+                warnings: input.warnings,
+                error: input.error,
+                storagePath: input.storagePath,
+                previewSummary: input.previewSummary,
+                parserVersion: input.parserVersion
+            }
+            const { cleaned } = sanitizeForFirestore({ ...job }, `importJobs.${job.id}`)
+            void runWrite('createImportJob', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importJobs', job.id), cleaned))
+            return job
+        },
+        updateImportJob(jobId: string, patch: Partial<ImportJob>) {
+            if (!firestoreDb) return
+            const { cleaned } = sanitizeForFirestore(patch, `importJobs.${jobId}.patch`)
+            const deletePatch = Object.entries(patch).reduce<Record<string, unknown>>((acc, [key, value]) => {
+                if (typeof value !== 'undefined') return acc
+                acc[key] = deleteField()
+                return acc
+            }, {})
+
+            const updatePatch = {
+                ...(cleaned as Record<string, unknown>),
+                ...deletePatch
+            }
+            if (Object.keys(updatePatch).length === 0) return
+            void runWrite('updateImportJob', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importJobs', jobId), updatePatch))
+        },
+        deleteImportJob(jobId: string) {
+            if (!firestoreDb) return
+            void runWrite('deleteImportJob', () => deleteDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importJobs', jobId)))
         },
         createTask(input: CreateTaskInput) {
             if (!firestoreDb) return null

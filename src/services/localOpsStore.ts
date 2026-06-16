@@ -1,5 +1,6 @@
-import { MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
+import { ImportJob, MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
 import {
+    CreateImportJobInput,
     CreateMaintenanceItemInput,
     CreateSupplyRequestInput,
     CreateTaskInput,
@@ -67,6 +68,45 @@ export function createLocalOpsStore(): OpsStore {
                     ...state.roomsByDay,
                     [day]: state.roomsByDay[day].map((item) => (item.id === room.id ? room : item))
                 }
+            }))
+        },
+        createImportJob(input: CreateImportJobInput) {
+            const job: ImportJob = {
+                id: input.id || `ij-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                type: input.type,
+                source: input.source,
+                status: input.status,
+                fileName: input.fileName,
+                receivedAt: input.receivedAt,
+                parsedAt: input.parsedAt,
+                confirmedAt: input.confirmedAt,
+                confirmedBy: input.confirmedBy,
+                detectedDaysCount: input.detectedDaysCount,
+                turnoverCount: input.turnoverCount,
+                stayoverCount: input.stayoverCount,
+                freeCount: input.freeCount,
+                warnings: input.warnings,
+                error: input.error,
+                storagePath: input.storagePath,
+                previewSummary: input.previewSummary,
+                parserVersion: input.parserVersion
+            }
+            withState((state) => ({
+                ...state,
+                importJobs: [job, ...(state.importJobs || [])]
+            }))
+            return job
+        },
+        updateImportJob(jobId: string, patch: Partial<ImportJob>) {
+            withState((state) => ({
+                ...state,
+                importJobs: (state.importJobs || []).map((job) => (job.id === jobId ? { ...job, ...patch } : job))
+            }))
+        },
+        deleteImportJob(jobId: string) {
+            withState((state) => ({
+                ...state,
+                importJobs: (state.importJobs || []).filter((job) => job.id !== jobId)
             }))
         },
         createTask(input: CreateTaskInput) {
