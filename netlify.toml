@@ -7,3 +7,8 @@
   from = "/api/previo-import-email"
   to = "/.netlify/functions/previo-import-email"
   status = 200
+
+[[redirects]]
+  from = "/api/previo-import-preview"
+  to = "/.netlify/functions/previo-import-preview"
+  status = 200

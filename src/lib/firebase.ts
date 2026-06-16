@@ -8,7 +8,6 @@ import {
     type User
 } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
-import { getStorage } from 'firebase/storage'
 
 type FirebaseEnvVarName =
     | 'VITE_FIREBASE_API_KEY'
@@ -72,7 +71,6 @@ devLog('Env validation result', firebaseEnvDiagnostics)
 export const firebaseApp = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
 export const firestoreDb = firebaseApp ? getFirestore(firebaseApp) : null
 export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null
-export const firebaseStorage = firebaseApp ? getStorage(firebaseApp) : null
 
 export type AppMode = 'demo' | 'online'
 export const appMode: AppMode = hasFirebaseConfig ? 'online' : 'demo'

@@ -1,7 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import type { User } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
-import { getBytes, ref as storageRef } from 'firebase/storage'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
@@ -11,7 +10,6 @@ import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, mainten
 import { ImportJob, RoomPlan, MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
 import {
     appMode,
-    firebaseStorage,
     firebaseEnvDiagnostics,
     firestoreDb,
     onFirebaseAuthState,
@@ -647,78 +645,62 @@ export default function App() {
         setStateImportPdfError(null)
 
         try {
-            if (!firebaseStorage) {
-                throw new Error('Firebase Storage není dostupné.')
+            if (!authUser || authUser.isAnonymous) {
+                throw new Error('Pro vytvoření náhledu je nutné přihlášení.')
             }
 
-            const sourceRef = storageRef(firebaseStorage, job.storagePath)
-            const pdfBytes = await getBytes(sourceRef, 10 * 1024 * 1024)
-            const fileName = job.fileName || 'source.pdf'
-            const contentType = job.contentType || 'application/pdf'
-            const file = new File([pdfBytes], fileName, { type: contentType })
+            const token = await authUser.getIdToken()
+            const controller = new AbortController()
+            const timeout = window.setTimeout(() => controller.abort(), 45_000)
 
-            const extracted = await extractStateTextFromPdfFile(file)
-            const parsed = parsePrevioStatePdfText(extracted.rawText, new Date())
-            const preview = buildPrevioStateImportPreview(parsed, activeRooms, new Date())
-            const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
-            const missingDateLabels = missingDateIsos.map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
-                day: 'numeric',
-                month: 'numeric',
-                year: 'numeric'
-            }))
-
-            const importedAt = formatImportTimestamp(new Date())
-            const { byDate } = buildMergedPlansFromStateImport(preview, importedAt)
-            const parsedAt = new Date().toISOString()
-            const previewWarnings = [...preview.warnings]
-            if (missingDateLabels.length > 0) {
-                previewWarnings.push(`V náhledu chybí dny uprostřed rozsahu: ${missingDateLabels.join(', ')}`)
+            let response: Response
+            try {
+                response = await fetch('/api/previo-import-preview', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        jobId,
+                        hotelId: ONLINE_HOTEL_ID
+                    }),
+                    signal: controller.signal
+                })
+            } finally {
+                window.clearTimeout(timeout)
             }
 
-            const nextStatus: ImportJob['status'] = preview.confidenceLow || missingDateLabels.length > 0
-                ? 'parsed'
-                : 'needs_review'
-
-            const patch: Partial<ImportJob> = {
-                status: nextStatus,
-                parsedAt,
-                detectedDaysCount: preview.days.length,
-                turnoverCount: preview.turnoverCount,
-                stayoverCount: preview.stayoverCount,
-                freeCount: preview.derivedFreeCount,
-                warnings: previewWarnings,
-                error: undefined,
-                parserVersion: 'previo-state-pdf-v1',
-                previewSummary: {
-                    parsedTabDates: preview.parsedTabDates,
-                    byDate,
-                    missingDateLabels,
-                    preview
-                }
+            const responseBody = await response.json().catch(() => ({} as any))
+            if (!response.ok) {
+                const apiError = responseBody?.error || `Server vrátil chybu ${response.status}.`
+                throw new Error(apiError)
             }
 
-            activeStore.updateImportJob(jobId, patch)
-            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
-                item.id === jobId
-                    ? { ...item, ...patch }
-                    : item
-            ))))
+            if (responseBody?.job) {
+                const updatedJob = responseBody.job as ImportJob
+                upsertImportJobInState(updatedJob)
+                setSelectedImportJobId(updatedJob.id)
+                setActiveStateImportJobId(updatedJob.id)
+                setStateImportPreview(updatedJob.previewSummary?.preview || null)
+            } else {
+                setSelectedImportJobId(jobId)
+                setStateImportPreview(null)
+            }
 
-            setActiveStateImportJobId(jobId)
-            setStateImportPreview(preview)
-            setStateImportRawText(extracted.rawText)
-            setStateImportParseResult(parsed)
+            setStateImportRawText('')
+            setStateImportParseResult(null)
             setStateImportPdfStatus('loaded')
             setStateImportPdfError(null)
         } catch (error: any) {
-            const message = error?.message || 'Náhled z uloženého PDF se nepodařilo vytvořit.'
+            const timeoutHit = error?.name === 'AbortError'
+            const message = timeoutHit
+                ? 'Generování náhledu vypršelo po 45 sekundách. Zkuste to prosím znovu.'
+                : (error?.message || 'Náhled z uloženého PDF se nepodařilo vytvořit.')
             const failedPatch: Partial<ImportJob> = {
-                status: 'failed',
-                parsedAt: new Date().toISOString(),
                 error: message
             }
 
-            activeStore.updateImportJob(jobId, failedPatch)
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
                 item.id === jobId
                     ? { ...item, ...failedPatch }
