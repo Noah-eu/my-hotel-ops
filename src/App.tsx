@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import type { User } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
+import { getBytes, ref as storageRef } from 'firebase/storage'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import AdminDashboard from './pages/AdminDashboard'
@@ -10,6 +11,7 @@ import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, mainten
 import { ImportJob, RoomPlan, MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
 import {
     appMode,
+    firebaseStorage,
     firebaseEnvDiagnostics,
     firestoreDb,
     onFirebaseAuthState,
@@ -284,6 +286,7 @@ export default function App() {
     const [selectedImportedDateIso, setSelectedImportedDateIso] = useState<string | null>(null)
     const [selectedImportJobId, setSelectedImportJobId] = useState<string | null>(null)
     const [activeStateImportJobId, setActiveStateImportJobId] = useState<string | null>(null)
+    const [generatingImportPreviewJobId, setGeneratingImportPreviewJobId] = useState<string | null>(null)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
@@ -628,6 +631,107 @@ export default function App() {
             setStateImportPreview(null)
             setStateImportRawText('')
             setStateImportParseResult(null)
+        }
+    }
+
+    async function handleGenerateImportJobPreview(jobId: string) {
+        const job = importJobs.find((item) => item.id === jobId)
+        if (!job || !job.storagePath) return
+
+        setGeneratingImportPreviewJobId(jobId)
+        setSelectedImportJobId(jobId)
+        setStateImportPreview(null)
+        setStateImportRawText('')
+        setStateImportParseResult(null)
+        setStateImportPdfStatus('loading')
+        setStateImportPdfError(null)
+
+        try {
+            if (!firebaseStorage) {
+                throw new Error('Firebase Storage není dostupné.')
+            }
+
+            const sourceRef = storageRef(firebaseStorage, job.storagePath)
+            const pdfBytes = await getBytes(sourceRef, 10 * 1024 * 1024)
+            const fileName = job.fileName || 'source.pdf'
+            const contentType = job.contentType || 'application/pdf'
+            const file = new File([pdfBytes], fileName, { type: contentType })
+
+            const extracted = await extractStateTextFromPdfFile(file)
+            const parsed = parsePrevioStatePdfText(extracted.rawText, new Date())
+            const preview = buildPrevioStateImportPreview(parsed, activeRooms, new Date())
+            const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
+            const missingDateLabels = missingDateIsos.map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
+                day: 'numeric',
+                month: 'numeric',
+                year: 'numeric'
+            }))
+
+            const importedAt = formatImportTimestamp(new Date())
+            const { byDate } = buildMergedPlansFromStateImport(preview, importedAt)
+            const parsedAt = new Date().toISOString()
+            const previewWarnings = [...preview.warnings]
+            if (missingDateLabels.length > 0) {
+                previewWarnings.push(`V náhledu chybí dny uprostřed rozsahu: ${missingDateLabels.join(', ')}`)
+            }
+
+            const nextStatus: ImportJob['status'] = preview.confidenceLow || missingDateLabels.length > 0
+                ? 'parsed'
+                : 'needs_review'
+
+            const patch: Partial<ImportJob> = {
+                status: nextStatus,
+                parsedAt,
+                detectedDaysCount: preview.days.length,
+                turnoverCount: preview.turnoverCount,
+                stayoverCount: preview.stayoverCount,
+                freeCount: preview.derivedFreeCount,
+                warnings: previewWarnings,
+                error: undefined,
+                parserVersion: 'previo-state-pdf-v1',
+                previewSummary: {
+                    parsedTabDates: preview.parsedTabDates,
+                    byDate,
+                    missingDateLabels,
+                    preview
+                }
+            }
+
+            activeStore.updateImportJob(jobId, patch)
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === jobId
+                    ? { ...item, ...patch }
+                    : item
+            ))))
+
+            setActiveStateImportJobId(jobId)
+            setStateImportPreview(preview)
+            setStateImportRawText(extracted.rawText)
+            setStateImportParseResult(parsed)
+            setStateImportPdfStatus('loaded')
+            setStateImportPdfError(null)
+        } catch (error: any) {
+            const message = error?.message || 'Náhled z uloženého PDF se nepodařilo vytvořit.'
+            const failedPatch: Partial<ImportJob> = {
+                status: 'failed',
+                parsedAt: new Date().toISOString(),
+                error: message
+            }
+
+            activeStore.updateImportJob(jobId, failedPatch)
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === jobId
+                    ? { ...item, ...failedPatch }
+                    : item
+            ))))
+
+            setStateImportPdfStatus('error')
+            setStateImportPdfError(message)
+            setStateImportPreview(null)
+            setStateImportRawText('')
+            setStateImportParseResult(null)
+        } finally {
+            setGeneratingImportPreviewJobId(null)
         }
     }
 
@@ -2039,7 +2143,18 @@ export default function App() {
                                                         )}
                                                         {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
                                                         <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                            <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>Zobrazit náhled</button>
+                                                            {job.source === 'email' && job.storagePath && (
+                                                                <button
+                                                                    className="btn"
+                                                                    disabled={generatingImportPreviewJobId === job.id}
+                                                                    onClick={() => void handleGenerateImportJobPreview(job.id)}
+                                                                >
+                                                                    {generatingImportPreviewJobId === job.id ? 'Vytvářím náhled...' : 'Vytvořit náhled'}
+                                                                </button>
+                                                            )}
+                                                            {job.previewSummary?.preview && (
+                                                                <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>Zobrazit náhled</button>
+                                                            )}
                                                             <button
                                                                 className="btn"
                                                                 disabled={job.status !== 'needs_review' || !job.previewSummary?.byDate || !job.previewSummary?.parsedTabDates}
