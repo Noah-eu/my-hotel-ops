@@ -51,7 +51,8 @@ function formatLocalDate(date) {
 }
 
 function parsePageDateHeader(line) {
-    const match = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|út|st|ct|čt|pa|pá|so|ne)\b/i)
+    const normalized = normalizeForMatch(line).replace(/\s+/g, ' ').trim()
+    const match = normalized.match(/(?:^|\s)(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|st|ct|pa|so|ne)(?=\s|$)/i)
     if (!match) return null
     const day = Number(match[1])
     const month = Number(match[2])
@@ -551,11 +552,14 @@ function runGoldenChecks(parsed) {
     const day16 = parsed.daySummaries.find((d) => d.dateIso === '2026-06-16')
     const day17 = parsed.daySummaries.find((d) => d.dateIso === '2026-06-17')
     const day18 = parsed.daySummaries.find((d) => d.dateIso === '2026-06-18')
+    const day19 = parsed.daySummaries.find((d) => d.dateIso === '2026-06-19')
     const day20 = parsed.daySummaries.find((d) => d.dateIso === '2026-06-20')
 
+    if (parsed.daySummaries.length < 5) failures.push(`Expected at least 5 parsed days, got ${parsed.daySummaries.length}`)
     if (!day16 || day16.rows.length < 14) failures.push('16.6: expected multi-page day with >=14 parsed rooms')
     if (!day17 || day17.rows.length < 14) failures.push('17.6: expected multi-page day with >=14 parsed rooms')
     if (!day18 || day18.rows.length < 14) failures.push('18.6: expected multi-page day with >=14 parsed rooms')
+    if (!day19 || day19.rows.length < 14) failures.push('19.6: expected multi-page day with >=14 parsed rooms')
 
     const r16001 = assertRow(parsed.rows, failures, '2026-06-16', '001')
     if (r16001) {

@@ -145,6 +145,34 @@ function shouldCleanupTestTask(title: string) {
     return exactMatches.has(normalized) || normalized.includes('test')
 }
 
+function formatLocalDateIso(date: Date) {
+    const y = date.getFullYear()
+    const m = `${date.getMonth() + 1}`.padStart(2, '0')
+    const d = `${date.getDate()}`.padStart(2, '0')
+    return `${y}-${m}-${d}`
+}
+
+function detectMissingDatesInRange(dateIsos: string[]) {
+    const sorted = Array.from(new Set(dateIsos)).sort()
+    if (sorted.length < 2) return []
+
+    const missing: string[] = []
+    for (let i = 0; i < sorted.length - 1; i++) {
+        const start = new Date(`${sorted[i]}T00:00:00`)
+        const end = new Date(`${sorted[i + 1]}T00:00:00`)
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue
+
+        const cursor = new Date(start)
+        cursor.setDate(cursor.getDate() + 1)
+        while (cursor < end) {
+            missing.push(formatLocalDateIso(cursor))
+            cursor.setDate(cursor.getDate() + 1)
+        }
+    }
+
+    return missing
+}
+
 export default function App() {
     function normalizeCatalogRoomNumber(value: string) {
         const trimmed = value.trim()
@@ -257,6 +285,22 @@ export default function App() {
             .filter((dateIso) => dateIso !== importedTabDates.Dnes && dateIso !== importedTabDates.Zitra && dateIso !== importedTabDates.Pozitri)
             .sort()
     ), [importedRoomsByDate, importedTabDates.Dnes, importedTabDates.Zitra, importedTabDates.Pozitri])
+
+    const statePreviewMissingDates = useMemo(() => (
+        stateImportPreview
+            ? detectMissingDatesInRange(stateImportPreview.days.map((day) => day.dateIso))
+            : []
+    ), [stateImportPreview])
+
+    const statePreviewMissingDateLabels = useMemo(() => (
+        statePreviewMissingDates.map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
+            day: 'numeric',
+            month: 'numeric',
+            year: 'numeric'
+        }))
+    ), [statePreviewMissingDates])
+
+    const stateImportBlockedByMissingDays = statePreviewMissingDates.length > 0
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -598,14 +642,14 @@ export default function App() {
             byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day)
         })
 
-        ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-            const dateIso = preview.parsedTabDates[day]
-            if (!dateIso || !byDate[dateIso]) {
-                next[day] = buildRoomsForStateDay(dateIso || importedTabDates[day] || '', undefined)
-                return
-            }
-            next[day] = byDate[dateIso]
-        })
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                const dateIso = preview.parsedTabDates[day]
+                if (!dateIso || !byDate[dateIso]) {
+                    next[day] = buildRoomsForStateDay(dateIso || importedTabDates[day] || '', undefined)
+                    return
+                }
+                next[day] = byDate[dateIso]
+            })
 
         return { next, byDate }
     }
@@ -761,7 +805,7 @@ export default function App() {
     }
 
     async function handleConfirmPrevioStateImport() {
-        if (!stateImportPreview) return
+        if (!stateImportPreview || stateImportPreview.confidenceLow || stateImportBlockedByMissingDays) return
         const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview)
         setImportedTabDates(stateImportPreview.parsedTabDates)
         setImportedRoomsByDate(byDate)
@@ -769,7 +813,7 @@ export default function App() {
         setRoomsByDay(next)
 
         if (runtimeMode === 'online') {
-            ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 next[day].forEach((room) => {
                     activeStore.updateRoomPlan(day, room.id, {
                         situation: room.situation,
@@ -1621,6 +1665,11 @@ export default function App() {
                                                             Import Stav není bezpečný – parser nenašel dost dat. Import nepotvrzovat.
                                                         </div>
                                                     )}
+                                                    {stateImportBlockedByMissingDays && (
+                                                        <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
+                                                            Import Stav je zablokován: v náhledu chybí dny uprostřed rozsahu ({statePreviewMissingDateLabels.join(', ')}). Nahrajte PDF znovu a potvrďte až po detekci všech dní.
+                                                        </div>
+                                                    )}
                                                     {stateImportPreview.warnings.length > 0 && (
                                                         <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
                                                             {stateImportPreview.warnings.slice(0, 10).map((warning) => (
@@ -1671,7 +1720,7 @@ export default function App() {
                                                     </div>
 
                                                     <div style={{ display: 'flex', gap: 8 }}>
-                                                        <button className="btn" disabled={stateImportPreview.confidenceLow} onClick={() => void handleConfirmPrevioStateImport()}>Potvrdit import Stav</button>
+                                                        <button className="btn" disabled={stateImportPreview.confidenceLow || stateImportBlockedByMissingDays} onClick={() => void handleConfirmPrevioStateImport()}>Potvrdit import Stav</button>
                                                         <button className="btn" onClick={handleCancelPrevioStateImport}>Zrušit</button>
                                                     </div>
                                                 </div>
