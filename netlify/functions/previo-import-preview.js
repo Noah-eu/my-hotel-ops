@@ -9,6 +9,18 @@ const {
     detectMissingDatesInRange,
     buildByDateFromPreview
 } = require('./lib/previo-state-preview')
+const { sanitizeForFirestore, runSanitizerSelfCheck } = require('./lib/firestore-sanitize')
+
+const DEV = process.env.NODE_ENV !== 'production'
+
+if (DEV) {
+    try {
+        runSanitizerSelfCheck()
+    } catch (error) {
+        console.error('[previo-import-preview] Firestore sanitizer self-check failed', error)
+        throw error
+    }
+}
 
 function json(statusCode, body) {
     return {
@@ -85,6 +97,14 @@ function safeErrorMessage(error) {
     return 'Generování náhledu selhalo.'
 }
 
+function sanitizePatchForWrite(payload, rootPath) {
+    const { cleaned, removedPaths } = sanitizeForFirestore(payload, rootPath)
+    if (DEV && removedPaths.length > 0) {
+        console.info('[previo-import-preview] Removed undefined Firestore paths', removedPaths)
+    }
+    return cleaned
+}
+
 function formatDateLabel(dateIso) {
     return new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
         day: 'numeric',
@@ -144,11 +164,12 @@ exports.handler = async (event) => {
         const storagePath = String(jobData.storagePath || '').trim()
         if (!storagePath) {
             const errorMessage = 'Import job nemá storagePath se zdrojovým PDF.'
-            await jobRef.set({
+            const failedPatch = sanitizePatchForWrite({
                 status: 'failed',
                 parsedAt: new Date().toISOString(),
                 error: errorMessage
-            }, { merge: true })
+            }, 'importJob.failedPatch')
+            await jobRef.set(failedPatch, { merge: true })
             return json(400, { error: errorMessage })
         }
 
@@ -194,7 +215,8 @@ exports.handler = async (event) => {
             error: null
         }
 
-        await jobRef.set(patch, { merge: true })
+        const sanitizedPatch = sanitizePatchForWrite(patch, 'importJob.previewPatch')
+        await jobRef.set(sanitizedPatch, { merge: true })
 
         const updatedSnap = await jobRef.get()
         return json(200, {
@@ -207,11 +229,12 @@ exports.handler = async (event) => {
         const safeMessage = safeErrorMessage(error)
         if (jobRef) {
             try {
-                await jobRef.set({
+                const failedPatch = sanitizePatchForWrite({
                     status: 'failed',
                     parsedAt: new Date().toISOString(),
                     error: safeMessage
-                }, { merge: true })
+                }, 'importJob.exceptionPatch')
+                await jobRef.set(failedPatch, { merge: true })
             } catch {
                 // Ignore secondary failure while attempting to save failed state.
             }
