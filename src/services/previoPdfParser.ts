@@ -54,6 +54,8 @@ export type PrevioParseResult = {
         index: number
         pageDate?: string
         room?: string
+        previousRoom?: string
+        nextRoom?: string
         blockStartLine: number
         blockEndLine: number
         rawBlock: string
@@ -314,16 +316,18 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
 
     function detectRoomMarker(line: string) {
         const collapsed = line.replace(/\s+/g, ' ').trim()
-        const exact = collapsed.match(/^(\d{3})(?:\s+studio)?$/i)
-        if (exact) {
-            const room = normalizeRoomNumber(exact[1])
+        const anchored = collapsed.match(/^(\d{3})(?:\s+(studio))?(?:\b|\s|$)/i)
+        if (!anchored) return undefined
+
+        const room = normalizeRoomNumber(anchored[1])
+        if (!KNOWN_ROOM_NUMBERS.has(room)) return undefined
+
+        // Keep "102 Studio" as one room marker and avoid weak mid-line digit matches.
+        if (room === '102' && anchored[2]) {
             return KNOWN_ROOM_NUMBERS.has(room) ? room : undefined
         }
 
-        const roomMatch = collapsed.match(/\b(\d{3})\b/)
-        if (!roomMatch) return undefined
-        const room = normalizeRoomNumber(roomMatch[1])
-        return KNOWN_ROOM_NUMBERS.has(room) ? room : undefined
+        return room
     }
 
     function toMinutes(hhmm: string) {
@@ -466,10 +470,13 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
         }
 
         roomMarkers.forEach((marker, markerIndex) => {
+            const prevRoom = markerIndex > 0 ? roomMarkers[markerIndex - 1].room : undefined
             const prevRoomIndex = markerIndex > 0 ? roomMarkers[markerIndex - 1].index : -1
+            const nextRoom = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].room : undefined
             const nextRoomIndex = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].index : contentLines.length
 
-            const blockStart = prevRoomIndex + 1
+            // Strict non-overlap window: each block starts at its own marker and ends before next marker.
+            const blockStart = marker.index
             const blockEnd = nextRoomIndex - 1
             const blockLines = contentLines.slice(blockStart, blockEnd + 1)
             const blockBeforeRoom = contentLines.slice(blockStart, marker.index)
@@ -477,7 +484,10 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
             const rawBlock = blockLines.join('\n')
             const detectedTimes = detectTimes(rawBlock)
             const { departureTime, arrivalTime } = chooseTimes(detectedTimes)
-            const noteGroups = splitNoteGroups(blockBeforeRoom.join(' '))
+            const noteSource = blockBeforeRoom.length > 0
+                ? blockBeforeRoom.join(' ')
+                : rawBlock.replace(new RegExp(`^${marker.room}(?:\\s+studio)?\\b`, 'i'), '').trim()
+            const noteGroups = splitNoteGroups(noteSource)
             const {
                 departureNotes,
                 arrivalNotes,
@@ -530,6 +540,8 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
                 index: lineDebug.length + 1,
                 pageDate: pageDate ? formatLocalDate(pageDate) : undefined,
                 room: marker.room,
+                previousRoom: prevRoom,
+                nextRoom,
                 blockStartLine: blockStart + 1,
                 blockEndLine: blockEnd + 1,
                 rawBlock,
@@ -544,6 +556,19 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
             })
         })
     })
+
+    if (DEV) {
+        // Regression reference for uploaded 16.6-18.6 sample PDF (room 103 boundaries).
+        // Expected:
+        // 16.6 room 103 => departure empty, arrival 14:00, arrival notes include BOX 5
+        // 17.6 room 103 => departure 11:00 (BOX 5), arrival 21:30 (BOX 8)
+        const normalizedRaw = normalizeForMatch(rawText)
+        const looksLikeRegressionSample = normalizedRaw.includes('anna trankell') || normalizedRaw.includes('ole jorling')
+        if (looksLikeRegressionSample) {
+            const room103Rows = rows.filter((row) => row.roomNumber === '103')
+            console.info('[PrevioParser] room 103 regression snapshot', room103Rows)
+        }
+    }
 
     if (rows.length === 0) {
         warnings.push('V PDF nebyly rozpoznány žádné pokojové bloky.')

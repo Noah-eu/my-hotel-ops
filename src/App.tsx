@@ -1310,7 +1310,7 @@ export default function App() {
                                                             <div style={{ marginTop: 8, maxHeight: 280, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12 }}>
                                                                 {importParseResult.lineDebug.map((dbg) => (
                                                                     <div key={`dbg-${dbg.index}-${dbg.room || 'none'}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
-                                                                        <div><strong>Blok {dbg.index}:</strong> Strana/den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'} | Rozsah: {dbg.blockStartLine}-{dbg.blockEndLine}</div>
+                                                                        <div><strong>Blok {dbg.index}:</strong> Strana/den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'} | Předchozí: {dbg.previousRoom || '—'} | Následující: {dbg.nextRoom || '—'} | Rozsah: {dbg.blockStartLine}-{dbg.blockEndLine}</div>
                                                                         <div>Detekované časy: {dbg.detectedTimes.length ? dbg.detectedTimes.join(', ') : '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
                                                                         <div>Skupiny poznámek: {dbg.noteGroups.length ? dbg.noteGroups.join(' || ') : '—'}</div>
                                                                         <div>Odjezd pozn.: {dbg.departureNotes.length ? dbg.departureNotes.join(', ') : '—'}</div>
