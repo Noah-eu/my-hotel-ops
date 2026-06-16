@@ -107,12 +107,16 @@ body {
 }
 
 .date-selector-track {
-    display: inline-flex;
+    display: flex;
+    flex-wrap: nowrap;
+    width: max-content;
     min-width: 100%;
     gap: 8px;
+    white-space: nowrap;
 }
 
 .date-chip {
+    flex: 0 0 auto;
     border: 1px solid var(--line);
     background: #fff;
     color: #0f172a;

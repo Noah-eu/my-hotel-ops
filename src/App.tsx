@@ -285,30 +285,41 @@ export default function App() {
         ? importedRoomsByDate[selectedImportedDateIso]
         : roomsByDay[tab]
 
-    const importedExtraDates = useMemo(() => (
-        Object.keys(importedRoomsByDate)
-            .filter((dateIso) => dateIso !== importedTabDates.Dnes && dateIso !== importedTabDates.Zitra && dateIso !== importedTabDates.Pozitri)
-            .sort()
-    ), [importedRoomsByDate, importedTabDates.Dnes, importedTabDates.Zitra, importedTabDates.Pozitri])
-
-    const dateSelectorChips = useMemo(() => {
-        const primaryTabs: Array<{ key: string; label: string; tab: OpsTab }> = [
-            { key: 'tab-Dnes', label: 'Dnes', tab: 'Dnes' },
-            { key: 'tab-Zitra', label: 'Zítra', tab: 'Zitra' },
-            { key: 'tab-Pozitri', label: 'Pozítří', tab: 'Pozitri' }
+    const dateSelectorItems = useMemo(() => {
+        const primaryTabs: Array<{ tab: OpsTab; label: string }> = [
+            { tab: 'Dnes', label: 'Dnes' },
+            { tab: 'Zitra', label: 'Zítra' },
+            { tab: 'Pozitri', label: 'Pozítří' }
         ]
 
-        const importedDays = importedExtraDates.map((dateIso) => ({
-            key: `extra-${dateIso}`,
-            label: new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' }),
-            dateIso
+        const primaryDateSet = new Set(
+            primaryTabs
+                .map(({ tab }) => importedTabDates[tab])
+                .filter((dateIso): dateIso is string => Boolean(dateIso))
+        )
+
+        const extraImportedDates = Object.keys(importedRoomsByDate)
+            .filter((dateIso) => !primaryDateSet.has(dateIso))
+            .sort()
+
+        const primaryItems = primaryTabs.map(({ tab: tabKey, label }) => ({
+            key: `tab-${tabKey}`,
+            label,
+            kind: 'tab' as const,
+            tab: tabKey,
+            active: !selectedImportedDateIso && tabKey === tab
         }))
 
-        return {
-            primaryTabs,
-            importedDays
-        }
-    }, [importedExtraDates])
+        const extraItems = extraImportedDates.map((dateIso) => ({
+            key: `date-${dateIso}`,
+            label: new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' }),
+            kind: 'date' as const,
+            dateIso,
+            active: selectedImportedDateIso === dateIso
+        }))
+
+        return [...primaryItems, ...extraItems]
+    }, [importedRoomsByDate, importedTabDates, selectedImportedDateIso, tab])
 
     const statePreviewMissingDates = useMemo(() => (
         stateImportPreview
@@ -1715,23 +1726,18 @@ export default function App() {
                     <>
                         <div className="date-selector" aria-label="Výběr dne">
                             <div className="date-selector-track">
-                                {dateSelectorChips.primaryTabs.map((chip) => (
+                                {dateSelectorItems.map((chip) => (
                                     <button
                                         key={chip.key}
-                                        className={`date-chip ${!selectedImportedDateIso && tab === chip.tab ? 'active' : ''}`}
+                                        className={`date-chip ${chip.active ? 'active' : ''}`}
                                         onClick={() => {
-                                            setSelectedImportedDateIso(null)
-                                            setTab(chip.tab)
+                                            if (chip.kind === 'tab') {
+                                                setSelectedImportedDateIso(null)
+                                                setTab(chip.tab)
+                                                return
+                                            }
+                                            setSelectedImportedDateIso(chip.dateIso)
                                         }}
-                                    >
-                                        {chip.label}
-                                    </button>
-                                ))}
-                                {dateSelectorChips.importedDays.map((chip) => (
-                                    <button
-                                        key={chip.key}
-                                        className={`date-chip ${selectedImportedDateIso === chip.dateIso ? 'active' : ''}`}
-                                        onClick={() => setSelectedImportedDateIso(chip.dateIso)}
                                     >
                                         {chip.label}
                                     </button>
