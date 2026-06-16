@@ -66,6 +66,8 @@ export interface CreateImportJobInput {
     source: ImportJob['source']
     status: ImportJob['status']
     fileName: string
+    contentType?: string
+    sizeBytes?: number
     receivedAt: string
     parsedAt?: string
     confirmedAt?: string

@@ -14,6 +14,25 @@ Bezpečně automatizovat příjem Previo Stav PDF přes e-mail, ale import potvr
 8. Po úspěšném potvrzení se job přepne na `confirmed`.
 9. Script označí e-mail jako zpracovaný (změna štítku / přesun / read).
 
+## Payload pro endpoint
+`POST /api/previo-import-email`
+
+```json
+{
+	"fileName": "previo-state-2026-06-16-20.pdf",
+	"contentType": "application/pdf",
+	"source": "email",
+	"pdfBase64": "<base64 PDF content>"
+}
+```
+
+Pravidla validace:
+- Header `X-Import-Secret` je povinný.
+- Chybějící nebo špatný secret => `401`.
+- Chybějící `pdfBase64` => `400`.
+- Nepdf payload (ani `contentType=application/pdf`, ani `.pdf` název) => `400`.
+- Maximální velikost dekódovaného PDF: 10 MB (`413`).
+
 ## Firestore model
 Kolekce: `hotels/chill-apartments/importJobs/{jobId}`
 
@@ -33,6 +52,8 @@ Doporučená pole:
 - `warnings`
 - `error`
 - `storagePath`
+- `contentType`
+- `sizeBytes`
 - `previewSummary`
 - `parserVersion`
 
@@ -46,6 +67,7 @@ Doporučená pole:
 - `PREVIO_IMPORT_SECRET`
 - `PREVIO_IMPORT_HOTEL_ID` (default `chill-apartments`)
 - `FIREBASE_SERVICE_ACCOUNT_JSON` (server-side JSON service account)
+- `FIREBASE_STORAGE_BUCKET` (např. `your_project.appspot.com`)
 
 ## Další krok (v2)
 - Přidat server-side parsování PDF v background workeru.

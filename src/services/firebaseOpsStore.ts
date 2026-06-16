@@ -440,6 +440,8 @@ export function createFirebaseOpsStore(): OpsStore {
                 source: input.source,
                 status: input.status,
                 fileName: input.fileName,
+                contentType: input.contentType,
+                sizeBytes: input.sizeBytes,
                 receivedAt: input.receivedAt,
                 parsedAt: input.parsedAt,
                 confirmedAt: input.confirmedAt,

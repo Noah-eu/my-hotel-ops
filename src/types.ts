@@ -103,6 +103,8 @@ export interface ImportJob {
     source: ImportJobSource
     status: ImportJobStatus
     fileName: string
+    contentType?: string
+    sizeBytes?: number
     receivedAt: string
     parsedAt?: string
     confirmedAt?: string

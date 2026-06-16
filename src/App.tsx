@@ -144,6 +144,15 @@ function importJobStatusStyle(status: ImportJob['status']) {
     return { background: '#e0f2fe', color: '#0c4a6e', border: '1px solid #7dd3fc' }
 }
 
+function formatBytes(bytes?: number) {
+    if (!bytes || bytes <= 0) return '—'
+    if (bytes < 1024) return `${bytes} B`
+    const kb = bytes / 1024
+    if (kb < 1024) return `${kb.toFixed(1)} KB`
+    const mb = kb / 1024
+    return `${mb.toFixed(2)} MB`
+}
+
 function normalizeTaskTitleForCleanup(value: string) {
     return value
         .normalize('NFD')
@@ -1042,11 +1051,11 @@ export default function App() {
             Pozitri: roomsByDay.Pozitri
         }
 
-        ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-            const dateIso = parsedTabDates[day]
-            if (!dateIso || !byDate[dateIso]) return
-            next[day] = byDate[dateIso]
-        })
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                const dateIso = parsedTabDates[day]
+                if (!dateIso || !byDate[dateIso]) return
+                next[day] = byDate[dateIso]
+            })
 
         setImportedTabDates(parsedTabDates)
         setImportedRoomsByDate(byDate)
@@ -2013,6 +2022,14 @@ export default function App() {
                                                         <div className="room-meta" style={{ marginTop: 2 }}>
                                                             Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
                                                         </div>
+                                                        <div className="room-meta" style={{ marginTop: 2 }}>
+                                                            Typ obsahu: {job.contentType || '—'} • Velikost: {formatBytes(job.sizeBytes)} • Storage: {job.storagePath || 'není k dispozici'}
+                                                        </div>
+                                                        {job.source === 'email' && !job.previewSummary?.byDate && (
+                                                            <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
+                                                            </div>
+                                                        )}
                                                         {job.warnings.length > 0 && (
                                                             <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
                                                                 {job.warnings.slice(0, 4).map((warning) => (
