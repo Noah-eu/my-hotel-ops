@@ -108,7 +108,7 @@ function formatDateLabel(dateIso: string) {
 }
 
 function parsePageDateHeader(line: string) {
-    const match = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|út|st|ct|čt|pa|so|ne)\b/i)
+    const match = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|út|st|ct|čt|pa|pá|so|ne)\b/i)
     if (!match) return null
 
     const day = Number(match[1])

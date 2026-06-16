@@ -188,7 +188,7 @@ function parseLineDate(line: string, fallbackYear: number) {
         return Number.isNaN(dt.getTime()) ? null : dt
     }
 
-    const short = line.match(/(?:\b(?:po|ut|út|st|ct|čt|pa|so|ne|pondeli|utery|streda|ctvrtek|patek|sobota|nedele)\b\s*)?(\d{1,2})\.\s*(\d{1,2})\.?\b/i)
+    const short = line.match(/(?:\b(?:po|ut|út|st|ct|čt|pa|pá|so|ne|pondeli|utery|streda|ctvrtek|patek|sobota|nedele)\b\s*)?(\d{1,2})\.\s*(\d{1,2})\.?\b/i)
     if (short) {
         const day = Number(short[1])
         const month = Number(short[2])
@@ -200,7 +200,7 @@ function parseLineDate(line: string, fallbackYear: number) {
 }
 
 function parsePageDateHeader(line: string) {
-    const match = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|út|st|ct|čt|pa|so|ne)\b/i)
+    const match = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s*-\s*(po|ut|út|st|ct|čt|pa|pá|so|ne)\b/i)
     if (!match) return null
 
     const day = Number(match[1])
