@@ -36,6 +36,26 @@ const quickTaskOptions: { label: string; category: Task['category'] }[] = [
     { label: 'Vlastní úkol', category: 'other' }
 ]
 
+function normalizeForKeywordMatch(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+}
+
+function arrivalPrepChipsFromNotes(notes?: string[]) {
+    if (!notes || notes.length === 0) return []
+
+    const joined = normalizeForKeywordMatch(notes.join(' | '))
+    const chips: string[] = []
+
+    if (joined.includes('detska postylka') || joined.includes('postylka')) chips.push('dětská postýlka')
+    if (joined.includes('gauc')) chips.push('gauč')
+    if (joined.includes('extra rucniky')) chips.push('extra ručníky')
+
+    return chips
+}
+
 function canSeeTask(role: UserRole, task: Task) {
     if (role === 'admin') return true
     if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
@@ -359,6 +379,7 @@ export default function DashboardToday({
                     const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
                     const otherRoomTasks = activeRoomTasks.filter((t) => !arrivalPreparationTitles.has(t.title))
+                    const arrivalPrepChips = arrivalPrepChipsFromNotes(room.arrival?.notes)
 
                     return (
                         <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
@@ -382,6 +403,11 @@ export default function DashboardToday({
                                         <>
                                             <div className="plan-time">{room.departure.time}</div>
                                             <div className="plan-meta">{room.departure.guestLabel || 'Host'}{room.departure.guestCount ? ` • ${room.departure.guestCount}p` : ''}</div>
+                                            {room.departure.notes && room.departure.notes.length > 0 && (
+                                                <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                                    {room.departure.notes.map((n) => <div key={n} className="note-chip">{n}</div>)}
+                                                </div>
+                                            )}
                                         </>
                                     ) : (
                                         <div className="plan-empty">—</div>
@@ -395,7 +421,12 @@ export default function DashboardToday({
                                             <div className="plan-meta">{room.arrival.guestLabel || 'Host'}{room.arrival.guestCount ? ` • ${room.arrival.guestCount}p` : ''}</div>
                                             <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                                 {room.arrival.box && <div className="note-chip">{room.arrival.box}</div>}
-                                                {room.arrival.notes && room.arrival.notes.slice(0, 1).map(n => <div key={n} className="note-chip">{n}</div>)}
+                                                {room.arrival.notes && room.arrival.notes.map(n => <div key={n} className="note-chip">{n}</div>)}
+                                                {arrivalPrepChips.map((chip) => (
+                                                    <div key={`prep-${room.id}-${chip}`} className="note-chip" style={{ border: '1px solid #bfdbfe', background: '#eff6ff' }}>
+                                                        {chip}
+                                                    </div>
+                                                ))}
                                                 {arrivalPrepTasks.map((task) => (
                                                     <button
                                                         key={task.id}

@@ -457,7 +457,8 @@ export default function App() {
                         departure: hasDeparture ? {
                             time: parsed.departureTime as string,
                             guestLabel: parsed.guestLabel,
-                            guestCount: parsed.guestCount
+                            guestCount: parsed.guestCount,
+                            notes: parsed.departureNotes.length ? parsed.departureNotes : row.departure?.notes
                         } : undefined,
                         arrival: hasArrival ? {
                             time: parsed.arrivalTime as string,

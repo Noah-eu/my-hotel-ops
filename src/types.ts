@@ -10,6 +10,7 @@ export interface DepartureInfo {
     time: string
     guestCount?: number
     guestLabel?: string
+    notes?: string[]
 }
 
 export interface ArrivalInfo {
