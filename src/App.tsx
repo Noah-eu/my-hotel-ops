@@ -278,6 +278,7 @@ export default function App() {
         ? selectedImportedDateIso
         : selectedTabDateIso
     const effectiveDate = new Date(effectiveDateIso)
+    const showOrientationNote = tab !== 'Dnes' || isExtraImportedDay
     const dayLabelPrefix = isExtraImportedDay ? 'Další den' : dayTitle
     const dayLabel = `${dayLabelPrefix} • ${effectiveDate.toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
     const displayedRooms = selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso]
@@ -289,6 +290,25 @@ export default function App() {
             .filter((dateIso) => dateIso !== importedTabDates.Dnes && dateIso !== importedTabDates.Zitra && dateIso !== importedTabDates.Pozitri)
             .sort()
     ), [importedRoomsByDate, importedTabDates.Dnes, importedTabDates.Zitra, importedTabDates.Pozitri])
+
+    const dateSelectorChips = useMemo(() => {
+        const primaryTabs: Array<{ key: string; label: string; tab: OpsTab }> = [
+            { key: 'tab-Dnes', label: 'Dnes', tab: 'Dnes' },
+            { key: 'tab-Zitra', label: 'Zítra', tab: 'Zitra' },
+            { key: 'tab-Pozitri', label: 'Pozítří', tab: 'Pozitri' }
+        ]
+
+        const importedDays = importedExtraDates.map((dateIso) => ({
+            key: `extra-${dateIso}`,
+            label: new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' }),
+            dateIso
+        }))
+
+        return {
+            primaryTabs,
+            importedDays
+        }
+    }, [importedExtraDates])
 
     const statePreviewMissingDates = useMemo(() => (
         stateImportPreview
@@ -1693,10 +1713,30 @@ export default function App() {
 
                 {runtimeMode === 'online' && (!authUser || authUser.isAnonymous || !onlineProfile) ? null : (
                     <>
-                        <div className="tabs">
-                            <div className={`tab ${tab === 'Dnes' ? 'active' : ''}`} onClick={() => { setSelectedImportedDateIso(null); setTab('Dnes') }}>Dnes</div>
-                            <div className={`tab ${tab === 'Zitra' ? 'active' : ''}`} onClick={() => { setSelectedImportedDateIso(null); setTab('Zitra') }}>Zítra</div>
-                            <div className={`tab ${tab === 'Pozitri' ? 'active' : ''}`} onClick={() => { setSelectedImportedDateIso(null); setTab('Pozitri') }}>Pozítří</div>
+                        <div className="date-selector" aria-label="Výběr dne">
+                            <div className="date-selector-track">
+                                {dateSelectorChips.primaryTabs.map((chip) => (
+                                    <button
+                                        key={chip.key}
+                                        className={`date-chip ${!selectedImportedDateIso && tab === chip.tab ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setSelectedImportedDateIso(null)
+                                            setTab(chip.tab)
+                                        }}
+                                    >
+                                        {chip.label}
+                                    </button>
+                                ))}
+                                {dateSelectorChips.importedDays.map((chip) => (
+                                    <button
+                                        key={chip.key}
+                                        className={`date-chip ${selectedImportedDateIso === chip.dateIso ? 'active' : ''}`}
+                                        onClick={() => setSelectedImportedDateIso(chip.dateIso)}
+                                    >
+                                        {chip.label}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
 
                         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -1719,23 +1759,8 @@ export default function App() {
                             </div>
                         )}
 
-                        {tab !== 'Dnes' && (
+                        {showOrientationNote && (
                             <div style={{ marginTop: 10, padding: 10, background: '#fff', borderRadius: 10 }}>Orientační plán – může se změnit novou rezervací.</div>
-                        )}
-
-                        {importedExtraDates.length > 0 && (
-                            <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                <div style={{ fontSize: 12, color: '#475569', fontWeight: 700 }}>Další dny:</div>
-                                {importedExtraDates.map((dateIso) => (
-                                    <button
-                                        key={`extra-day-${dateIso}`}
-                                        className={`chip ${selectedImportedDateIso === dateIso ? 'active' : ''}`}
-                                        onClick={() => setSelectedImportedDateIso((prev) => (prev === dateIso ? null : dateIso))}
-                                    >
-                                        {new Date(dateIso).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' })}
-                                    </button>
-                                ))}
-                            </div>
                         )}
 
                         <div style={{ marginTop: 12 }}>

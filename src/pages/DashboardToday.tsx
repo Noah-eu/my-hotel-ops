@@ -467,6 +467,11 @@ export default function DashboardToday({
                 {rooms.map((room, index) => {
                     const isExpanded = expandedRoom === room.id
                     const stateOnlyRoom = isStateOnlyRoom(room)
+                    const stateRowClass = room.occupiedConfirmed
+                        ? 'status-row-stayover'
+                        : room.freeConfirmed
+                            ? 'status-row-free'
+                            : statusClass(room.status)
                     const roomTasks = tasks.filter((t) => t.roomNumber === room.number && canSeeTask(role, t))
                     const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
@@ -479,16 +484,21 @@ export default function DashboardToday({
                     ))
 
                     return (
-                        <div key={room.id} className={`daily-row-wrap ${stateOnlyRoom ? 'status-row-gray' : statusClass(room.status)} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
+                        <div key={room.id} className={`daily-row-wrap ${stateRowClass} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
                             <div className="daily-row">
                                 <div className="room-col">
                                     <div className="room-no">{room.number}</div>
-                                    <div className="mini-badge">{statusLabel(room.status)}</div>
+                                    {room.occupiedConfirmed ? (
+                                        <div className="mini-badge mini-badge-stayover">Obsazeno / pobyt</div>
+                                    ) : room.freeConfirmed ? (
+                                        <div className="mini-badge mini-badge-free">Potvrzeně volný</div>
+                                    ) : (
+                                        <div className="mini-badge">{statusLabel(room.status)}</div>
+                                    )}
                                     <button className="room-action-btn" onClick={() => toggleExpandedRoom(room.id)}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
-                                    {room.occupiedConfirmed && <div className="mini-muted" style={{ color: '#0f766e', fontWeight: 700 }}>Obsazeno / pobyt</div>}
-                                    {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted" style={{ color: '#0f766e' }}>{room.stayoverGuestName}</div>}
-                                    {room.freeConfirmed && <div className="mini-muted" style={{ color: '#166534', fontWeight: 700 }}>Potvrzeně volný</div>}
+                                    {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted mini-muted-stayover">{room.stayoverGuestName}</div>}
+                                    {room.freeConfirmed && <div className="mini-muted mini-muted-free">Pokoj je dostupný při volné kapacitě.</div>}
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
                                             <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c' }}>{room.statusNote || 'Host neodešel'}</div>

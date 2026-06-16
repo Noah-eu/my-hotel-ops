@@ -98,6 +98,41 @@ body {
     padding: 12px 0;
 }
 
+.date-selector {
+    margin-top: 12px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+}
+
+.date-selector-track {
+    display: inline-flex;
+    min-width: 100%;
+    gap: 8px;
+}
+
+.date-chip {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: #0f172a;
+    border-radius: 999px;
+    padding: 10px 14px;
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1;
+    min-height: 40px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.date-chip.active {
+    background: #dbeafe;
+    border-color: #60a5fa;
+    color: #1e3a8a;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
 .tab {
     flex: 1;
     text-align: center;
@@ -317,10 +352,31 @@ body {
     white-space: nowrap;
 }
 
+.mini-badge-stayover {
+    background: #e8ecf7;
+    color: #34415f;
+    border: 1px solid #c8d3eb;
+}
+
+.mini-badge-free {
+    background: #dff6ed;
+    color: #0f5132;
+    border: 1px solid #9edfc7;
+}
+
 .mini-muted {
     margin-top: 6px;
     color: var(--muted);
     font-size: 11px;
+}
+
+.mini-muted-stayover {
+    color: #445271;
+}
+
+.mini-muted-free {
+    color: #166534;
+    font-weight: 600;
 }
 
 .room-action-btn {
@@ -529,13 +585,27 @@ body {
     --status-bg: rgba(148, 163, 184, 0.03);
 }
 
+.status-row-stayover {
+    --status-color: #7c8db5;
+    --status-border: rgba(124, 141, 181, 0.36);
+    --status-bg: rgba(124, 141, 181, 0.12);
+}
+
+.status-row-free {
+    --status-color: #2ba97f;
+    --status-border: rgba(43, 169, 127, 0.34);
+    --status-bg: rgba(43, 169, 127, 0.11);
+}
+
 /* apply the colored border and subtle background when status variable is present */
 .status-row-red,
 .status-row-blue,
 .status-row-orange,
 .status-row-purple,
 .status-row-green,
-.status-row-gray {
+.status-row-gray,
+.status-row-stayover,
+.status-row-free {
     border-color: var(--status-border);
     background: linear-gradient(180deg, var(--status-bg) 0%, rgba(255, 255, 255, 0.6) 100%);
 }
