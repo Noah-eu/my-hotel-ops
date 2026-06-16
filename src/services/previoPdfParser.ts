@@ -28,6 +28,17 @@ export type PrevioParseResult = {
     warnings: string[]
     parsedDateHeadings: string[]
     rawTextLength: number
+    lineCount: number
+    lineDebug: Array<{
+        index: number
+        line: string
+        detectedDate?: string
+        detectedRoom?: string
+        departureTime?: string
+        arrivalTime?: string
+        notes: string[]
+        warning?: string
+    }>
 }
 
 export type ParsedTurnover = {
@@ -44,6 +55,8 @@ export type PrevioImportPreview = {
     parsedTabDates: Partial<Record<OpsTab, string>>
     warnings: string[]
     parsedRows: number
+    rowsWithoutTimes: number
+    confidenceLow: boolean
     unknownRooms: string[]
     noTurnoverRooms: string[]
     previewRows: Array<{
@@ -56,12 +69,27 @@ export type PrevioImportPreview = {
     }>
 }
 
+function formatLocalDate(date: Date) {
+    const y = date.getFullYear()
+    const m = `${date.getMonth() + 1}`.padStart(2, '0')
+    const d = `${date.getDate()}`.padStart(2, '0')
+    return `${y}-${m}-${d}`
+}
+
+function normalizeForMatch(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+}
+
 function normalizeRoomNumber(raw: string) {
     return raw.trim().replace(/^0+/, '').padStart(3, '0')
 }
 
 function normalizeTime(raw: string) {
-    const [h, m] = raw.split(':')
+    const normalized = raw.replace('.', ':')
+    const [h, m] = normalized.split(':')
     if (!h || !m) return raw
     return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`
 }
@@ -71,7 +99,7 @@ function startOfDay(date: Date) {
 }
 
 function parseLineDate(line: string, fallbackYear: number) {
-    const full = line.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/)
+    const full = line.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\b/)
     if (full) {
         const day = Number(full[1])
         const month = Number(full[2])
@@ -80,7 +108,7 @@ function parseLineDate(line: string, fallbackYear: number) {
         return Number.isNaN(dt.getTime()) ? null : dt
     }
 
-    const short = line.match(/\b(\d{1,2})\.(\d{1,2})\.?\b/)
+    const short = line.match(/(?:\b(?:po|ut|út|st|ct|čt|pa|so|ne|pondeli|utery|streda|ctvrtek|patek|sobota|nedele)\b\s*)?(\d{1,2})\.\s*(\d{1,2})\.?\b/i)
     if (short) {
         const day = Number(short[1])
         const month = Number(short[2])
@@ -138,10 +166,34 @@ export async function extractTextFromPdfFile(file: File): Promise<string> {
     for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i)
         const text = await page.getTextContent()
-        const lines = text.items
-            .map((item: any) => (typeof item?.str === 'string' ? item.str : ''))
+        const rawItems = text.items
+            .map((item: any) => ({
+                str: typeof item?.str === 'string' ? item.str.trim() : '',
+                x: Array.isArray(item?.transform) ? Number(item.transform[4]) : 0,
+                y: Array.isArray(item?.transform) ? Number(item.transform[5]) : 0
+            }))
+            .filter((item) => item.str)
+
+        const rows = new Map<number, Array<{ str: string; x: number }>>()
+        rawItems.forEach((item) => {
+            const yBucket = Math.round(item.y)
+            if (!rows.has(yBucket)) rows.set(yBucket, [])
+            rows.get(yBucket)?.push({ str: item.str, x: item.x })
+        })
+
+        const mergedLines = Array.from(rows.entries())
+            .sort((a, b) => b[0] - a[0])
+            .map(([, items]) =>
+                items
+                    .sort((a, b) => a.x - b.x)
+                    .map((item) => item.str)
+                    .join(' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+            )
             .filter(Boolean)
-        pageTexts.push(lines.join('\n'))
+
+        pageTexts.push(mergedLines.join('\n'))
     }
 
     return pageTexts.join('\n')
@@ -156,42 +208,85 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
     const warnings: string[] = []
     const rows: PrevioParsedRow[] = []
     const parsedDateHeadings: string[] = []
+    const lineDebug: PrevioParseResult['lineDebug'] = []
 
     let currentDate: Date | null = null
     const fallbackYear = referenceDate.getFullYear()
 
-    lines.forEach((line, lineIndex) => {
-        const lower = line.toLowerCase()
+    function inferTimes(text: string) {
+        const normalized = normalizeForMatch(text)
+        const times = [...text.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)].map((m) => normalizeTime(`${m[1]}:${m[2]}`))
+
+        let departureTime: string | undefined
+        let arrivalTime: string | undefined
+
+        const departureKeyword = /odjezd|departure|check\s*-?\s*out|checkout|odchod/.test(normalized)
+        const arrivalKeyword = /prijezd|arrival|check\s*-?\s*in|checkin|prichod/.test(normalized)
+
+        if (times.length >= 2) {
+            if (departureKeyword && arrivalKeyword) {
+                departureTime = times[0]
+                arrivalTime = times[1]
+            } else {
+                departureTime = times[0]
+                arrivalTime = times[1]
+            }
+        } else if (times.length === 1) {
+            if (departureKeyword && !arrivalKeyword) departureTime = times[0]
+            else if (arrivalKeyword && !departureKeyword) arrivalTime = times[0]
+            else arrivalTime = times[0]
+        }
+
+        return { departureTime, arrivalTime }
+    }
+
+    function detectNotes(text: string) {
+        const lower = normalizeForMatch(text)
+        const notes = keywordNotes(lower)
+        const boxMatch = text.match(/\bbox\s*([a-z0-9-]+)/i)
+        const box = boxMatch ? `BOX ${boxMatch[1].toUpperCase()}` : undefined
+        return { notes, box }
+    }
+
+    function detectRoom(line: string) {
+        const roomMatch = line.match(/(?:pokoj\s*)?\b(\d{3})\b/i)
+        return roomMatch ? normalizeRoomNumber(roomMatch[1]) : undefined
+    }
+
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex]
 
         const maybeDate = parseLineDate(line, fallbackYear)
         if (maybeDate) {
             currentDate = maybeDate
-            parsedDateHeadings.push(maybeDate.toISOString().slice(0, 10))
+            parsedDateHeadings.push(formatLocalDate(maybeDate))
         }
 
-        const roomMatch = line.match(/\b(\d{3})\b/)
-        if (!roomMatch) return
-
-        const roomNumber = normalizeRoomNumber(roomMatch[1])
-        const times = [...line.matchAll(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g)].map((m) => normalizeTime(`${m[1]}:${m[2]}`))
-
-        let departureTime: string | undefined
-        let arrivalTime: string | undefined
-        if (times.length >= 2) {
-            departureTime = times[0]
-            arrivalTime = times[1]
-        } else if (times.length === 1) {
-            if (lower.includes('odjezd')) departureTime = times[0]
-            else arrivalTime = times[0]
+        const roomNumber = detectRoom(line)
+        if (!roomNumber) {
+            lineDebug.push({
+                index: lineIndex + 1,
+                line,
+                detectedDate: maybeDate ? formatLocalDate(maybeDate) : undefined,
+                notes: [],
+                warning: 'Bez čísla pokoje'
+            })
+            continue
         }
 
-        const guestCountMatch = line.match(/\b(\d{1,2})\s*(?:p|os|host)/i)
+        const lookahead: string[] = [line]
+        for (let j = lineIndex + 1; j < Math.min(lines.length, lineIndex + 4); j++) {
+            const nextLine = lines[j]
+            if (detectRoom(nextLine) || parseLineDate(nextLine, fallbackYear)) break
+            lookahead.push(nextLine)
+        }
+        const combinedLine = lookahead.join(' ')
+
+        const { departureTime, arrivalTime } = inferTimes(combinedLine)
+        const { notes, box } = detectNotes(combinedLine)
+
+        const guestCountMatch = combinedLine.match(/\b(\d{1,2})\s*(?:p|os|host|pax)\b/i)
         const guestCount = guestCountMatch ? Number(guestCountMatch[1]) : undefined
-
-        const boxMatch = line.match(/\bbox\s*([a-z0-9-]+)/i)
-        const box = boxMatch ? `BOX ${boxMatch[1].toUpperCase()}` : undefined
-
-        const notes = keywordNotes(lower)
         const rowWarnings: string[] = []
 
         if (!currentDate) {
@@ -202,7 +297,7 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
         }
 
         rows.push({
-            dateIso: (currentDate || referenceDate).toISOString().slice(0, 10),
+            dateIso: formatLocalDate(currentDate || referenceDate),
             roomNumber,
             departureTime,
             arrivalTime,
@@ -215,7 +310,18 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
         if (rowWarnings.length > 0) {
             warnings.push(`Řádek ${lineIndex + 1}: ${rowWarnings.join(', ')}`)
         }
-    })
+
+        lineDebug.push({
+            index: lineIndex + 1,
+            line,
+            detectedDate: currentDate ? formatLocalDate(currentDate) : undefined,
+            detectedRoom: roomNumber,
+            departureTime,
+            arrivalTime,
+            notes,
+            warning: rowWarnings.length ? rowWarnings.join(', ') : undefined
+        })
+    }
 
     if (rows.length === 0) {
         warnings.push('V PDF nebyly rozpoznány žádné řádky s číslem pokoje.')
@@ -229,7 +335,9 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
         rows,
         warnings,
         parsedDateHeadings,
-        rawTextLength: rawText.length
+        rawTextLength: rawText.length,
+        lineCount: lines.length,
+        lineDebug
     }
 }
 
@@ -257,6 +365,8 @@ export function buildPrevioImportPreview(
 
     const parsedTabDates: Partial<Record<OpsTab, string>> = {}
     const warnings = [...parsed.warnings]
+    const rowsWithoutTimes = parsed.rows.filter((row) => !row.departureTime && !row.arrivalTime).length
+    const confidenceLow = parsed.rows.length > 0 ? (rowsWithoutTimes / parsed.rows.length) > 0.3 : true
 
     const activeRooms = roomCatalog
         .filter((room) => room.active)
@@ -290,36 +400,38 @@ export function buildPrevioImportPreview(
     })
 
     const noTurnoverRooms: string[] = []
-    ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((tab) => {
-        activeRooms.forEach((room) => {
-            const row = byTab[tab].get(room.roomNumber)
-            if (!row || (!row.arrivalTime && !row.departureTime)) {
-                noTurnoverRooms.push(`${tab}: ${room.roomNumber}`)
-            }
-        })
-    })
-
-    const previewRows: PrevioImportPreview['previewRows'] = []
-    ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((tab) => {
-        const dateIso = parsedTabDates[tab]
-        const dateLabel = dateIso ? formatDateLabel(dateIso) : tab
-        byTab[tab].forEach((row, roomNumber) => {
-            previewRows.push({
-                tab,
-                dateLabel,
-                roomNumber,
-                departureTime: row.departureTime,
-                arrivalTime: row.arrivalTime,
-                notes: row.notes.join(', ')
+        ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((tab) => {
+            activeRooms.forEach((room) => {
+                const row = byTab[tab].get(room.roomNumber)
+                if (!row || (!row.arrivalTime && !row.departureTime)) {
+                    noTurnoverRooms.push(`${tab}: ${room.roomNumber}`)
+                }
             })
         })
-    })
+
+    const previewRows: PrevioImportPreview['previewRows'] = []
+        ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((tab) => {
+            const dateIso = parsedTabDates[tab]
+            const dateLabel = dateIso ? formatDateLabel(dateIso) : tab
+            byTab[tab].forEach((row, roomNumber) => {
+                previewRows.push({
+                    tab,
+                    dateLabel,
+                    roomNumber,
+                    departureTime: row.departureTime,
+                    arrivalTime: row.arrivalTime,
+                    notes: row.notes.join(', ')
+                })
+            })
+        })
 
     return {
         byTab,
         parsedTabDates,
         warnings,
         parsedRows: parsed.rows.length,
+        rowsWithoutTimes,
+        confidenceLow,
         unknownRooms,
         noTurnoverRooms,
         previewRows

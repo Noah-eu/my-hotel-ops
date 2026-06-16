@@ -24,6 +24,7 @@ import {
     extractTextFromPdfFile,
     getDefaultRoomCatalog,
     parsePrevioPdfText,
+    type PrevioParseResult,
     type PrevioImportPreview,
     type RoomCatalogItem
 } from './services/previoPdfParser'
@@ -171,6 +172,8 @@ export default function App() {
     const [importPdfStatus, setImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
     const [importPdfError, setImportPdfError] = useState<string | null>(null)
     const [importPreview, setImportPreview] = useState<PrevioImportPreview | null>(null)
+    const [importRawText, setImportRawText] = useState('')
+    const [importParseResult, setImportParseResult] = useState<PrevioParseResult | null>(null)
     const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>({})
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
@@ -311,24 +314,54 @@ export default function App() {
             setImportPdfStatus('error')
             setImportPdfError('Soubor musí být ve formátu PDF.')
             setImportPreview(null)
+            setImportRawText('')
+            setImportParseResult(null)
             return
         }
 
         setImportPdfStatus('loading')
         setImportPdfError(null)
         setImportPreview(null)
+        setImportRawText('')
+        setImportParseResult(null)
 
         try {
             const rawText = await extractTextFromPdfFile(file)
             const parsed = parsePrevioPdfText(rawText, new Date())
             const preview = buildPrevioImportPreview(parsed, activeRooms, new Date())
             setImportPreview(preview)
+            setImportRawText(rawText)
+            setImportParseResult(parsed)
             setImportPdfStatus('loaded')
         } catch (error: any) {
             setImportPdfStatus('error')
             setImportPdfError(error?.message || 'PDF se nepodařilo načíst.')
             setImportPreview(null)
+            setImportRawText('')
+            setImportParseResult(null)
         }
+    }
+
+    async function handleCopyImportDebugText() {
+        if (!importRawText) return
+        try {
+            await navigator.clipboard.writeText(importRawText)
+        } catch {
+            setImportPdfError('Debug text se nepodařilo zkopírovat do schránky.')
+        }
+    }
+
+    function handleDownloadImportDebugText() {
+        if (!importRawText) return
+        const blob = new Blob([importRawText], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'previo-debug-text.txt'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
     }
 
     function buildMergedPlansFromImport(preview: PrevioImportPreview): Record<OpsTab, typeof roomsByDay[OpsTab]> {
@@ -338,70 +371,70 @@ export default function App() {
             Pozitri: []
         }
 
-        ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-            const existingByRoom = new Map(
-                roomsByDay[day].map((room) => {
-                    const roomNumber = room.number.match(/\d{3}/)?.[0] || room.number
-                    return [roomNumber, room]
-                })
-            )
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                const existingByRoom = new Map(
+                    roomsByDay[day].map((room) => {
+                        const roomNumber = room.number.match(/\d{3}/)?.[0] || room.number
+                        return [roomNumber, room]
+                    })
+                )
 
-            next[day] = activeRooms.map((catalogRoom) => {
-                const base = existingByRoom.get(catalogRoom.roomNumber)
-                const parsed = preview.byTab[day].get(catalogRoom.roomNumber)
+                next[day] = activeRooms.map((catalogRoom) => {
+                    const base = existingByRoom.get(catalogRoom.roomNumber)
+                    const parsed = preview.byTab[day].get(catalogRoom.roomNumber)
 
-                const row = base
-                    ? { ...base }
-                    : {
-                        id: `r-${catalogRoom.roomNumber}`,
-                        number: catalogRoom.displayName || catalogRoom.roomNumber,
-                        situation: 'volny' as const,
-                        status: 'neni' as const
+                    const row = base
+                        ? { ...base }
+                        : {
+                            id: `r-${catalogRoom.roomNumber}`,
+                            number: catalogRoom.displayName || catalogRoom.roomNumber,
+                            situation: 'volny' as const,
+                            status: 'neni' as const
+                        }
+
+                    if (!parsed || (!parsed.arrivalTime && !parsed.departureTime)) {
+                        return {
+                            ...row,
+                            departure: undefined,
+                            arrival: undefined,
+                            departureTime: undefined,
+                            arrivalTime: undefined,
+                            nextArrivalPreview: undefined,
+                            situation: 'volny' as const
+                        }
                     }
 
-                if (!parsed || (!parsed.arrivalTime && !parsed.departureTime)) {
+                    const hasDeparture = Boolean(parsed.departureTime)
+                    const hasArrival = Boolean(parsed.arrivalTime)
+                    const mergedSituation = hasDeparture && hasArrival
+                        ? 'odjezd_prijezd'
+                        : hasDeparture
+                            ? 'odjezd'
+                            : 'prijezd'
+
                     return {
                         ...row,
-                        departure: undefined,
-                        arrival: undefined,
-                        departureTime: undefined,
-                        arrivalTime: undefined,
-                        nextArrivalPreview: undefined,
-                        situation: 'volny' as const
+                        situation: mergedSituation,
+                        departure: hasDeparture ? {
+                            time: parsed.departureTime as string,
+                            guestLabel: parsed.guestLabel,
+                            guestCount: parsed.guestCount
+                        } : undefined,
+                        arrival: hasArrival ? {
+                            time: parsed.arrivalTime as string,
+                            guestLabel: parsed.guestLabel,
+                            guestCount: parsed.guestCount,
+                            box: parsed.box || row.box,
+                            notes: parsed.notes.length ? parsed.notes : row.arrival?.notes
+                        } : undefined,
+                        departureTime: parsed.departureTime,
+                        arrivalTime: parsed.arrivalTime,
+                        guestCount: parsed.guestCount ?? row.guestCount,
+                        box: parsed.box || row.box || catalogRoom.defaultBox,
+                        nextArrivalPreview: undefined
                     }
-                }
-
-                const hasDeparture = Boolean(parsed.departureTime)
-                const hasArrival = Boolean(parsed.arrivalTime)
-                const mergedSituation = hasDeparture && hasArrival
-                    ? 'odjezd_prijezd'
-                    : hasDeparture
-                        ? 'odjezd'
-                        : 'prijezd'
-
-                return {
-                    ...row,
-                    situation: mergedSituation,
-                    departure: hasDeparture ? {
-                        time: parsed.departureTime as string,
-                        guestLabel: parsed.guestLabel,
-                        guestCount: parsed.guestCount
-                    } : undefined,
-                    arrival: hasArrival ? {
-                        time: parsed.arrivalTime as string,
-                        guestLabel: parsed.guestLabel,
-                        guestCount: parsed.guestCount,
-                        box: parsed.box || row.box,
-                        notes: parsed.notes.length ? parsed.notes : row.arrival?.notes
-                    } : undefined,
-                    departureTime: parsed.departureTime,
-                    arrivalTime: parsed.arrivalTime,
-                    guestCount: parsed.guestCount ?? row.guestCount,
-                    box: parsed.box || row.box || catalogRoom.defaultBox,
-                    nextArrivalPreview: undefined
-                }
+                })
             })
-        })
 
         return next
     }
@@ -413,7 +446,7 @@ export default function App() {
         setRoomsByDay(merged)
 
         if (runtimeMode === 'online') {
-            ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 merged[day].forEach((room) => {
                     activeStore.updateRoomPlan(day, room.id, {
                         situation: room.situation,
@@ -438,6 +471,8 @@ export default function App() {
         setImportPreview(null)
         setImportPdfStatus('idle')
         setImportPdfError(null)
+        setImportRawText('')
+        setImportParseResult(null)
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -1197,14 +1232,52 @@ export default function App() {
                                                 <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
                                                     <div style={{ fontWeight: 800 }}>Náhled importu</div>
                                                     <div className="room-meta">Počet rozpoznaných řádků: {importPreview.parsedRows}</div>
+                                                    <div className="room-meta">Řádků bez času: {importPreview.rowsWithoutTimes}</div>
                                                     <div className="room-meta">Mimo seznam pokojů: {importPreview.unknownRooms.length ? importPreview.unknownRooms.join(', ') : 'žádné'}</div>
                                                     <div className="room-meta">Bez příjezdu/odjezdu: {importPreview.noTurnoverRooms.length}</div>
+                                                    {importPreview.confidenceLow && (
+                                                        <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
+                                                            Časy nebyly rozpoznány – import nepotvrzovat.
+                                                        </div>
+                                                    )}
                                                     {importPreview.warnings.length > 0 && (
                                                         <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
                                                             {importPreview.warnings.slice(0, 8).map((warning) => (
                                                                 <div key={warning}>{warning}</div>
                                                             ))}
                                                         </div>
+                                                    )}
+
+                                                    {importRawText && (
+                                                        <details>
+                                                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text z PDF</summary>
+                                                            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                                                <button className="btn" onClick={() => void handleCopyImportDebugText()}>Kopírovat</button>
+                                                                <button className="btn" onClick={handleDownloadImportDebugText}>Stáhnout TXT</button>
+                                                            </div>
+                                                            <div className="room-meta" style={{ marginTop: 8 }}>
+                                                                Délka textu: {importRawText.length} znaků, řádků: {importParseResult?.lineCount || 0}
+                                                            </div>
+                                                            <pre style={{ marginTop: 8, maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                                                {importRawText.slice(0, 5000)}
+                                                            </pre>
+                                                        </details>
+                                                    )}
+
+                                                    {importParseResult && (
+                                                        <details>
+                                                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug parseru</summary>
+                                                            <div style={{ marginTop: 8, maxHeight: 280, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12 }}>
+                                                                {importParseResult.lineDebug.map((dbg) => (
+                                                                    <div key={`dbg-${dbg.index}-${dbg.line.slice(0, 12)}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
+                                                                        <div><strong>Řádek {dbg.index}:</strong> {dbg.line}</div>
+                                                                        <div>Datum: {dbg.detectedDate || '—'} | Pokoj: {dbg.detectedRoom || '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
+                                                                        <div>Poznámky: {dbg.notes.length ? dbg.notes.join(', ') : '—'}</div>
+                                                                        <div>Warning: {dbg.warning || '—'}</div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </details>
                                                     )}
 
                                                     <div style={{ maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
