@@ -156,6 +156,58 @@ function isMostlyGuestLine(line) {
     return /[A-Za-zÀ-ž]/.test(trimmed)
 }
 
+function extractNameCandidates(blockLines) {
+    const candidates = []
+
+    function pushCandidate(value) {
+        const normalized = normalizeForMatch(value)
+        if (!normalized || candidates.some((item) => normalizeForMatch(item) === normalized)) return
+        candidates.push(value)
+    }
+
+    blockLines.forEach((line) => {
+        const trimmed = line.trim()
+        if (!trimmed) return
+        if (detectRoomToken(trimmed)) return
+        if (isCapacityLine(trimmed)) return
+        if (isNoteLine(trimmed)) return
+        if (isAlfredWindow(trimmed)) return
+
+        const cleaned = trimmed
+            .replace(/\b\d{1,2}\.\s*\d{1,2}\.?\b/g, ' ')
+            .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g, ' ')
+            .replace(/\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/g, ' ')
+            .replace(/[()]/g, ' ')
+            .replace(/\b(?:recepce|box|alfred|studio)\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+
+        if (!cleaned || !/[A-Za-zÀ-ž]/.test(cleaned)) return
+
+        const pairMatches = [...cleaned.matchAll(/\b([A-ZÀ-Ž][A-Za-zÀ-ž'’-]+\s+[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+)\b/g)]
+            .map((match) => match[1].trim())
+        if (pairMatches.length > 0) {
+            pairMatches.forEach(pushCandidate)
+            return
+        }
+
+        const tokens = cleaned
+            .split(' ')
+            .map((token) => token.trim())
+            .filter(Boolean)
+
+        for (let i = 0; i + 1 < tokens.length; i++) {
+            const first = tokens[i]
+            const second = tokens[i + 1]
+            if (/^[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+$/.test(first) && /^[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+$/.test(second)) {
+                pushCandidate(`${first} ${second}`)
+            }
+        }
+    })
+
+    return candidates
+}
+
 function toMinutes(hhmm) {
     const [h, m] = hhmm.split(':').map(Number)
     return h * 60 + m
@@ -335,9 +387,20 @@ function parseRawPrevio(rawText) {
 
             const noteKeywordMatches = keywordNotes(normalizeForMatch(rawBlock))
             const allGeneralNotes = Array.from(new Set([...generalNotes, ...noteKeywordMatches]))
-            const guestLines = blockLines.filter((line) => isMostlyGuestLine(line))
-            const departureGuestLabel = guestLines[0]
-            const arrivalGuestLabel = guestLines[guestLines.length - 1] || departureGuestLabel
+            const guestCandidates = extractNameCandidates(blockLines)
+            let departureGuestName = undefined
+            let arrivalGuestName = undefined
+            if (departureTime && arrivalTime) {
+                departureGuestName = guestCandidates[0]
+                arrivalGuestName = guestCandidates[1] || guestCandidates[0]
+            } else if (departureTime) {
+                departureGuestName = guestCandidates[0]
+            } else if (arrivalTime) {
+                arrivalGuestName = guestCandidates[0]
+            } else {
+                departureGuestName = guestCandidates[0]
+                arrivalGuestName = guestCandidates[1]
+            }
             const guestCount = extractGuestCount(rawBlock)
             const box = arrivalTime ? extractBox(arrivalNotes.join(' ') || rawBlock) : undefined
             const contextDates = extractDateTokens(afterMarker.join(' '))
@@ -363,9 +426,9 @@ function parseRawPrevio(rawText) {
                 roomNumber: room,
                 departureTime,
                 arrivalTime,
-                guestLabel: arrivalGuestLabel || departureGuestLabel,
-                departureGuestLabel,
-                arrivalGuestLabel,
+                departureGuestName,
+                arrivalGuestName,
+                guestLabel: arrivalGuestName || departureGuestName,
                 guestCount,
                 box,
                 departureNotes,
@@ -438,15 +501,17 @@ function printRows(rows) {
         return a.roomNumber.localeCompare(b.roomNumber)
     })
 
-    const header = 'date       | room | dep   | arr   | departureNotes                          | arrivalNotes'
+    const header = 'date       | room | dep   | arr   | depGuest            | arrGuest            | departureNotes                          | arrivalNotes'
     console.log(header)
     console.log('-'.repeat(header.length))
     sorted.forEach((row) => {
         const dep = (row.departureTime || '').padEnd(5, ' ')
         const arr = (row.arrivalTime || '').padEnd(5, ' ')
+        const depGuest = (row.departureGuestName || '').slice(0, 18).padEnd(18, ' ')
+        const arrGuest = (row.arrivalGuestName || '').slice(0, 18).padEnd(18, ' ')
         const dNotes = row.departureNotes.join(' ; ').slice(0, 40).padEnd(40, ' ')
         const aNotes = row.arrivalNotes.join(' ; ').slice(0, 40)
-        console.log(`${row.dateIso} | ${row.roomNumber} | ${dep} | ${arr} | ${dNotes} | ${aNotes}`)
+        console.log(`${row.dateIso} | ${row.roomNumber} | ${dep} | ${arr} | ${depGuest} | ${arrGuest} | ${dNotes} | ${aNotes}`)
     })
 }
 
@@ -471,6 +536,12 @@ function expectEqual(failures, label, actual, expected) {
 function expectNoteContains(failures, label, notes, token) {
     if (!noteContains(notes, token)) {
         failures.push(`${label}: missing note containing "${token}" in [${notes.join(' | ')}]`)
+    }
+}
+
+function expectGuestContains(failures, label, guestName, expectedToken) {
+    if (!guestName || !normalizeForMatch(guestName).includes(normalizeForMatch(expectedToken))) {
+        failures.push(`${label}: expected guest containing "${expectedToken}", got "${guestName || ''}"`)
     }
 }
 
@@ -526,9 +597,7 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, '16.6/103 departure', r16103.departureTime, '')
         expectEqual(failures, '16.6/103 arrival', r16103.arrivalTime, '14:00')
         expectNoteContains(failures, '16.6/103 arrNotes', r16103.arrivalNotes, 'BOX 5')
-        if (r16103.arrivalGuestLabel && !normalizeForMatch(r16103.arrivalGuestLabel).includes('anna trankell')) {
-            failures.push(`16.6/103 arrival guest expected Anna Trankell, got "${r16103.arrivalGuestLabel}"`)
-        }
+        expectGuestContains(failures, '16.6/103 arrival guest', r16103.arrivalGuestName, 'Anna Trankell')
     }
 
     const r16302 = assertRow(rows, failures, '2026-06-16', '302')
@@ -538,6 +607,8 @@ function runGoldenChecks(parsed) {
         expectNoteContains(failures, '16.6/302 depNotes BOX 4', r16302.departureNotes, 'BOX 4')
         expectNoteContains(failures, '16.6/302 depNotes postylka', r16302.departureNotes, 'dětská postýlka')
         expectNoteContains(failures, '16.6/302 arrNotes', r16302.arrivalNotes, 'BOX 9')
+        expectGuestContains(failures, '16.6/302 departure guest', r16302.departureGuestName, 'Daniela Roznakova')
+        expectGuestContains(failures, '16.6/302 arrival guest', r16302.arrivalGuestName, 'Nicole Bermingham')
         if (noteContains(r16302.arrivalNotes, 'dětská postýlka')) {
             failures.push('16.6/302: dětská postýlka nesmí být v arrivalNotes')
         }
@@ -565,12 +636,8 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, '17.6/103 arrival', r17103.arrivalTime, '21:30')
         expectNoteContains(failures, '17.6/103 depNotes', r17103.departureNotes, 'BOX 5')
         expectNoteContains(failures, '17.6/103 arrNotes', r17103.arrivalNotes, 'BOX 8')
-        if (r17103.departureGuestLabel && !normalizeForMatch(r17103.departureGuestLabel).includes('anna trankell')) {
-            failures.push(`17.6/103 departure guest expected Anna Trankell, got "${r17103.departureGuestLabel}"`)
-        }
-        if (r17103.arrivalGuestLabel && !normalizeForMatch(r17103.arrivalGuestLabel).includes('ole jorling')) {
-            failures.push(`17.6/103 arrival guest expected Ole Jorling, got "${r17103.arrivalGuestLabel}"`)
-        }
+        expectGuestContains(failures, '17.6/103 departure guest', r17103.departureGuestName, 'Anna Trankell')
+        expectGuestContains(failures, '17.6/103 arrival guest', r17103.arrivalGuestName, 'Ole Jorling')
     }
 
     const r17204 = assertRow(rows, failures, '2026-06-17', '204')
@@ -610,6 +677,8 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, '18.6/302 arrival', r18302.arrivalTime, '14:30')
         expectNoteContains(failures, '18.6/302 depNotes', r18302.departureNotes, 'BOX 9')
         expectNoteContains(failures, '18.6/302 arrNotes', r18302.arrivalNotes, 'BOX 2')
+        expectGuestContains(failures, '18.6/302 departure guest', r18302.departureGuestName, 'Nicole Bermingham')
+        expectGuestContains(failures, '18.6/302 arrival guest', r18302.arrivalGuestName, 'Olesia Bazarova')
     }
 
     return failures

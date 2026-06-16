@@ -402,7 +402,12 @@ export default function DashboardToday({
                                     {room.departure ? (
                                         <>
                                             <div className="plan-time">{room.departure.time}</div>
-                                            <div className="plan-meta">{room.departure.guestLabel || 'Host'}{room.departure.guestCount ? ` • ${room.departure.guestCount}p` : ''}</div>
+                                            {(room.departure.guestLabel || room.departure.guestCount) && (
+                                                <div className="plan-meta" style={{ color: '#64748b' }}>
+                                                    {room.departure.guestLabel || ''}
+                                                    {room.departure.guestCount ? `${room.departure.guestLabel ? ' • ' : ''}${room.departure.guestCount}p` : ''}
+                                                </div>
+                                            )}
                                             {room.departure.notes && room.departure.notes.length > 0 && (
                                                 <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                                     {room.departure.notes.map((n) => <div key={n} className="note-chip">{n}</div>)}
@@ -418,7 +423,12 @@ export default function DashboardToday({
                                     {room.arrival ? (
                                         <>
                                             <div className="plan-time">{room.arrival.time}</div>
-                                            <div className="plan-meta">{room.arrival.guestLabel || 'Host'}{room.arrival.guestCount ? ` • ${room.arrival.guestCount}p` : ''}</div>
+                                            {(room.arrival.guestLabel || room.arrival.guestCount) && (
+                                                <div className="plan-meta" style={{ color: '#64748b' }}>
+                                                    {room.arrival.guestLabel || ''}
+                                                    {room.arrival.guestCount ? `${room.arrival.guestLabel ? ' • ' : ''}${room.arrival.guestCount}p` : ''}
+                                                </div>
+                                            )}
                                             <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                                 {room.arrival.box && <div className="note-chip">{room.arrival.box}</div>}
                                                 {room.arrival.notes && room.arrival.notes.map(n => <div key={n} className="note-chip">{n}</div>)}

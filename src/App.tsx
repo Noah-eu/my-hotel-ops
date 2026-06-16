@@ -456,13 +456,13 @@ export default function App() {
                         situation: mergedSituation,
                         departure: hasDeparture ? {
                             time: parsed.departureTime as string,
-                            guestLabel: parsed.guestLabel,
+                            guestLabel: parsed.departureGuestName || parsed.guestLabel || row.departure?.guestLabel,
                             guestCount: parsed.guestCount,
                             notes: parsed.departureNotes.length ? parsed.departureNotes : row.departure?.notes
                         } : undefined,
                         arrival: hasArrival ? {
                             time: parsed.arrivalTime as string,
-                            guestLabel: parsed.guestLabel,
+                            guestLabel: parsed.arrivalGuestName || parsed.guestLabel || row.arrival?.guestLabel,
                             guestCount: parsed.guestCount,
                             box: parsed.box || row.box,
                             notes: parsed.arrivalNotes.length ? parsed.arrivalNotes : row.arrival?.notes
@@ -1338,6 +1338,8 @@ export default function App() {
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Odjezd pozn.</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Příjezd pozn.</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Obecné pozn.</th>
@@ -1350,6 +1352,8 @@ export default function App() {
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotesLabel || '—'}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotesLabel || '—'}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.generalNotesLabel || '—'}</td>

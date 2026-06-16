@@ -35,6 +35,8 @@ export type PrevioParsedRow = {
     roomNumber: string
     departureTime?: string
     arrivalTime?: string
+    departureGuestName?: string
+    arrivalGuestName?: string
     guestLabel?: string
     guestCount?: number
     box?: string
@@ -101,6 +103,8 @@ export type PrevioPdfExtract = {
 export type ParsedTurnover = {
     departureTime?: string
     arrivalTime?: string
+    departureGuestName?: string
+    arrivalGuestName?: string
     guestLabel?: string
     guestCount?: number
     box?: string
@@ -124,6 +128,8 @@ export type PrevioImportPreview = {
         roomNumber: string
         departureTime?: string
         arrivalTime?: string
+        departureGuestName?: string
+        arrivalGuestName?: string
         departureNotesLabel: string
         arrivalNotesLabel: string
         generalNotesLabel: string
@@ -506,20 +512,56 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
         return Array.from(tokens)
     }
 
-    function extractGuestLabel(blockLines: string[], markerIndex: number, side: 'departure' | 'arrival') {
-        const ordered = side === 'departure' ? [...blockLines].reverse() : [...blockLines]
-        for (const line of ordered) {
-            const trimmed = line.trim()
-            if (!trimmed) continue
-            if (detectRoomMarker(trimmed)) continue
-            if (isCapacityLine(trimmed)) continue
-            if (isDateSpanLine(trimmed)) continue
-            if (isNoteLine(trimmed)) continue
-            if (/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/.test(trimmed)) continue
-            if (!/[A-Za-zÀ-ž]/.test(trimmed)) continue
-            return trimmed
+    function extractNameCandidates(blockLines: string[]) {
+        const candidates: string[] = []
+
+        function pushCandidate(value: string) {
+            const normalized = normalizeForMatch(value)
+            if (!normalized || candidates.some((item) => normalizeForMatch(item) === normalized)) return
+            candidates.push(value)
         }
-        return undefined
+
+        blockLines.forEach((line) => {
+            const trimmed = line.trim()
+            if (!trimmed) return
+            if (detectRoomToken(trimmed)) return
+            if (isCapacityLine(trimmed)) return
+            if (isNoteLine(trimmed)) return
+            if (isAlfredWindow(trimmed)) return
+
+            const cleaned = trimmed
+                .replace(/\b\d{1,2}\.\s*\d{1,2}\.?\b/g, ' ')
+                .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g, ' ')
+                .replace(/\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/g, ' ')
+                .replace(/[()]/g, ' ')
+                .replace(/\b(?:recepce|box|alfred|studio)\b/gi, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+
+            if (!cleaned || !/[A-Za-zÀ-ž]/.test(cleaned)) return
+
+            const pairMatches = [...cleaned.matchAll(/\b([A-ZÀ-Ž][A-Za-zÀ-ž'’-]+\s+[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+)\b/g)]
+                .map((match) => match[1].trim())
+            if (pairMatches.length > 0) {
+                pairMatches.forEach(pushCandidate)
+                return
+            }
+
+            const tokens = cleaned
+                .split(' ')
+                .map((token) => token.trim())
+                .filter(Boolean)
+
+            for (let i = 0; i + 1 < tokens.length; i++) {
+                const first = tokens[i]
+                const second = tokens[i + 1]
+                if (/^[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+$/.test(first) && /^[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+$/.test(second)) {
+                    pushCandidate(`${first} ${second}`)
+                }
+            }
+        })
+
+        return candidates
     }
 
     const pages = rawText
@@ -607,9 +649,23 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
 
             const noteKeywordMatches = keywordNotes(normalizeForMatch(rawBlock))
             const allGeneralNotes = Array.from(new Set([...generalNotes, ...noteKeywordMatches]))
-            const guestLines = blockLines.filter((line) => isMostlyGuestLine(line))
-            const departureGuestLabel = guestLines[0]
-            const arrivalGuestLabel = guestLines[guestLines.length - 1] || departureGuestLabel
+            const guestCandidates = extractNameCandidates(blockLines)
+            let departureGuestName: string | undefined
+            let arrivalGuestName: string | undefined
+            if (departureTime && arrivalTime) {
+                departureGuestName = guestCandidates[0]
+                arrivalGuestName = guestCandidates[1] || guestCandidates[0]
+            } else if (departureTime) {
+                departureGuestName = guestCandidates[0]
+            } else if (arrivalTime) {
+                arrivalGuestName = guestCandidates[0]
+            } else {
+                departureGuestName = guestCandidates[0]
+                arrivalGuestName = guestCandidates[1]
+            }
+
+            const departureGuestLabel = departureGuestName
+            const arrivalGuestLabel = arrivalGuestName
             const guestCount = extractGuestCount(rawBlock)
             const box = arrivalTime ? extractBox(arrivalNotes.join(' ') || rawBlock) : undefined
             const contextDates = extractDateTokens(afterMarker.join(' '))
@@ -638,6 +694,8 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
                 roomNumber: roomInfo.room,
                 departureTime,
                 arrivalTime,
+                departureGuestName,
+                arrivalGuestName,
                 guestLabel: arrivalGuestLabel || departureGuestLabel,
                 guestCount,
                 box,
@@ -774,6 +832,8 @@ export function buildPrevioImportPreview(
 
         const normalizedRoom = normalizeRoomKey(row.roomNumber)
         const prev = byTab[tab].get(normalizedRoom) || {
+            departureGuestName: undefined,
+            arrivalGuestName: undefined,
             departureNotes: [],
             arrivalNotes: [],
             generalNotes: []
@@ -781,6 +841,8 @@ export function buildPrevioImportPreview(
         byTab[tab].set(normalizedRoom, {
             departureTime: row.departureTime || prev.departureTime,
             arrivalTime: row.arrivalTime || prev.arrivalTime,
+            departureGuestName: row.departureGuestName || prev.departureGuestName,
+            arrivalGuestName: row.arrivalGuestName || prev.arrivalGuestName,
             guestLabel: row.guestLabel || prev.guestLabel,
             guestCount: row.guestCount ?? prev.guestCount,
             box: row.box || prev.box,
@@ -811,6 +873,8 @@ export function buildPrevioImportPreview(
                     roomNumber,
                     departureTime: row.departureTime,
                     arrivalTime: row.arrivalTime,
+                    departureGuestName: row.departureGuestName,
+                    arrivalGuestName: row.arrivalGuestName,
                     departureNotesLabel: row.departureNotes.join(', '),
                     arrivalNotesLabel: row.arrivalNotes.join(', '),
                     generalNotesLabel: row.generalNotes.join(', ')
