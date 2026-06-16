@@ -115,6 +115,28 @@ function roleLabel(role: UserRole) {
     return 'Údržba'
 }
 
+function normalizeTaskTitleForCleanup(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function shouldCleanupTestTask(title: string) {
+    const normalized = normalizeTaskTitleForCleanup(title)
+    if (!normalized) return false
+
+    const exactMatches = new Set([
+        'najit zapomenutou vec',
+        'pripravit gauc',
+        'extra rucniky'
+    ])
+
+    return exactMatches.has(normalized) || normalized.includes('test')
+}
+
 export default function App() {
     function normalizeCatalogRoomNumber(value: string) {
         const trimmed = value.trim()
@@ -185,6 +207,8 @@ export default function App() {
     const [importRawText, setImportRawText] = useState('')
     const [importParseResult, setImportParseResult] = useState<PrevioParseResult | null>(null)
     const [importedTabDates, setImportedTabDates] = useState<Partial<Record<OpsTab, string>>>({})
+    const [cleanupConfirm, setCleanupConfirm] = useState(false)
+    const [cleanupResult, setCleanupResult] = useState<string | null>(null)
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
 
@@ -657,6 +681,31 @@ export default function App() {
         }
 
         setTasks((prev) => [newTask, ...prev])
+    }
+
+    function handleCleanupTestTasks() {
+        const matchingIds = tasks
+            .filter((task) => task.status !== 'cancelled' && shouldCleanupTestTask(task.title))
+            .map((task) => task.id)
+
+        if (matchingIds.length === 0) {
+            setCleanupResult('Nenalezeny žádné testovací úkoly k vyčištění.')
+            setCleanupConfirm(false)
+            return
+        }
+
+        if (runtimeMode === 'online') {
+            matchingIds.forEach((taskId) => activeStore.updateTaskStatus(taskId, 'cancelled'))
+        }
+
+        setTasks((prev) => prev.map((task) => (
+            matchingIds.includes(task.id)
+                ? { ...task, status: 'cancelled' }
+                : task
+        )))
+
+        setCleanupResult(`Vyčištěno testovacích úkolů: ${matchingIds.length}`)
+        setCleanupConfirm(false)
     }
 
     function handleMaintenanceTaskAction(taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') {
@@ -1246,6 +1295,7 @@ export default function App() {
                                     staff={staff}
                                     onSetAvailability={setStaffAvailability}
                                     currentUserId={userId}
+                                    currentUserName={currentUser?.name}
                                 />
                             )}
                             {view === 'admin' && (
@@ -1266,6 +1316,19 @@ export default function App() {
                                                 {importPdfStatus === 'loading' && <div className="room-meta">Načítám PDF...</div>}
                                                 {importPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF načteno</div>}
                                                 {importPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{importPdfError || 'PDF se nepodařilo načíst.'}</div>}
+                                            </div>
+
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                                                <div style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Údržba úkolů</div>
+                                                {!cleanupConfirm ? (
+                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setCleanupConfirm(true)}>Vyčistit testovací úkoly</button>
+                                                ) : (
+                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                        <button className="btn danger" onClick={handleCleanupTestTasks}>Opravdu vyčistit?</button>
+                                                        <button className="btn" onClick={() => setCleanupConfirm(false)}>Zrušit</button>
+                                                    </div>
+                                                )}
+                                                {cleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{cleanupResult}</div>}
                                             </div>
 
                                             {importPreview && (

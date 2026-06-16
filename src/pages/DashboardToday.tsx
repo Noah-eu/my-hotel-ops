@@ -56,11 +56,91 @@ function arrivalPrepChipsFromNotes(notes?: string[]) {
     return chips
 }
 
+function canonicalBoxValue(value?: string) {
+    if (!value) return undefined
+    const match = value.match(/\bbox\s*([a-z0-9-]+)/i)
+    if (!match) return undefined
+    return `BOX ${match[1].toUpperCase()}`
+}
+
+function normalizeChipText(value: string) {
+    return value
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/\s*[,;]\s*$/g, '')
+}
+
+function stripBoxFromNote(note: string, canonicalBox?: string) {
+    if (!canonicalBox) return normalizeChipText(note)
+
+    const boxTokenMatch = canonicalBox.match(/BOX\s+([A-Z0-9-]+)/i)
+    if (!boxTokenMatch) return normalizeChipText(note)
+    const boxToken = boxTokenMatch[1]
+
+    const parts = note.split(/[,;]+/).map((part) => part.trim()).filter(Boolean)
+    const cleanedParts = parts
+        .map((part) => {
+            const withoutRecepce = part.replace(/^\s*recepce\s*:\s*/i, '').trim()
+            const removedSameBox = withoutRecepce
+                .replace(new RegExp(`\\bbox\\s*${boxToken}\\b`, 'ig'), ' ')
+                .replace(/^[\s:,-]+/, '')
+                .replace(/[\s:,-]+$/, '')
+                .replace(/\s+/g, ' ')
+                .trim()
+
+            if (!removedSameBox) return ''
+            if (/^box$/i.test(removedSameBox)) return ''
+            return removedSameBox
+        })
+        .map((part) => normalizeChipText(part))
+        .filter(Boolean)
+
+    if (cleanedParts.length === 0) return ''
+    return cleanedParts.join(', ')
+}
+
+function displayNotesWithoutDuplicateBox(box?: string, notes?: string[]) {
+    const canonicalBox = canonicalBoxValue(box)
+    const renderedNotes = (notes || [])
+        .map((note) => stripBoxFromNote(note, canonicalBox))
+        .map((note) => normalizeChipText(note))
+        .filter(Boolean)
+        .filter((note, index, all) => all.findIndex((item) => normalizeForKeywordMatch(item) === normalizeForKeywordMatch(note)) === index)
+
+    return {
+        box: canonicalBox,
+        notes: renderedNotes
+    }
+}
+
 function canSeeTask(role: UserRole, task: Task) {
     if (role === 'admin') return true
     if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
     if (role === 'cleaner') return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
     if (role === 'maintenance') return task.assignedToRole === 'maintenance'
+    return false
+}
+
+function normalizeIdentity(value?: string) {
+    if (!value) return ''
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function canDeleteTask(role: UserRole, currentUserId: string, currentUserName: string | undefined, task: Task) {
+    if (role === 'admin') return true
+    if (role === 'lead') return task.category === 'cleaning'
+    if (role === 'cleaner') {
+        if (!task.createdBy) return false
+        const creator = normalizeIdentity(task.createdBy)
+        const userId = normalizeIdentity(currentUserId)
+        const userName = normalizeIdentity(currentUserName)
+        return creator === userId || (!!userName && creator === userName)
+    }
     return false
 }
 
@@ -110,7 +190,8 @@ export default function DashboardToday({
     dayLabel,
     staff,
     onSetAvailability,
-    currentUserId
+    currentUserId,
+    currentUserName
 }: {
     rooms: RoomPlan[]
     tasks: Task[]
@@ -122,6 +203,7 @@ export default function DashboardToday({
     staff: { id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[]
     onSetAvailability: (id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') => void
     currentUserId: string
+    currentUserName?: string
 }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
     const [estimatingRoom, setEstimatingRoom] = useState<string | null>(null)
@@ -380,6 +462,11 @@ export default function DashboardToday({
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
                     const otherRoomTasks = activeRoomTasks.filter((t) => !arrivalPreparationTitles.has(t.title))
                     const arrivalPrepChips = arrivalPrepChipsFromNotes(room.arrival?.notes)
+                    const arrivalDisplay = displayNotesWithoutDuplicateBox(room.arrival?.box, room.arrival?.notes)
+                    const departureDisplay = displayNotesWithoutDuplicateBox(undefined, room.departure?.notes)
+                    const arrivalPrepChipsDeduped = arrivalPrepChips.filter((chip) => (
+                        !arrivalDisplay.notes.some((note) => normalizeForKeywordMatch(note) === normalizeForKeywordMatch(chip))
+                    ))
 
                     return (
                         <div key={room.id} className={`daily-row-wrap ${statusClass(room.status)} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
@@ -408,9 +495,9 @@ export default function DashboardToday({
                                                     {room.departure.guestCount ? `${room.departure.guestLabel ? ' • ' : ''}${room.departure.guestCount}p` : ''}
                                                 </div>
                                             )}
-                                            {room.departure.notes && room.departure.notes.length > 0 && (
+                                            {departureDisplay.notes.length > 0 && (
                                                 <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                                    {room.departure.notes.map((n) => <div key={n} className="note-chip">{n}</div>)}
+                                                    {departureDisplay.notes.map((n) => <div key={n} className="note-chip">{n}</div>)}
                                                 </div>
                                             )}
                                         </>
@@ -430,9 +517,9 @@ export default function DashboardToday({
                                                 </div>
                                             )}
                                             <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                                {room.arrival.box && <div className="note-chip">{room.arrival.box}</div>}
-                                                {room.arrival.notes && room.arrival.notes.map(n => <div key={n} className="note-chip">{n}</div>)}
-                                                {arrivalPrepChips.map((chip) => (
+                                                {arrivalDisplay.box && <div className="note-chip">{arrivalDisplay.box}</div>}
+                                                {arrivalDisplay.notes.map(n => <div key={n} className="note-chip">{n}</div>)}
+                                                {arrivalPrepChipsDeduped.map((chip) => (
                                                     <div key={`prep-${room.id}-${chip}`} className="note-chip" style={{ border: '1px solid #bfdbfe', background: '#eff6ff' }}>
                                                         {chip}
                                                     </div>
@@ -623,6 +710,35 @@ export default function DashboardToday({
                                             >
                                                 Vytvořit úkol
                                             </button>
+                                        </div>
+                                    )}
+
+                                    {activeRoomTasks.length > 0 && (
+                                        <div style={{ width: '100%', marginTop: 8, padding: 10, border: '1px solid rgba(148,163,184,0.35)', borderRadius: 10, background: 'rgba(255,255,255,0.9)' }}>
+                                            <div style={{ fontWeight: 800, marginBottom: 8 }}>Aktivní úkoly pokoje</div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                                {activeRoomTasks.map((task) => {
+                                                    const canDelete = canDeleteTask(role, currentUserId, currentUserName, task)
+                                                    return (
+                                                        <div key={`active-task-${room.id}-${task.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 8px' }}>
+                                                            <div>
+                                                                <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                                                <div style={{ color: '#475569', fontSize: 12 }}>{roleLabel(task.assignedToRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'}</div>
+                                                            </div>
+                                                            {canDelete && (
+                                                                <button
+                                                                    className="chip"
+                                                                    style={{ borderColor: '#fecaca', color: '#b91c1c', background: '#fff1f2' }}
+                                                                    onClick={() => onUpdateTaskStatus(task.id, 'cancelled')}
+                                                                    title="Smazat úkol"
+                                                                >
+                                                                    Smazat
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
                                         </div>
                                     )}
                                 </div>
