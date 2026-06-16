@@ -64,6 +64,8 @@ export const firebaseEnvDiagnostics = {
     missingEnvVars: missingFirebaseEnvVars
 }
 
+export const allowAnonymousAuth = import.meta.env.VITE_ALLOW_ANONYMOUS_AUTH === 'true'
+
 devLog('Env validation result', firebaseEnvDiagnostics)
 
 export const firebaseApp = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
@@ -128,6 +130,9 @@ export async function ensureAuthenticatedUser(options?: { allowAnonymous?: boole
 
 export async function ensureAnonymousAuth(): Promise<User | null> {
     if (!firebaseAuth) return null
+    if (!allowAnonymousAuth) {
+        throw Object.assign(new Error('Anonymous auth is disabled'), { code: 'auth/anonymous-disabled' })
+    }
     if (firebaseAuth.currentUser) {
         await firebaseAuth.currentUser.getIdToken()
         return firebaseAuth.currentUser

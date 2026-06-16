@@ -25,8 +25,10 @@ type AppDiagnostics = {
     missingEnvVars: string[]
     intendedMode: 'demo' | 'online'
     activeMode: 'demo' | 'online' | 'fallback'
-    authStatus: 'not_started' | 'signed_out' | 'signing_in' | 'signed_in_password' | 'error'
+    authStatus: 'not_started' | 'signed_out' | 'signing_in' | 'signed_in_email' | 'signed_in_anonymous' | 'error'
     authUid?: string
+    isAnonymous?: boolean
+    profileLoaded?: boolean
     firestoreStatus: 'not_started' | 'seeding' | 'listening' | 'connected' | 'permission_denied' | 'error'
     supplySyncCount?: number
     hotelId: string
@@ -125,6 +127,8 @@ export default function App() {
         intendedMode: appMode,
         activeMode: appMode,
         authStatus: appMode === 'online' ? 'not_started' : 'not_started',
+        isAnonymous: false,
+        profileLoaded: false,
         firestoreStatus: 'not_started',
         hotelId: ONLINE_HOTEL_ID
     })
@@ -238,6 +242,10 @@ export default function App() {
         setAuthUser(null)
         setOnlineLoading(false)
         await signOutFirebaseUser()
+    }
+
+    async function handleSignOutAnonymous() {
+        await handleLogout()
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -598,6 +606,8 @@ export default function App() {
                 ...prev,
                 activeMode: 'demo',
                 authStatus: 'not_started',
+                    isAnonymous: false,
+                    profileLoaded: false,
                 firestoreStatus: 'not_started',
                 lastErrorCode: undefined,
                 lastErrorMessage: undefined
@@ -620,6 +630,8 @@ export default function App() {
                     activeMode: 'online',
                     authStatus: 'signed_out',
                     authUid: undefined,
+                    isAnonymous: false,
+                    profileLoaded: false,
                     firestoreStatus: 'not_started'
                 }))
                 return
@@ -628,8 +640,10 @@ export default function App() {
             setDiagnostics((prev) => ({
                 ...prev,
                 activeMode: 'online',
-                authStatus: user.isAnonymous ? 'error' : 'signed_in_password',
-                authUid: user.uid
+                authStatus: user.isAnonymous ? 'signed_in_anonymous' : 'signed_in_email',
+                authUid: user.uid,
+                isAnonymous: user.isAnonymous,
+                profileLoaded: false
             }))
         })
 
@@ -653,13 +667,19 @@ export default function App() {
         }
 
         if (authUser.isAnonymous) {
-            setOnlineError('Online režim vyžaduje přihlášení e-mailem a heslem.')
+            setOnlineProfile(null)
+            setMissingProfileUid(null)
+            setOnlineError(null)
+            setProfileLoading(false)
             setOnlineLoading(false)
             setDiagnostics((prev) => ({
                 ...prev,
-                authStatus: 'error',
+                authStatus: 'signed_in_anonymous',
+                isAnonymous: true,
+                profileLoaded: false,
+                firestoreStatus: 'not_started',
                 lastErrorCode: 'auth/requires-email-login',
-                lastErrorMessage: 'Anonymous přihlášení není pro online provoz podporované.'
+                lastErrorMessage: 'Anonymní vývojové přihlášení není pro ostrý režim povoleno.'
             }))
             return
         }
@@ -669,7 +689,9 @@ export default function App() {
         setOnlineError(null)
         setDiagnostics((prev) => ({
             ...prev,
-            authStatus: 'signed_in_password',
+            authStatus: 'signed_in_email',
+            isAnonymous: false,
+            profileLoaded: false,
             firestoreStatus: 'seeding',
             lastErrorCode: undefined,
             lastErrorMessage: undefined
@@ -685,6 +707,7 @@ export default function App() {
                     setOnlineLoading(false)
                     setDiagnostics((prev) => ({
                         ...prev,
+                        profileLoaded: false,
                         firestoreStatus: 'error',
                         lastErrorCode: 'profile/not-found',
                         lastErrorMessage: 'Uživatel není přiřazený k hotelu.'
@@ -695,6 +718,10 @@ export default function App() {
                 setMissingProfileUid(null)
                 setOnlineProfile(profile)
                 setUserId(profile.id)
+                setDiagnostics((prev) => ({
+                    ...prev,
+                    profileLoaded: true
+                }))
                 if (profile.role === 'maintenance') {
                     setView('maintenance')
                 }
@@ -802,6 +829,8 @@ export default function App() {
                                 <div><strong>Firebase configured:</strong> {diagnostics.firebaseConfigured ? 'ano' : 'ne'}</div>
                                 <div><strong>Missing env vars:</strong> {diagnostics.missingEnvVars.length ? diagnostics.missingEnvVars.join(', ') : 'žádné'}</div>
                                 <div><strong>Auth status:</strong> {diagnostics.authStatus}{diagnostics.authUid ? ` (${diagnostics.authUid})` : ''}</div>
+                                <div><strong>isAnonymous:</strong> {diagnostics.isAnonymous ? 'ano' : 'ne'}</div>
+                                <div><strong>profileLoaded:</strong> {diagnostics.profileLoaded ? 'ano' : 'ne'}</div>
                                 <div><strong>Firestore status:</strong> {diagnostics.firestoreStatus}</div>
                                 <div><strong>Supply sync count:</strong> {typeof diagnostics.supplySyncCount === 'number' ? diagnostics.supplySyncCount : '—'}</div>
                                 <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
@@ -820,6 +849,8 @@ export default function App() {
                                 <>
                                     <strong>{onlineProfile.name}</strong> • {roleLabel(onlineProfile.role)}
                                 </>
+                            ) : authUser?.isAnonymous ? (
+                                <>Anonymní přihlášení</>
                             ) : authUser ? (
                                 <>Přihlášený uživatel: {authUser.email || authUser.uid}</>
                             ) : (
@@ -845,7 +876,14 @@ export default function App() {
             )}
 
             <div style={{ padding: 12 }}>
-                {runtimeMode === 'online' && !authUser && (
+                {runtimeMode === 'online' && authUser?.isAnonymous && (
+                    <div className="section" style={{ maxWidth: 420, margin: '0 auto', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 12, padding: 12 }}>
+                        <div style={{ fontSize: 13, color: '#9a3412', marginBottom: 8 }}>Anonymní vývojové přihlášení není pro ostrý režim povoleno.</div>
+                        <button className="btn" onClick={handleSignOutAnonymous}>Odhlásit anonymního uživatele</button>
+                    </div>
+                )}
+
+                {runtimeMode === 'online' && (!authUser || authUser.isAnonymous) && (
                     <div className="section" style={{ maxWidth: 420, margin: '0 auto' }}>
                         <h3>Přihlášení</h3>
                         <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 8, background: '#fff', padding: 12, borderRadius: 12, border: '1px solid #dbe7f3' }}>
@@ -873,7 +911,7 @@ export default function App() {
                     </div>
                 )}
 
-                {runtimeMode === 'online' && authUser && !onlineProfile && !profileLoading && (
+                {runtimeMode === 'online' && authUser && !authUser.isAnonymous && !onlineProfile && !profileLoading && (
                     <div className="section" style={{ maxWidth: 520, margin: '0 auto', background: '#fff', padding: 12, borderRadius: 12, border: '1px solid #fecaca' }}>
                         <h3 style={{ marginBottom: 6 }}>Uživatel není přiřazený k hotelu.</h3>
                         <div style={{ fontSize: 13, color: '#475569' }}>Vytvořte prosím dokument ve Firestore: hotels/{ONLINE_HOTEL_ID}/staff/{missingProfileUid || authUser.uid}</div>
@@ -881,93 +919,93 @@ export default function App() {
                     </div>
                 )}
 
-                {runtimeMode === 'online' && (onlineLoading || profileLoading) && authUser && (
+                {runtimeMode === 'online' && (onlineLoading || profileLoading) && authUser && !authUser.isAnonymous && (
                     <div style={{ padding: '4px 12px', fontSize: 12, color: '#475569' }}>
                         Načítám online data...
                     </div>
                 )}
 
-                {runtimeMode === 'online' && (!authUser || !onlineProfile) ? null : (
-                <>
-                <div className="tabs">
-                    <div className={`tab ${tab === 'Dnes' ? 'active' : ''}`} onClick={() => setTab('Dnes')}>Dnes</div>
-                    <div className={`tab ${tab === 'Zitra' ? 'active' : ''}`} onClick={() => setTab('Zitra')}>Zítra</div>
-                    <div className={`tab ${tab === 'Pozitri' ? 'active' : ''}`} onClick={() => setTab('Pozitri')}>Pozítří</div>
-                </div>
+                {runtimeMode === 'online' && (!authUser || authUser.isAnonymous || !onlineProfile) ? null : (
+                    <>
+                        <div className="tabs">
+                            <div className={`tab ${tab === 'Dnes' ? 'active' : ''}`} onClick={() => setTab('Dnes')}>Dnes</div>
+                            <div className={`tab ${tab === 'Zitra' ? 'active' : ''}`} onClick={() => setTab('Zitra')}>Zítra</div>
+                            <div className={`tab ${tab === 'Pozitri' ? 'active' : ''}`} onClick={() => setTab('Pozitri')}>Pozítří</div>
+                        </div>
 
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Dnes</button>
-                    <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
-                    <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
-                    <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
-                </div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                            <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Dnes</button>
+                            <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
+                            <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
+                            <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
+                        </div>
 
-                {(currentUser?.id === 'david' || currentUser?.role === 'admin') && (
-                    <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                        {!resetConfirm ? (
-                            <button className="btn danger" onClick={() => setResetConfirm(true)}>{runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}</button>
-                        ) : (
-                            <>
-                                <button className="btn danger" onClick={() => resetDemoData()}>Opravdu resetovat?</button>
-                                <button className="btn" onClick={() => setResetConfirm(false)}>Zrušit</button>
-                            </>
+                        {(currentUser?.id === 'david' || currentUser?.role === 'admin') && (
+                            <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                                {!resetConfirm ? (
+                                    <button className="btn danger" onClick={() => setResetConfirm(true)}>{runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}</button>
+                                ) : (
+                                    <>
+                                        <button className="btn danger" onClick={() => resetDemoData()}>Opravdu resetovat?</button>
+                                        <button className="btn" onClick={() => setResetConfirm(false)}>Zrušit</button>
+                                    </>
+                                )}
+                            </div>
                         )}
-                    </div>
-                )}
 
-                {tab !== 'Dnes' && (
-                    <div style={{ marginTop: 10, padding: 10, background: '#fff', borderRadius: 10 }}>Orientační plán – může se změnit novou rezervací.</div>
-                )}
+                        {tab !== 'Dnes' && (
+                            <div style={{ marginTop: 10, padding: 10, background: '#fff', borderRadius: 10 }}>Orientační plán – může se změnit novou rezervací.</div>
+                        )}
 
-                <div style={{ marginTop: 12 }}>
-                    {view === 'today' && (
-                        <DashboardToday
-                            rooms={roomsByDay[tab]}
-                            tasks={visibleTodayTasks}
-                            onAction={handleAction}
-                            onCreateTask={handleCreateTask}
-                            onUpdateTaskStatus={handleUpdateTaskStatus}
-                            role={(currentUser?.role || 'cleaner') as UserRole}
-                            dayLabel={dayLabel}
-                            staff={staff}
-                            onSetAvailability={setStaffAvailability}
-                            currentUserId={userId}
-                        />
-                    )}
-                    {view === 'admin' && (
-                        <AdminDashboard
-                            rooms={roomsByDay[tab]}
-                            tasks={tasks}
-                            supplyRequests={supplyRequests}
-                            staff={staff}
-                            canManageSupplies={currentUser?.role === 'admin'}
-                            onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
-                        />
-                    )}
-                    {view === 'maintenance' && (
-                        <MaintenanceView
-                            role={(currentUser?.role || 'cleaner') as UserRole}
-                            currentUserId={userId}
-                            maintenanceItems={maintenanceItems}
-                            tasks={maintenanceTasks}
-                            onCreateMaintenance={handleCreateMaintenanceItem}
-                            onUpdateMaintenance={handleUpdateMaintenanceItem}
-                            onMaterialNeeded={handleMaterialNeeded}
-                        />
-                    )}
-                    {view === 'supplies' && (
-                        <SuppliesView
-                            userName={currentUser?.name || 'Uživatel'}
-                            role={(currentUser?.role || 'cleaner') as UserRole}
-                            requests={visibleSupplies}
-                            customChips={customSupplyChips}
-                            onCreateRequest={handleCreateSupplyRequest}
-                            onSaveCustomChip={handleSaveCustomSupplyChip}
-                            onCancelRequest={handleCancelSupplyRequest}
-                        />
-                    )}
-                </div>
-                </>
+                        <div style={{ marginTop: 12 }}>
+                            {view === 'today' && (
+                                <DashboardToday
+                                    rooms={roomsByDay[tab]}
+                                    tasks={visibleTodayTasks}
+                                    onAction={handleAction}
+                                    onCreateTask={handleCreateTask}
+                                    onUpdateTaskStatus={handleUpdateTaskStatus}
+                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    dayLabel={dayLabel}
+                                    staff={staff}
+                                    onSetAvailability={setStaffAvailability}
+                                    currentUserId={userId}
+                                />
+                            )}
+                            {view === 'admin' && (
+                                <AdminDashboard
+                                    rooms={roomsByDay[tab]}
+                                    tasks={tasks}
+                                    supplyRequests={supplyRequests}
+                                    staff={staff}
+                                    canManageSupplies={currentUser?.role === 'admin'}
+                                    onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
+                                />
+                            )}
+                            {view === 'maintenance' && (
+                                <MaintenanceView
+                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    currentUserId={userId}
+                                    maintenanceItems={maintenanceItems}
+                                    tasks={maintenanceTasks}
+                                    onCreateMaintenance={handleCreateMaintenanceItem}
+                                    onUpdateMaintenance={handleUpdateMaintenanceItem}
+                                    onMaterialNeeded={handleMaterialNeeded}
+                                />
+                            )}
+                            {view === 'supplies' && (
+                                <SuppliesView
+                                    userName={currentUser?.name || 'Uživatel'}
+                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    requests={visibleSupplies}
+                                    customChips={customSupplyChips}
+                                    onCreateRequest={handleCreateSupplyRequest}
+                                    onSaveCustomChip={handleSaveCustomSupplyChip}
+                                    onCancelRequest={handleCancelSupplyRequest}
+                                />
+                            )}
+                        </div>
+                    </>
                 )}
             </div>
         </div>
