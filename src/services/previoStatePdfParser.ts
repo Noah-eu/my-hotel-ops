@@ -15,6 +15,8 @@ export type PrevioStateParsedRow = {
     roomNumber: string
     departureTime?: string
     arrivalTime?: string
+    departureGuestCount?: number
+    arrivalGuestCount?: number
     departureGuestName?: string
     arrivalGuestName?: string
     stayoverGuestName?: string
@@ -221,6 +223,26 @@ function detectTimes(blockText: string) {
     return detected
 }
 
+function detectTimedEntries(blockText: string) {
+    const entries: Array<{ time: string; guestCount?: number; index: number }> = []
+    const source = String(blockText || '')
+    const matches = source.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
+
+    for (const match of matches) {
+        const index = typeof match.index === 'number' ? match.index : 0
+        const prefix = source.slice(Math.max(0, index - 16), index)
+        const countMatch = prefix.match(/\((\d{1,2})\)\s*$/)
+
+        entries.push({
+            time: normalizeTime(`${match[1]}:${match[2]}`),
+            guestCount: countMatch ? Number(countMatch[1]) : undefined,
+            index
+        })
+    }
+
+    return entries
+}
+
 function chooseTimes(detectedTimes: string[], noteGroupsCount: number) {
     if (detectedTimes.length >= 2) {
         const ordered = [...detectedTimes].sort((a, b) => toMinutes(a) - toMinutes(b))
@@ -245,6 +267,75 @@ function chooseTimes(detectedTimes: string[], noteGroupsCount: number) {
     }
 
     return { departureTime: undefined, arrivalTime: undefined }
+}
+
+function chooseGuestCounts(
+    timedEntries: Array<{ time: string; guestCount?: number; index: number }>,
+    departureTime?: string,
+    arrivalTime?: string,
+    noteGroupsCount = 0
+) {
+    if (!departureTime && !arrivalTime) {
+        return { departureGuestCount: undefined, arrivalGuestCount: undefined }
+    }
+
+    if (timedEntries.length === 0) {
+        return { departureGuestCount: undefined, arrivalGuestCount: undefined }
+    }
+
+    const ordered = [...timedEntries].sort((a, b) => {
+        const minuteDiff = toMinutes(a.time) - toMinutes(b.time)
+        if (minuteDiff !== 0) return minuteDiff
+        return a.index - b.index
+    })
+
+    const guestCountForTime = (time: string, useLast: boolean) => {
+        const matches = ordered.filter((entry) => entry.time === time)
+        if (matches.length === 0) return undefined
+        const selected = useLast ? matches[matches.length - 1] : matches[0]
+        return selected?.guestCount
+    }
+
+    if (departureTime && arrivalTime) {
+        if (ordered.length >= 2) {
+            return {
+                departureGuestCount: ordered[0]?.guestCount,
+                arrivalGuestCount: ordered[ordered.length - 1]?.guestCount
+            }
+        }
+
+        const singleCount = ordered[0]?.guestCount
+        if (noteGroupsCount >= 2) {
+            return {
+                departureGuestCount: singleCount,
+                arrivalGuestCount: singleCount
+            }
+        }
+
+        if (toMinutes(ordered[0].time) <= 12 * 60) {
+            return {
+                departureGuestCount: singleCount,
+                arrivalGuestCount: undefined
+            }
+        }
+
+        return {
+            departureGuestCount: undefined,
+            arrivalGuestCount: singleCount
+        }
+    }
+
+    if (departureTime) {
+        return {
+            departureGuestCount: guestCountForTime(departureTime, false),
+            arrivalGuestCount: undefined
+        }
+    }
+
+    return {
+        departureGuestCount: undefined,
+        arrivalGuestCount: guestCountForTime(arrivalTime as string, true)
+    }
 }
 
 function assignNotesBySide(noteGroups: string[], departureTime?: string, arrivalTime?: string) {
@@ -426,8 +517,10 @@ export function parsePrevioStatePdfText(rawText: string, referenceDate = new Dat
             const noteLineSource = beforeMarker.filter((line) => isNoteLine(line)).join(' ')
             const noteGroups = splitNoteGroups(noteLineSource || beforeMarker.join(' '))
             const timeSource = blockLines.map((line) => stripAlfredWindowSegments(line)).filter(Boolean).join('\n')
+            const timedEntries = detectTimedEntries(timeSource)
             const detectedTimes = detectTimes(timeSource)
             const { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
+            const { departureGuestCount, arrivalGuestCount } = chooseGuestCounts(timedEntries, departureTime, arrivalTime, noteGroups.length)
 
             const { departureNotes, arrivalNotes, sideWarnings } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
             const guestCandidates = extractNameCandidates(blockLines)
@@ -472,6 +565,8 @@ export function parsePrevioStatePdfText(rawText: string, referenceDate = new Dat
                 roomNumber: roomInfo.room,
                 departureTime,
                 arrivalTime,
+                departureGuestCount,
+                arrivalGuestCount,
                 departureGuestName,
                 arrivalGuestName,
                 stayoverGuestName,
@@ -507,8 +602,11 @@ export function parsePrevioStatePdfText(rawText: string, referenceDate = new Dat
             const arrMatch = normalizeForMatch(row.arrivalGuestName).includes(normalizeForMatch(knownGuest))
             if (!depMatch && arrMatch) {
                 const previousDeparture = row.departureGuestName
+                const previousDepartureGuestCount = row.departureGuestCount
                 row.departureGuestName = row.arrivalGuestName
                 row.arrivalGuestName = previousDeparture
+                row.departureGuestCount = row.arrivalGuestCount
+                row.arrivalGuestCount = previousDepartureGuestCount
             }
         }
 

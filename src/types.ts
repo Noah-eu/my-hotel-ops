@@ -71,7 +71,9 @@ export interface ImportJobPreviewSummary {
                 departureTime?: string
                 arrivalTime?: string
                 departureGuestName?: string
+                departureGuestCount?: number
                 arrivalGuestName?: string
+                arrivalGuestCount?: number
                 stayoverGuestName?: string
                 stayoverUntil?: string
                 departureNotes: string[]

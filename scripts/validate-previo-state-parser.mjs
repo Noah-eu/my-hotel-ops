@@ -170,6 +170,26 @@ function detectTimes(blockText) {
     return detected
 }
 
+function detectTimedEntries(blockText) {
+    const entries = []
+    const source = String(blockText || '')
+    const matches = source.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
+
+    for (const match of matches) {
+        const index = typeof match.index === 'number' ? match.index : 0
+        const prefix = source.slice(Math.max(0, index - 16), index)
+        const countMatch = prefix.match(/\((\d{1,2})\)\s*$/)
+
+        entries.push({
+            time: normalizeTime(`${match[1]}:${match[2]}`),
+            guestCount: countMatch ? Number(countMatch[1]) : undefined,
+            index
+        })
+    }
+
+    return entries
+}
+
 function chooseTimes(detectedTimes, noteGroupsCount) {
     if (detectedTimes.length >= 2) {
         const ordered = [...detectedTimes].sort((a, b) => toMinutes(a) - toMinutes(b))
@@ -192,6 +212,70 @@ function chooseTimes(detectedTimes, noteGroupsCount) {
     }
 
     return { departureTime: undefined, arrivalTime: undefined }
+}
+
+function chooseGuestCounts(timedEntries, departureTime, arrivalTime, noteGroupsCount = 0) {
+    if (!departureTime && !arrivalTime) {
+        return { departureGuestCount: undefined, arrivalGuestCount: undefined }
+    }
+
+    if (timedEntries.length === 0) {
+        return { departureGuestCount: undefined, arrivalGuestCount: undefined }
+    }
+
+    const ordered = [...timedEntries].sort((a, b) => {
+        const minuteDiff = toMinutes(a.time) - toMinutes(b.time)
+        if (minuteDiff !== 0) return minuteDiff
+        return a.index - b.index
+    })
+
+    const guestCountForTime = (time, useLast) => {
+        const matches = ordered.filter((entry) => entry.time === time)
+        if (matches.length === 0) return undefined
+        const selected = useLast ? matches[matches.length - 1] : matches[0]
+        return selected && selected.guestCount
+    }
+
+    if (departureTime && arrivalTime) {
+        if (ordered.length >= 2) {
+            return {
+                departureGuestCount: ordered[0] && ordered[0].guestCount,
+                arrivalGuestCount: ordered[ordered.length - 1] && ordered[ordered.length - 1].guestCount
+            }
+        }
+
+        const singleCount = ordered[0] && ordered[0].guestCount
+        if (noteGroupsCount >= 2) {
+            return {
+                departureGuestCount: singleCount,
+                arrivalGuestCount: singleCount
+            }
+        }
+
+        if (toMinutes(ordered[0].time) <= 12 * 60) {
+            return {
+                departureGuestCount: singleCount,
+                arrivalGuestCount: undefined
+            }
+        }
+
+        return {
+            departureGuestCount: undefined,
+            arrivalGuestCount: singleCount
+        }
+    }
+
+    if (departureTime) {
+        return {
+            departureGuestCount: guestCountForTime(departureTime, false),
+            arrivalGuestCount: undefined
+        }
+    }
+
+    return {
+        departureGuestCount: undefined,
+        arrivalGuestCount: guestCountForTime(arrivalTime, true)
+    }
 }
 
 function assignNotesBySide(noteGroups, departureTime, arrivalTime) {
@@ -381,8 +465,10 @@ function parseRawState(rawText) {
             const noteLineSource = beforeMarker.filter((line) => isNoteLine(line)).join(' ')
             const noteGroups = splitNoteGroups(noteLineSource || beforeMarker.join(' '))
             const timeSource = blockLines.map((line) => stripAlfredWindowSegments(line)).filter(Boolean).join('\n')
+            const timedEntries = detectTimedEntries(timeSource)
             const detectedTimes = detectTimes(timeSource)
             const { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
+            const { departureGuestCount, arrivalGuestCount } = chooseGuestCounts(timedEntries, departureTime, arrivalTime, noteGroups.length)
 
             const { departureNotes, arrivalNotes } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
             const guestCandidates = extractNameCandidates(blockLines)
@@ -414,6 +500,8 @@ function parseRawState(rawText) {
                 roomNumber: roomInfo.room,
                 departureTime,
                 arrivalTime,
+                departureGuestCount,
+                arrivalGuestCount,
                 departureGuestName,
                 arrivalGuestName,
                 stayoverGuestName,
@@ -460,8 +548,11 @@ function parseRawState(rawText) {
             const arrMatch = normalizeForMatch(row.arrivalGuestName).includes(normalizeForMatch(knownGuest))
             if (!depMatch && arrMatch) {
                 const previousDeparture = row.departureGuestName
+                const previousDepartureGuestCount = row.departureGuestCount
                 row.departureGuestName = row.arrivalGuestName
                 row.arrivalGuestName = previousDeparture
+                row.departureGuestCount = row.arrivalGuestCount
+                row.arrivalGuestCount = previousDepartureGuestCount
             }
         }
 
@@ -529,6 +620,12 @@ function expectNoteContains(failures, label, notes, token) {
 function expectGuestContains(failures, label, guest, token) {
     if (!guestContains(guest, token)) {
         failures.push(`${label}: expected guest containing "${token}", got "${guest || ''}"`)
+    }
+}
+
+function expectNumber(failures, label, actual, expected) {
+    if (actual !== expected) {
+        failures.push(`${label}: expected ${expected}, got ${typeof actual === 'number' ? actual : 'undefined'}`)
     }
 }
 
@@ -668,14 +765,17 @@ function buildMergedPlansForValidation(parsed) {
             next.departure = hasDeparture ? {
                 time: parsedRow.departureTime,
                 guestLabel: parsedRow.departureGuestName,
+                guestCount: parsedRow.departureGuestCount,
                 notes: departureNotes
             } : undefined
             next.arrival = hasArrival ? {
                 time: parsedRow.arrivalTime,
                 guestLabel: parsedRow.arrivalGuestName,
+                guestCount: parsedRow.arrivalGuestCount,
                 box: extractArrivalBoxFromNotes(arrivalNotes),
                 notes: arrivalNotes
             } : undefined
+            next.guestCount = parsedRow.arrivalGuestCount ?? parsedRow.departureGuestCount
             next.box = extractArrivalBoxFromNotes(arrivalNotes)
             return next
         })
@@ -708,7 +808,9 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, '16.6/001 departure', r16001.departureTime, '11:00')
         expectEqual(failures, '16.6/001 arrival', r16001.arrivalTime, '17:00')
         expectGuestContains(failures, '16.6/001 dep guest', r16001.departureGuestName, 'Tomas Malukas')
+        expectNumber(failures, '16.6/001 dep count', r16001.departureGuestCount, 4)
         expectGuestContains(failures, '16.6/001 arr guest', r16001.arrivalGuestName, 'Markéta Šách')
+        expectNumber(failures, '16.6/001 arr count', r16001.arrivalGuestCount, 4)
         expectNoteContains(failures, '16.6/001 dep notes', r16001.departureNotes, 'BOX 10')
         expectNoteContains(failures, '16.6/001 arr notes', r16001.arrivalNotes, 'BOX 4')
     }
@@ -745,8 +847,15 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, '17.6/103 arrival', r17103.arrivalTime, '21:30')
         expectGuestContains(failures, '17.6/103 dep guest', r17103.departureGuestName, 'Anna Trankell')
         expectGuestContains(failures, '17.6/103 arr guest', r17103.arrivalGuestName, 'Ole Jorling')
+        expectNumber(failures, '17.6/103 arr count', r17103.arrivalGuestCount, 4)
         expectNoteContains(failures, '17.6/103 dep notes', r17103.departureNotes, 'BOX 5')
         expectNoteContains(failures, '17.6/103 arr notes', r17103.arrivalNotes, 'BOX 8')
+    }
+
+    const r17001 = assertRow(parsed.rows, failures, '2026-06-17', '001')
+    if (r17001) {
+        expectGuestContains(failures, '17.6/001 arr guest', r17001.arrivalGuestName, 'Estreicher Nesya')
+        expectNumber(failures, '17.6/001 arr count', r17001.arrivalGuestCount, 4)
     }
 
     const r18203 = assertRow(parsed.rows, failures, '2026-06-18', '203')
@@ -857,7 +966,9 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, 'merged 16.6/001 departure', m16001.departureTime, '11:00')
         expectEqual(failures, 'merged 16.6/001 arrival', m16001.arrivalTime, '17:00')
         expectGuestContains(failures, 'merged 16.6/001 dep guest', m16001.departure?.guestLabel, 'Tomas Malukas')
+        expectNumber(failures, 'merged 16.6/001 dep count', m16001.departure?.guestCount, 4)
         expectGuestContains(failures, 'merged 16.6/001 arr guest', m16001.arrival?.guestLabel, 'Markéta Šách')
+        expectNumber(failures, 'merged 16.6/001 arr count', m16001.arrival?.guestCount, 4)
         expectNoteContains(failures, 'merged 16.6/001 dep notes', m16001.departure?.notes || [], 'BOX 10')
         expectNoteContains(failures, 'merged 16.6/001 arr notes', m16001.arrival?.notes || [], 'BOX 4')
     }
@@ -870,6 +981,15 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, 'merged 17.6/103 arrival', m17103.arrivalTime, '21:30')
         expectGuestContains(failures, 'merged 17.6/103 dep guest', m17103.departure?.guestLabel, 'Anna Trankell')
         expectGuestContains(failures, 'merged 17.6/103 arr guest', m17103.arrival?.guestLabel, 'Ole Jorling')
+        expectNumber(failures, 'merged 17.6/103 arr count', m17103.arrival?.guestCount, 4)
+    }
+
+    const m17001 = mergedRow('2026-06-17', '001')
+    if (!m17001) {
+        failures.push('Merged plan missing 17.6/001')
+    } else {
+        expectGuestContains(failures, 'merged 17.6/001 arr guest', m17001.arrival?.guestLabel, 'Estreicher Nesya')
+        expectNumber(failures, 'merged 17.6/001 arr count', m17001.arrival?.guestCount, 4)
     }
 
     if (!day20) {
