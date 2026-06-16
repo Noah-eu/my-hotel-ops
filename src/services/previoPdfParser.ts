@@ -254,13 +254,11 @@ function normalizeBoxText(text: string) {
 }
 
 function splitNoteGroups(rawText: string) {
-    const rawGroups = rawText
+    return rawText
         .split(/\.\.\.+|…+/)
         .map((part) => normalizeBoxText(part))
         .map((part) => part.trim())
         .filter(Boolean)
-
-    return Array.from(new Set(rawGroups))
 }
 
 export function getDefaultRoomCatalog(): RoomCatalogItem[] {
@@ -357,6 +355,23 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
         return KNOWN_ROOM_NUMBERS.has(room) ? room : undefined
     }
 
+    function detectRoomToken(line: string) {
+        const collapsed = line.replace(/\s+/g, ' ').trim()
+        const start = collapsed.match(/^(\d{3})(?:\s+studio)?\b/i)
+        if (start) {
+            const room = normalizeRoomNumber(start[1])
+            if (KNOWN_ROOM_NUMBERS.has(room)) return room
+        }
+
+        const matches = collapsed.matchAll(/\b(\d{3})\b/g)
+        for (const match of matches) {
+            const room = normalizeRoomNumber(match[1])
+            if (KNOWN_ROOM_NUMBERS.has(room)) return room
+        }
+
+        return undefined
+    }
+
     function isCapacityLine(line: string) {
         return /^\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]$/.test(line.trim())
     }
@@ -377,10 +392,11 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
     function isMostlyGuestLine(line: string) {
         const trimmed = line.trim()
         if (!trimmed) return false
-        if (detectRoomMarker(trimmed)) return false
-        if (isCapacityLine(trimmed)) return false
-        if (isDateSpanLine(trimmed)) return false
+        if (detectRoomToken(trimmed)) return false
+        if (isCapacityLine(trimmed) || /\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/.test(trimmed)) return false
+        if (isDateSpanLine(trimmed) || /\d{1,2}\.\s*\d{1,2}\./.test(trimmed)) return false
         if (isNoteLine(trimmed)) return false
+        if (isAlfredWindow(trimmed)) return false
         if (/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/.test(trimmed)) return false
         return /[A-Za-zÀ-ž]/.test(trimmed)
     }
@@ -531,58 +547,57 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
         }
 
         const contentLines = pageLines.filter((line) => !isPageDateHeader(line) && !shouldIgnoreLine(line))
-        const roomMarkers = contentLines
-            .map((line, index) => ({ index, room: detectRoomMarker(line) }))
-            .filter((entry): entry is { index: number; room: string } => Boolean(entry.room))
+        const blockStarts = contentLines
+            .map((line, index) => ({ index, isNote: isNoteLine(line) }))
+            .filter((entry) => entry.isNote)
+            .map((entry) => entry.index)
 
-        if (roomMarkers.length === 0) {
-            warnings.push(`Strana ${pageIndex + 1}: nenašel jsem žádný pokojový blok.`)
+        if (blockStarts.length === 0) {
+            warnings.push(`Strana ${pageIndex + 1}: nenašel jsem žádné poznámkové bloky pokojů.`)
             return
         }
 
-        let cursor = 0
+        function roomFromBlock(lines: string[]) {
+            for (let i = 0; i < lines.length; i++) {
+                const room = detectRoomToken(lines[i])
+                if (room) return { room, markerOffset: i }
+            }
+            return null
+        }
 
-        roomMarkers.forEach((marker, markerIndex) => {
-            const prevRoom = markerIndex > 0 ? roomMarkers[markerIndex - 1].room : undefined
-            const nextRoom = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].room : undefined
-            const nextRoomIndex = markerIndex + 1 < roomMarkers.length ? roomMarkers[markerIndex + 1].index : contentLines.length
+        blockStarts.forEach((startIndex, blockIndex) => {
+            const endIndex = blockIndex + 1 < blockStarts.length ? blockStarts[blockIndex + 1] - 1 : contentLines.length - 1
+            const blockLines = contentLines.slice(startIndex, endIndex + 1)
+            const roomInfo = roomFromBlock(blockLines)
 
-            const blockStart = Math.min(Math.max(cursor, 0), marker.index)
-            let blockEnd = nextRoomIndex - 1
-
-            const localCapacity = (() => {
-                for (let i = marker.index; i < nextRoomIndex; i++) {
-                    if (isCapacityLine(contentLines[i])) return i
-                }
-                return -1
-            })()
-
-            if (localCapacity >= 0) {
-                blockEnd = localCapacity
-                while (blockEnd + 1 < nextRoomIndex) {
-                    const candidate = contentLines[blockEnd + 1]
-                    if (isMostlyGuestLine(candidate) || isDateSpanLine(candidate)) {
-                        blockEnd += 1
-                        continue
-                    }
-                    break
-                }
+            if (!roomInfo) {
+                warnings.push(`Strana ${pageIndex + 1}, blok ${blockIndex + 1}: pokoj nebyl rozpoznán.`)
+                return
             }
 
-            const blockLines = contentLines.slice(blockStart, blockEnd + 1)
-            cursor = blockEnd + 1
+            const previousRoom = blockIndex > 0
+                ? roomFromBlock(contentLines.slice(blockStarts[blockIndex - 1], startIndex))?.room
+                : undefined
+            const nextRoom = blockIndex + 1 < blockStarts.length
+                ? roomFromBlock(contentLines.slice(blockStarts[blockIndex + 1], blockIndex + 2 < blockStarts.length ? blockStarts[blockIndex + 2] : contentLines.length))?.room
+                : undefined
 
-            const markerInBlock = blockLines.findIndex((line) => detectRoomMarker(line) === marker.room)
+            const markerInBlock = roomInfo.markerOffset
             const beforeMarker = markerInBlock >= 0 ? blockLines.slice(0, markerInBlock) : blockLines
             const afterMarker = markerInBlock >= 0 ? blockLines.slice(markerInBlock + 1) : []
             const rawBlock = blockLines.join('\n')
 
-            const timeSourceLines = blockLines.filter((line) => !isAlfredWindow(line))
-            const detectedTimes = detectTimes(timeSourceLines.join('\n'))
-            const { departureTime, arrivalTime } = chooseTimes(detectedTimes)
+            const timeSource = blockLines.filter((line) => !isAlfredWindow(line)).join('\n')
+            const detectedTimes = detectTimes(timeSource)
+            let { departureTime, arrivalTime } = chooseTimes(detectedTimes)
 
-            const noteSource = beforeMarker.join(' ')
-            const noteGroups = splitNoteGroups(noteSource)
+            const noteLineSource = beforeMarker.filter((line) => isNoteLine(line)).join(' ')
+            const noteGroups = splitNoteGroups(noteLineSource || beforeMarker.join(' '))
+
+            if (departureTime && arrivalTime && noteGroups.length === 1) {
+                arrivalTime = undefined
+            }
+
             const {
                 departureNotes,
                 arrivalNotes,
@@ -592,14 +607,14 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
 
             const noteKeywordMatches = keywordNotes(normalizeForMatch(rawBlock))
             const allGeneralNotes = Array.from(new Set([...generalNotes, ...noteKeywordMatches]))
-            const box = arrivalTime ? extractBox(arrivalNotes.join(' ') || rawBlock) : undefined
+            const guestLines = blockLines.filter((line) => isMostlyGuestLine(line))
+            const departureGuestLabel = guestLines[0]
+            const arrivalGuestLabel = guestLines[guestLines.length - 1] || departureGuestLabel
             const guestCount = extractGuestCount(rawBlock)
+            const box = arrivalTime ? extractBox(arrivalNotes.join(' ') || rawBlock) : undefined
             const contextDates = extractDateTokens(afterMarker.join(' '))
+
             const blockWarnings: string[] = []
-
-            const departureGuestLabel = extractGuestLabel(beforeMarker, marker.index, 'departure')
-            const arrivalGuestLabel = extractGuestLabel(beforeMarker, marker.index, 'arrival')
-
             if (!departureTime && !arrivalTime) {
                 blockWarnings.push('Blok bez rozpoznaného času příjezdu/odjezdu')
             }
@@ -609,6 +624,9 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
             if (contextDates.length > 0) {
                 blockWarnings.push(`Kontekstová data: ${contextDates.join(', ')}`)
             }
+            if (departureTime && !arrivalTime && detectedTimes.length > 1) {
+                blockWarnings.push('Více časů v bloku bez druhé poznámkové skupiny - zachován pouze odjezd')
+            }
             blockWarnings.push(...sideWarnings)
 
             const operationalDate = pageDate
@@ -617,7 +635,7 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
 
             rows.push({
                 dateIso: operationalDate,
-                roomNumber: marker.room,
+                roomNumber: roomInfo.room,
                 departureTime,
                 arrivalTime,
                 guestLabel: arrivalGuestLabel || departureGuestLabel,
@@ -630,24 +648,24 @@ export function parsePrevioPdfText(source: string | PrevioPdfExtract, referenceD
             })
 
             if (blockWarnings.length > 0) {
-                warnings.push(`Blok ${markerIndex + 1} (pokoj ${marker.room}): ${blockWarnings.join(', ')}`)
+                warnings.push(`Blok ${blockIndex + 1} (pokoj ${roomInfo.room}): ${blockWarnings.join(', ')}`)
             }
 
             lineDebug.push({
                 index: lineDebug.length + 1,
                 page: pageIndex + 1,
                 pageDate: pageDate ? formatLocalDate(pageDate) : undefined,
-                room: marker.room,
-                previousRoom: prevRoom,
+                room: roomInfo.room,
+                previousRoom,
                 nextRoom,
-                blockStartLine: blockStart + 1,
-                blockEndLine: blockEnd + 1,
-                yStart: 0,
-                yEnd: 0,
+                blockStartLine: startIndex + 1,
+                blockEndLine: endIndex + 1,
+                yStart: startIndex + 1,
+                yEnd: endIndex + 1,
                 rawBlock,
-                roomColumnText: marker.room,
-                departureColumnText: beforeMarker.join('\n'),
-                arrivalColumnText: beforeMarker.join('\n'),
+                roomColumnText: blockLines[markerInBlock] || roomInfo.room,
+                departureColumnText: departureGuestLabel || '',
+                arrivalColumnText: arrivalGuestLabel || '',
                 departureNoteColumnText: departureNotes.join(', '),
                 arrivalNoteColumnText: arrivalNotes.join(', '),
                 detectedTimes,

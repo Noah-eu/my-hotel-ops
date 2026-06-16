@@ -5,7 +5,8 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "validate:previo": "node scripts/validate-previo-parser.mjs"
     },
     "dependencies": {
         "firebase": "^12.14.0",
