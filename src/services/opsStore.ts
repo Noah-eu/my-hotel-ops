@@ -64,6 +64,7 @@ export interface OpsStore {
     subscribeState(onState: (state: Partial<OpsPersistedState>) => void, onError: (error: OpsStoreError) => void): (() => void) | null
     saveState(state: OpsPersistedState): void
     updateRoomPlan(day: OpsTab, roomId: string, patch: Partial<RoomPlan>): void
+    replaceRoomPlan(day: OpsTab, room: RoomPlan): void
     createTask(input: CreateTaskInput): Task | null
     updateTaskStatus(taskId: string, status: Task['status']): void
     createSupplyRequest(input: CreateSupplyRequestInput): SupplyRequest | null

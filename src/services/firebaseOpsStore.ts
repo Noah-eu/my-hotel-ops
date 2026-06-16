@@ -362,16 +362,9 @@ export function createFirebaseOpsStore(): OpsStore {
         updateRoomPlan(day: OpsTab, roomId: string, patch) {
             if (!firestoreDb) return
             const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${roomId}`)
-            const rootPath = `roomPlans.${day}-${roomId}.patch`
-            const { cleaned, removedPaths } = sanitizeForFirestore(patch, rootPath)
-            const clearedTopLevelKeys = Array.from(new Set(
-                removedPaths
-                    .map((path) => path.startsWith(`${rootPath}.`) ? path.slice(rootPath.length + 1) : '')
-                    .map((path) => path.split('.')[0])
-                    .filter((path) => path && !path.includes('['))
-            ))
-
-            const deletePatch = clearedTopLevelKeys.reduce<Record<string, unknown>>((acc, key) => {
+            const { cleaned } = sanitizeForFirestore(patch, `roomPlans.${day}-${roomId}.patch`)
+            const deletePatch = Object.entries(patch).reduce<Record<string, unknown>>((acc, [key, value]) => {
+                if (typeof value !== 'undefined') return acc
                 acc[key] = deleteField()
                 return acc
             }, {})
@@ -383,6 +376,12 @@ export function createFirebaseOpsStore(): OpsStore {
 
             if (Object.keys(updatePatch).length === 0) return
             void runWrite('updateRoomPlan', () => updateDoc(ref, updatePatch))
+        },
+        replaceRoomPlan(day: OpsTab, room) {
+            if (!firestoreDb) return
+            const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${room.id}`)
+            const { cleaned } = sanitizeForFirestore({ ...room, day }, `roomPlans.${day}-${room.id}.replace`)
+            void runWrite('replaceRoomPlan', () => setDoc(ref, cleaned))
         },
         createTask(input: CreateTaskInput) {
             if (!firestoreDb) return null

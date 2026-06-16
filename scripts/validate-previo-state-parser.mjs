@@ -143,6 +143,13 @@ function isAlfredWindow(line) {
     return /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/i.test(line) && /alfred/i.test(line)
 }
 
+function stripAlfredWindowSegments(line) {
+    return line
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*\(alfred\)/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
 function detectRoomToken(line) {
     const collapsed = line.replace(/\s+/g, ' ').trim()
     const start = collapsed.match(/^(\d{3})(?:\s+studio)?\b/i)
@@ -155,28 +162,36 @@ function detectRoomToken(line) {
 }
 
 function detectTimes(blockText) {
-    const unique = new Set()
+    const detected = []
     const matches = blockText.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
     for (const match of matches) {
-        unique.add(normalizeTime(`${match[1]}:${match[2]}`))
+        detected.push(normalizeTime(`${match[1]}:${match[2]}`))
     }
-    return Array.from(unique).sort((a, b) => toMinutes(a) - toMinutes(b))
+    return detected
 }
 
-function chooseTimes(detectedTimes) {
-    const departures = detectedTimes.filter((time) => toMinutes(time) <= 12 * 60)
-    const arrivals = detectedTimes.filter((time) => toMinutes(time) >= 13 * 60)
+function chooseTimes(detectedTimes, noteGroupsCount) {
+    if (detectedTimes.length >= 2) {
+        const ordered = [...detectedTimes].sort((a, b) => toMinutes(a) - toMinutes(b))
+        const first = ordered[0]
+        const last = ordered[ordered.length - 1]
+
+        return {
+            departureTime: first,
+            arrivalTime: last
+        }
+    }
 
     if (detectedTimes.length === 1) {
         const only = detectedTimes[0]
+        if (noteGroupsCount >= 2) {
+            return { departureTime: only, arrivalTime: only }
+        }
         if (toMinutes(only) <= 12 * 60) return { departureTime: only, arrivalTime: undefined }
         return { departureTime: undefined, arrivalTime: only }
     }
 
-    return {
-        departureTime: departures[0],
-        arrivalTime: arrivals[0]
-    }
+    return { departureTime: undefined, arrivalTime: undefined }
 }
 
 function assignNotesBySide(noteGroups, departureTime, arrivalTime) {
@@ -363,13 +378,11 @@ function parseRawState(rawText) {
             const beforeMarker = markerInBlock >= 0 ? blockLines.slice(0, markerInBlock) : blockLines
             const afterMarker = markerInBlock >= 0 ? blockLines.slice(markerInBlock + 1) : []
 
-            const detectedTimes = detectTimes(blockLines.filter((line) => !isAlfredWindow(line)).join('\n'))
-            let { departureTime, arrivalTime } = chooseTimes(detectedTimes)
             const noteLineSource = beforeMarker.filter((line) => isNoteLine(line)).join(' ')
             const noteGroups = splitNoteGroups(noteLineSource || beforeMarker.join(' '))
-            if (departureTime && arrivalTime && noteGroups.length === 1) {
-                arrivalTime = undefined
-            }
+            const timeSource = blockLines.map((line) => stripAlfredWindowSegments(line)).filter(Boolean).join('\n')
+            const detectedTimes = detectTimes(timeSource)
+            const { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
 
             const { departureNotes, arrivalNotes } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
             const guestCandidates = extractNameCandidates(blockLines)
@@ -708,6 +721,24 @@ function runGoldenChecks(parsed) {
         expectNoteContains(failures, '16.6/103 arr notes', r16103.arrivalNotes, 'BOX 5')
     }
 
+    const r16201 = assertRow(parsed.rows, failures, '2026-06-16', '201')
+    if (r16201) {
+        expectEqual(failures, '16.6/201 departure', r16201.departureTime, '11:00')
+        expectEqual(failures, '16.6/201 arrival', r16201.arrivalTime, '11:00')
+        expectGuestContains(failures, '16.6/201 dep guest', r16201.departureGuestName, 'Leon Hergt')
+        expectGuestContains(failures, '16.6/201 arr guest', r16201.arrivalGuestName, 'Marek Witkowski')
+        expectNoteContains(failures, '16.6/201 dep notes', r16201.departureNotes, 'BOX 2')
+        expectNoteContains(failures, '16.6/201 arr notes', r16201.arrivalNotes, 'BOX 3')
+    }
+
+    const r16301 = assertRow(parsed.rows, failures, '2026-06-16', '301')
+    if (r16301) {
+        expectEqual(failures, '16.6/301 departure', r16301.departureTime, '11:00')
+        expectEqual(failures, '16.6/301 arrival', r16301.arrivalTime, '14:30')
+        expectNoteContains(failures, '16.6/301 dep notes', r16301.departureNotes, 'BOX 2')
+        expectNoteContains(failures, '16.6/301 arr notes', r16301.arrivalNotes, 'BOX 1')
+    }
+
     const r17103 = assertRow(parsed.rows, failures, '2026-06-17', '103')
     if (r17103) {
         expectEqual(failures, '17.6/103 departure', r17103.departureTime, '11:00')
@@ -785,12 +816,38 @@ function runGoldenChecks(parsed) {
     if (!m17305) {
         failures.push('Merged plan missing 17.6/305')
     } else {
+        if (!m17305.occupiedConfirmed) failures.push('merged 17.6/305 expected occupiedConfirmed=true')
         if (guestContains(m17305.arrival?.guestLabel, 'Host L') || guestContains(m17305.departure?.guestLabel, 'Host L') || guestContains(m17305.stayoverGuestName, 'Host L')) {
             failures.push('merged 17.6/305 still contains stale guest Host L')
         }
         if (normalizeForMatch(m17305.box || '').includes('box z')) {
             failures.push('merged 17.6/305 still contains stale BOX Z')
         }
+    }
+
+    const m16201 = mergedRow('2026-06-16', '201')
+    if (!m16201) {
+        failures.push('Merged plan missing 16.6/201')
+    } else {
+        expectEqual(failures, 'merged 16.6/201 departure', m16201.departureTime, '11:00')
+        expectEqual(failures, 'merged 16.6/201 arrival', m16201.arrivalTime, '11:00')
+        expectGuestContains(failures, 'merged 16.6/201 dep guest', m16201.departure?.guestLabel, 'Leon Hergt')
+        expectGuestContains(failures, 'merged 16.6/201 arr guest', m16201.arrival?.guestLabel, 'Marek Witkowski')
+        expectNoteContains(failures, 'merged 16.6/201 dep notes', m16201.departure?.notes || [], 'BOX 2')
+        expectNoteContains(failures, 'merged 16.6/201 arr notes', m16201.arrival?.notes || [], 'BOX 3')
+    }
+
+    const m16301 = mergedRow('2026-06-16', '301')
+    if (!m16301) {
+        failures.push('Merged plan missing 16.6/301')
+    } else {
+        expectEqual(failures, 'merged 16.6/301 departure', m16301.departureTime, '11:00')
+        expectEqual(failures, 'merged 16.6/301 arrival', m16301.arrivalTime, '14:30')
+        if (guestContains(m16301.departure?.guestLabel, 'Host J') || guestContains(m16301.arrival?.guestLabel, 'Host J') || guestContains(m16301.stayoverGuestName, 'Host J')) {
+            failures.push('merged 16.6/301 still contains stale guest Host J')
+        }
+        expectNoteContains(failures, 'merged 16.6/301 dep notes', m16301.departure?.notes || [], 'BOX 2')
+        expectNoteContains(failures, 'merged 16.6/301 arr notes', m16301.arrival?.notes || [], 'BOX 1')
     }
 
     const m16001 = mergedRow('2026-06-16', '001')

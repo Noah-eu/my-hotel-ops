@@ -60,6 +60,15 @@ export function createLocalOpsStore(): OpsStore {
                 }
             }))
         },
+        replaceRoomPlan(day: OpsTab, room) {
+            withState((state) => ({
+                ...state,
+                roomsByDay: {
+                    ...state.roomsByDay,
+                    [day]: state.roomsByDay[day].map((item) => (item.id === room.id ? room : item))
+                }
+            }))
+        },
         createTask(input: CreateTaskInput) {
             const task: Task = {
                 id: input.id || `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

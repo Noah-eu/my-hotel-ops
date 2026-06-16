@@ -693,33 +693,6 @@ export default function App() {
         return { next, byDate }
     }
 
-    function buildRoomSyncPatch(room: RoomPlan): Partial<RoomPlan> {
-        return {
-            number: room.number,
-            situation: room.situation,
-            status: room.status,
-            departure: room.departure,
-            arrival: room.arrival,
-            nextArrivalPreview: room.nextArrivalPreview,
-            departureTime: room.departureTime,
-            arrivalTime: room.arrivalTime,
-            guestCount: room.guestCount,
-            box: room.box,
-            notes: room.notes,
-            assigned: room.assigned,
-            estimatedReady: room.estimatedReady,
-            estimateSetAt: room.estimateSetAt,
-            statusNote: room.statusNote,
-            checkoutException: room.checkoutException,
-            occupiedConfirmed: room.occupiedConfirmed,
-            freeConfirmed: room.freeConfirmed,
-            stateSource: room.stateSource,
-            stateImportedAt: room.stateImportedAt,
-            stayoverGuestName: room.stayoverGuestName,
-            stayoverUntil: room.stayoverUntil
-        }
-    }
-
     async function handleCopyImportDebugText() {
         if (!importRawText) return
         try {
@@ -882,7 +855,7 @@ export default function App() {
         if (runtimeMode === 'online') {
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 next[day].forEach((room) => {
-                    activeStore.updateRoomPlan(day, room.id, buildRoomSyncPatch(room))
+                    activeStore.replaceRoomPlan(day, room)
                 })
             })
         }
@@ -1123,15 +1096,37 @@ export default function App() {
     }
 
     function handleClearDemoPlan() {
-        const clearedPlans: Record<OpsTab, RoomPlan[]> = {
-            Dnes: buildClearedRoomsForDay(roomsByDay.Dnes),
-            Zitra: buildClearedRoomsForDay(roomsByDay.Zitra),
-            Pozitri: buildClearedRoomsForDay(roomsByDay.Pozitri)
+        const dayMapping: Record<OpsTab, string | undefined> = {
+            Dnes: importedTabDates.Dnes,
+            Zitra: importedTabDates.Zitra,
+            Pozitri: importedTabDates.Pozitri
+        }
+        const importedDateSet = new Set([
+            ...Object.values(dayMapping).filter((dateIso): dateIso is string => Boolean(dateIso)),
+            ...Object.keys(importedRoomsByDate)
+        ])
+
+        if (importedDateSet.size === 0) {
+            setPlanCleanupResult('Nebyl nalezen žádný importovaný den k vyčištění.')
+            setPlanCleanupConfirm(false)
+            return
         }
 
+        const clearedPlans: Record<OpsTab, RoomPlan[]> = {
+            Dnes: importedDateSet.has(dayMapping.Dnes || '') ? buildClearedRoomsForDay(roomsByDay.Dnes) : roomsByDay.Dnes,
+            Zitra: importedDateSet.has(dayMapping.Zitra || '') ? buildClearedRoomsForDay(roomsByDay.Zitra) : roomsByDay.Zitra,
+            Pozitri: importedDateSet.has(dayMapping.Pozitri || '') ? buildClearedRoomsForDay(roomsByDay.Pozitri) : roomsByDay.Pozitri
+        }
+
+        const nextImportedRoomsByDate = { ...importedRoomsByDate }
+        Array.from(importedDateSet).forEach((dateIso) => {
+            const sourceRooms = importedRoomsByDate[dateIso]
+            if (!sourceRooms) return
+            nextImportedRoomsByDate[dateIso] = buildClearedRoomsForDay(sourceRooms)
+        })
+
         setRoomsByDay(clearedPlans)
-        setImportedTabDates({})
-        setImportedRoomsByDate({})
+        setImportedRoomsByDate(nextImportedRoomsByDate)
         setSelectedImportedDateIso(null)
         setStateImportPreview(null)
         setStateImportPdfStatus('idle')
@@ -1139,13 +1134,18 @@ export default function App() {
 
         if (runtimeMode === 'online') {
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                if (!importedDateSet.has(dayMapping[day] || '')) return
                 clearedPlans[day].forEach((room) => {
-                    activeStore.updateRoomPlan(day, room.id, buildRoomSyncPatch(room))
+                    activeStore.replaceRoomPlan(day, room)
                 })
             })
         }
 
-        setPlanCleanupResult(`Plán pokojů vyčištěn: ${clearedPlans.Dnes.length + clearedPlans.Zitra.length + clearedPlans.Pozitri.length} záznamů.`)
+        const clearedCount = (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[])
+            .filter((day) => importedDateSet.has(dayMapping[day] || ''))
+            .reduce((sum, day) => sum + clearedPlans[day].length, 0)
+
+        setPlanCleanupResult(`Plán pokojů vyčištěn: ${clearedCount} záznamů pro importované dny.`)
         setPlanCleanupConfirm(false)
     }
 
@@ -1882,7 +1882,7 @@ export default function App() {
                                                 <div style={{ fontSize: 13, color: '#7f1d1d', fontWeight: 700 }}>Údržba plánu pokojů</div>
                                                 <div className="room-meta" style={{ color: '#7f1d1d' }}>Vyčistí staré demo rezervace a stavy pokojů před novým importem Stav. Úkoly, nákupy a údržba zůstanou beze změny.</div>
                                                 {!planCleanupConfirm ? (
-                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setPlanCleanupConfirm(true)}>Vyčistit demo plán</button>
+                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setPlanCleanupConfirm(true)}>Vyčistit plán pokojů</button>
                                                 ) : (
                                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                         <button className="btn danger" onClick={handleClearDemoPlan}>Opravdu vyčistit plán?</button>

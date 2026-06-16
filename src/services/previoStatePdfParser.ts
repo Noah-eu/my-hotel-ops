@@ -185,6 +185,13 @@ function isAlfredWindow(line: string) {
     return /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/i.test(line) && /alfred/i.test(line)
 }
 
+function stripAlfredWindowSegments(line: string) {
+    return line
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*\(alfred\)/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
 function detectRoomToken(line: string) {
     const collapsed = line.replace(/\s+/g, ' ').trim()
     const start = collapsed.match(/^(\d{3})(?:\s+studio)?\b/i)
@@ -206,30 +213,38 @@ function extractDateTokens(text: string) {
 }
 
 function detectTimes(blockText: string) {
-    const unique = new Set<string>()
+    const detected: string[] = []
     const matches = blockText.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
     for (const match of matches) {
-        unique.add(normalizeTime(`${match[1]}:${match[2]}`))
+        detected.push(normalizeTime(`${match[1]}:${match[2]}`))
     }
-    return Array.from(unique).sort((a, b) => toMinutes(a) - toMinutes(b))
+    return detected
 }
 
-function chooseTimes(detectedTimes: string[]) {
-    const departures = detectedTimes.filter((time) => toMinutes(time) <= 12 * 60)
-    const arrivals = detectedTimes.filter((time) => toMinutes(time) >= 13 * 60)
+function chooseTimes(detectedTimes: string[], noteGroupsCount: number) {
+    if (detectedTimes.length >= 2) {
+        const ordered = [...detectedTimes].sort((a, b) => toMinutes(a) - toMinutes(b))
+        const first = ordered[0]
+        const last = ordered[ordered.length - 1]
+
+        return {
+            departureTime: first,
+            arrivalTime: last
+        }
+    }
 
     if (detectedTimes.length === 1) {
         const only = detectedTimes[0]
+        if (noteGroupsCount >= 2) {
+            return { departureTime: only, arrivalTime: only }
+        }
         if (toMinutes(only) <= 12 * 60) {
             return { departureTime: only, arrivalTime: undefined }
         }
         return { departureTime: undefined, arrivalTime: only }
     }
 
-    return {
-        departureTime: departures[0],
-        arrivalTime: arrivals[0]
-    }
+    return { departureTime: undefined, arrivalTime: undefined }
 }
 
 function assignNotesBySide(noteGroups: string[], departureTime?: string, arrivalTime?: string) {
@@ -408,14 +423,11 @@ export function parsePrevioStatePdfText(rawText: string, referenceDate = new Dat
             const afterMarker = markerInBlock >= 0 ? blockLines.slice(markerInBlock + 1) : []
             const rawBlock = blockLines.join('\n')
 
-            const detectedTimes = detectTimes(blockLines.filter((line) => !isAlfredWindow(line)).join('\n'))
-            let { departureTime, arrivalTime } = chooseTimes(detectedTimes)
             const noteLineSource = beforeMarker.filter((line) => isNoteLine(line)).join(' ')
             const noteGroups = splitNoteGroups(noteLineSource || beforeMarker.join(' '))
-
-            if (departureTime && arrivalTime && noteGroups.length === 1) {
-                arrivalTime = undefined
-            }
+            const timeSource = blockLines.map((line) => stripAlfredWindowSegments(line)).filter(Boolean).join('\n')
+            const detectedTimes = detectTimes(timeSource)
+            const { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
 
             const { departureNotes, arrivalNotes, sideWarnings } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
             const guestCandidates = extractNameCandidates(blockLines)
