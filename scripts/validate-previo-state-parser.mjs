@@ -542,6 +542,135 @@ function printRows(rows) {
     })
 }
 
+function extractArrivalBoxFromNotes(notes) {
+    if (!notes || notes.length === 0) return undefined
+    const match = notes.join(' ').match(/\bbox\s*([a-z0-9-]+)/i)
+    if (!match) return undefined
+    return `BOX ${match[1].toUpperCase()}`
+}
+
+function buildMergedPlansForValidation(parsed) {
+    const staleSeedByDate = {
+        '2026-06-16': {
+            '305': {
+                id: 'r305',
+                number: '305',
+                situation: 'prijezd',
+                status: 'odhad',
+                arrival: { time: '14:00', guestLabel: 'Host L.', box: 'BOX Z', notes: ['dětská postýlka'] },
+                arrivalTime: '14:00',
+                box: 'BOX Z',
+                notes: ['dětská postýlka'],
+                estimatedReady: '12:30'
+            }
+        },
+        '2026-06-17': {
+            '301': {
+                id: 'r301',
+                number: '301',
+                situation: 'odjezd',
+                status: 'problem',
+                departure: { time: '11:00', guestLabel: 'Host J.' },
+                departureTime: '11:00'
+            },
+            '302': {
+                id: 'r302',
+                number: '302',
+                situation: 'prijezd',
+                status: 'ceka',
+                arrival: { time: '20:00', guestLabel: 'Host K.', box: 'BOX X', notes: ['dětská postýlka'] },
+                arrivalTime: '20:00',
+                box: 'BOX X',
+                notes: ['dětská postýlka']
+            },
+            '305': {
+                id: 'r305',
+                number: '305',
+                situation: 'prijezd',
+                status: 'ceka',
+                arrival: { time: '14:00', guestLabel: 'Host L.', box: 'BOX Z', notes: ['dětská postýlka'] },
+                arrivalTime: '14:00',
+                box: 'BOX Z',
+                notes: ['dětská postýlka']
+            }
+        }
+    }
+
+    const mergedByDate = {}
+
+    parsed.daySummaries.forEach((day) => {
+        const parsedByRoom = new Map(day.rows.map((row) => [normalizeRoomKey(row.roomNumber), row]))
+
+        mergedByDate[day.dateIso] = MASTER_ROOM_NUMBERS.map((roomNumber) => {
+            const stale = staleSeedByDate[day.dateIso]?.[roomNumber]
+            const parsedRow = parsedByRoom.get(roomNumber)
+
+            const next = {
+                id: stale?.id || `r${roomNumber}`,
+                number: stale?.number || roomNumber,
+                roomNumber,
+                situation: 'volny',
+                status: 'neni',
+                departure: undefined,
+                arrival: undefined,
+                departureTime: undefined,
+                arrivalTime: undefined,
+                nextArrivalPreview: undefined,
+                guestCount: undefined,
+                box: undefined,
+                notes: undefined,
+                assigned: undefined,
+                estimatedReady: undefined,
+                estimateSetAt: undefined,
+                statusNote: undefined,
+                checkoutException: false,
+                occupiedConfirmed: false,
+                freeConfirmed: false,
+                stateSource: 'previo-state-pdf',
+                stateImportedAt: 'validation-import',
+                stayoverGuestName: undefined,
+                stayoverUntil: undefined
+            }
+
+            if (!parsedRow) {
+                next.freeConfirmed = Boolean(day.complete && day.derivedFreeRooms.includes(roomNumber))
+                return next
+            }
+
+            const hasDeparture = Boolean(parsedRow.departureTime)
+            const hasArrival = Boolean(parsedRow.arrivalTime)
+            if (!hasDeparture && !hasArrival) {
+                next.occupiedConfirmed = true
+                next.stayoverGuestName = parsedRow.stayoverGuestName || parsedRow.departureGuestName || parsedRow.arrivalGuestName
+                next.stayoverUntil = parsedRow.stayoverUntil
+                return next
+            }
+
+            const departureNotes = parsedRow.departureNotes.length ? parsedRow.departureNotes : undefined
+            const arrivalNotes = parsedRow.arrivalNotes.length ? parsedRow.arrivalNotes : undefined
+            next.situation = hasDeparture && hasArrival ? 'odjezd_prijezd' : hasDeparture ? 'odjezd' : 'prijezd'
+            next.status = 'ceka'
+            next.departureTime = parsedRow.departureTime
+            next.arrivalTime = parsedRow.arrivalTime
+            next.departure = hasDeparture ? {
+                time: parsedRow.departureTime,
+                guestLabel: parsedRow.departureGuestName,
+                notes: departureNotes
+            } : undefined
+            next.arrival = hasArrival ? {
+                time: parsedRow.arrivalTime,
+                guestLabel: parsedRow.arrivalGuestName,
+                box: extractArrivalBoxFromNotes(arrivalNotes),
+                notes: arrivalNotes
+            } : undefined
+            next.box = extractArrivalBoxFromNotes(arrivalNotes)
+            return next
+        })
+    })
+
+    return mergedByDate
+}
+
 function runGoldenChecks(parsed) {
     const failures = []
 
@@ -606,6 +735,86 @@ function runGoldenChecks(parsed) {
         expectEqual(failures, '17.6/301 arrival', r17301.arrivalTime, '')
     }
 
+    const mergedByDate = buildMergedPlansForValidation(parsed)
+    const mergedRow = (dateIso, roomNumber) => {
+        const dayRows = mergedByDate[dateIso] || []
+        return dayRows.find((row) => row.roomNumber === roomNumber)
+    }
+
+    const m16305 = mergedRow('2026-06-16', '305')
+    if (!m16305) {
+        failures.push('Merged plan missing 16.6/305')
+    } else {
+        expectEqual(failures, 'merged 16.6/305 departure', m16305.departureTime, '')
+        expectEqual(failures, 'merged 16.6/305 arrival', m16305.arrivalTime, '')
+        if (!m16305.occupiedConfirmed) failures.push('merged 16.6/305 expected occupiedConfirmed=true')
+        expectGuestContains(failures, 'merged 16.6/305 stayover guest', m16305.stayoverGuestName, 'DANIEL')
+        if (guestContains(m16305.arrival?.guestLabel, 'Host L') || guestContains(m16305.departure?.guestLabel, 'Host L') || guestContains(m16305.stayoverGuestName, 'Host L')) {
+            failures.push('merged 16.6/305 still contains stale guest Host L')
+        }
+        if (normalizeForMatch(m16305.box || '').includes('box z')) {
+            failures.push('merged 16.6/305 still contains stale BOX Z')
+        }
+    }
+
+    const m17301 = mergedRow('2026-06-17', '301')
+    if (!m17301) {
+        failures.push('Merged plan missing 17.6/301')
+    } else {
+        expectEqual(failures, 'merged 17.6/301 departure', m17301.departureTime, '')
+        expectEqual(failures, 'merged 17.6/301 arrival', m17301.arrivalTime, '')
+        if (!m17301.occupiedConfirmed) failures.push('merged 17.6/301 expected occupiedConfirmed=true')
+    }
+
+    const m17302 = mergedRow('2026-06-17', '302')
+    if (!m17302) {
+        failures.push('Merged plan missing 17.6/302')
+    } else {
+        expectEqual(failures, 'merged 17.6/302 departure', m17302.departureTime, '')
+        expectEqual(failures, 'merged 17.6/302 arrival', m17302.arrivalTime, '')
+        if (!m17302.occupiedConfirmed) failures.push('merged 17.6/302 expected occupiedConfirmed=true')
+        if (guestContains(m17302.arrival?.guestLabel, 'Host K') || guestContains(m17302.departure?.guestLabel, 'Host K') || guestContains(m17302.stayoverGuestName, 'Host K')) {
+            failures.push('merged 17.6/302 still contains stale guest Host K')
+        }
+        if (normalizeForMatch(m17302.box || '').includes('box x')) {
+            failures.push('merged 17.6/302 still contains stale BOX X')
+        }
+    }
+
+    const m17305 = mergedRow('2026-06-17', '305')
+    if (!m17305) {
+        failures.push('Merged plan missing 17.6/305')
+    } else {
+        if (guestContains(m17305.arrival?.guestLabel, 'Host L') || guestContains(m17305.departure?.guestLabel, 'Host L') || guestContains(m17305.stayoverGuestName, 'Host L')) {
+            failures.push('merged 17.6/305 still contains stale guest Host L')
+        }
+        if (normalizeForMatch(m17305.box || '').includes('box z')) {
+            failures.push('merged 17.6/305 still contains stale BOX Z')
+        }
+    }
+
+    const m16001 = mergedRow('2026-06-16', '001')
+    if (!m16001) {
+        failures.push('Merged plan missing 16.6/001')
+    } else {
+        expectEqual(failures, 'merged 16.6/001 departure', m16001.departureTime, '11:00')
+        expectEqual(failures, 'merged 16.6/001 arrival', m16001.arrivalTime, '17:00')
+        expectGuestContains(failures, 'merged 16.6/001 dep guest', m16001.departure?.guestLabel, 'Tomas Malukas')
+        expectGuestContains(failures, 'merged 16.6/001 arr guest', m16001.arrival?.guestLabel, 'Markéta Šách')
+        expectNoteContains(failures, 'merged 16.6/001 dep notes', m16001.departure?.notes || [], 'BOX 10')
+        expectNoteContains(failures, 'merged 16.6/001 arr notes', m16001.arrival?.notes || [], 'BOX 4')
+    }
+
+    const m17103 = mergedRow('2026-06-17', '103')
+    if (!m17103) {
+        failures.push('Merged plan missing 17.6/103')
+    } else {
+        expectEqual(failures, 'merged 17.6/103 departure', m17103.departureTime, '11:00')
+        expectEqual(failures, 'merged 17.6/103 arrival', m17103.arrivalTime, '21:30')
+        expectGuestContains(failures, 'merged 17.6/103 dep guest', m17103.departure?.guestLabel, 'Anna Trankell')
+        expectGuestContains(failures, 'merged 17.6/103 arr guest', m17103.arrival?.guestLabel, 'Ole Jorling')
+    }
+
     if (!day20) {
         failures.push('20.6 day summary missing')
     } else {
@@ -615,6 +824,27 @@ function runGoldenChecks(parsed) {
         if (!day20.derivedFreeRooms.includes('001')) failures.push('20.6 expected derived free room 001')
         if (!day20.derivedFreeRooms.includes('103')) failures.push('20.6 expected derived free room 103')
         if (day20.derivedFreeRooms.includes('301')) failures.push('20.6 room 301 is present and must not be derived free')
+
+        const mergedDay20 = mergedByDate['2026-06-20'] || []
+        const merged20001 = mergedDay20.find((row) => row.roomNumber === '001')
+        const merged20103 = mergedDay20.find((row) => row.roomNumber === '103')
+        const merged20301 = mergedDay20.find((row) => row.roomNumber === '301')
+
+        if (day20.complete) {
+            if (!merged20001?.freeConfirmed) failures.push('merged 20.6/001 expected freeConfirmed=true for complete day')
+            if (!merged20103?.freeConfirmed) failures.push('merged 20.6/103 expected freeConfirmed=true for complete day')
+            if (merged20301?.freeConfirmed) failures.push('merged 20.6/301 must not be freeConfirmed when room is present')
+
+            const invalidFree = mergedDay20
+                .filter((row) => row.freeConfirmed)
+                .map((row) => row.roomNumber)
+                .filter((roomNumber) => !day20.derivedFreeRooms.includes(roomNumber))
+            if (invalidFree.length > 0) {
+                failures.push(`merged 20.6 has freeConfirmed outside derived list: ${invalidFree.join(', ')}`)
+            }
+        } else if (mergedDay20.some((row) => row.freeConfirmed)) {
+            failures.push('merged 20.6 should not set freeConfirmed when day is incomplete')
+        }
     }
 
     return failures

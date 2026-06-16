@@ -1,4 +1,5 @@
 import {
+    deleteField,
     deleteDoc,
     collection,
     doc,
@@ -361,8 +362,27 @@ export function createFirebaseOpsStore(): OpsStore {
         updateRoomPlan(day: OpsTab, roomId: string, patch) {
             if (!firestoreDb) return
             const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'roomPlans', `${day}-${roomId}`)
-            const { cleaned } = sanitizeForFirestore(patch, `roomPlans.${day}-${roomId}.patch`)
-            void runWrite('updateRoomPlan', () => updateDoc(ref, cleaned as Record<string, unknown>))
+            const rootPath = `roomPlans.${day}-${roomId}.patch`
+            const { cleaned, removedPaths } = sanitizeForFirestore(patch, rootPath)
+            const clearedTopLevelKeys = Array.from(new Set(
+                removedPaths
+                    .map((path) => path.startsWith(`${rootPath}.`) ? path.slice(rootPath.length + 1) : '')
+                    .map((path) => path.split('.')[0])
+                    .filter((path) => path && !path.includes('['))
+            ))
+
+            const deletePatch = clearedTopLevelKeys.reduce<Record<string, unknown>>((acc, key) => {
+                acc[key] = deleteField()
+                return acc
+            }, {})
+
+            const updatePatch = {
+                ...(cleaned as Record<string, unknown>),
+                ...deletePatch
+            }
+
+            if (Object.keys(updatePatch).length === 0) return
+            void runWrite('updateRoomPlan', () => updateDoc(ref, updatePatch))
         },
         createTask(input: CreateTaskInput) {
             if (!firestoreDb) return null

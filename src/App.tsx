@@ -7,7 +7,7 @@ import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
-import { MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
+import { MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from './types'
 import {
     appMode,
     firebaseEnvDiagnostics,
@@ -96,6 +96,8 @@ type CreateSupplyRequestInput = {
     note?: string
     priority: SupplyRequest['priority']
 }
+
+type StateImportDayRow = PrevioStateImportPreview['days'][number]['rows'][number]
 
 function isCleaningDomain(category: SupplyRequest['category']) {
     return category !== 'maintenance'
@@ -252,6 +254,8 @@ export default function App() {
     const [selectedImportedDateIso, setSelectedImportedDateIso] = useState<string | null>(null)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
+    const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
+    const [planCleanupResult, setPlanCleanupResult] = useState<string | null>(null)
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
 
@@ -524,50 +528,94 @@ export default function App() {
         return `${d}.${m}.${y} ${hh}:${mm}`
     }
 
-    function buildRoomsForStateDay(dateIso: string, dayPreview?: PrevioStateImportPreview['days'][number]) {
+    function roomIdForNumber(roomNumber: string) {
+        return `r${roomNumber}`
+    }
+
+    function extractArrivalBoxFromNotes(notes?: string[]) {
+        if (!notes || notes.length === 0) return undefined
+        const match = notes.join(' ').match(/\bbox\s*([a-z0-9-]+)/i)
+        if (!match) return undefined
+        return `BOX ${match[1].toUpperCase()}`
+    }
+
+    function sameGuestLabel(left?: string, right?: string) {
+        return normalizeTaskTitleForCleanup(left || '') === normalizeTaskTitleForCleanup(right || '')
+    }
+
+    function shouldPreserveTurnoverOperationalState(base: RoomPlan | undefined, parsed: StateImportDayRow, mergedSituation: RoomPlan['situation']) {
+        if (!base) return false
+        if (base.stateSource !== 'previo-state-pdf') return false
+        if (base.situation !== mergedSituation) return false
+        if ((base.departureTime || '') !== (parsed.departureTime || '')) return false
+        if ((base.arrivalTime || '') !== (parsed.arrivalTime || '')) return false
+
+        const baseDepartureGuest = base.departure?.guestLabel
+        const baseArrivalGuest = base.arrival?.guestLabel
+
+        if (!sameGuestLabel(baseDepartureGuest, parsed.departureGuestName)) return false
+        if (!sameGuestLabel(baseArrivalGuest, parsed.arrivalGuestName)) return false
+
+        return true
+    }
+
+    function buildImportedBaseRow(base: RoomPlan | undefined, roomNumber: string, displayName: string | undefined, importedAt: string): RoomPlan {
+        return {
+            id: base?.id || roomIdForNumber(roomNumber),
+            number: base?.number || displayName || roomNumber,
+            situation: 'volny',
+            status: 'neni',
+            departure: undefined,
+            arrival: undefined,
+            nextArrivalPreview: undefined,
+            departureTime: undefined,
+            arrivalTime: undefined,
+            guestCount: undefined,
+            box: undefined,
+            notes: undefined,
+            assigned: undefined,
+            estimatedReady: undefined,
+            estimateSetAt: undefined,
+            statusNote: undefined,
+            checkoutException: false,
+            occupiedConfirmed: false,
+            freeConfirmed: false,
+            stateSource: 'previo-state-pdf',
+            stateImportedAt: importedAt,
+            stayoverGuestName: undefined,
+            stayoverUntil: undefined
+        }
+    }
+
+    function buildRoomsForStateDay(dateIso: string, dayPreview: PrevioStateImportPreview['days'][number], importedAt: string) {
         const existingTabs = ['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]
         const currentTabDate = existingTabs.find((day) => importedTabDates[day] === dateIso)
-        const sourceRooms = currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes
+        const sourceRooms = importedRoomsByDate[dateIso] || (currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes)
         const existingByRoom = new Map(
             sourceRooms.map((room) => [normalizeCatalogRoomNumber(room.number), room])
         )
+        const catalogByRoom = new Map(
+            activeRooms.map((room) => [normalizeCatalogRoomNumber(room.roomNumber), room])
+        )
+        const roomNumbers = Array.from(new Set([
+            ...MASTER_ROOM_NUMBERS,
+            ...activeRooms.map((room) => normalizeCatalogRoomNumber(room.roomNumber))
+        ])).sort((a, b) => Number(a) - Number(b))
 
         const parsedByRoom = new Map(
-            (dayPreview?.rows || []).map((row) => [normalizeCatalogRoomNumber(row.roomNumber), row])
+            dayPreview.rows.map((row) => [normalizeCatalogRoomNumber(row.roomNumber), row])
         )
 
-        return activeRooms.map((catalogRoom) => {
-            const normalizedRoom = normalizeCatalogRoomNumber(catalogRoom.roomNumber)
-            const base = existingByRoom.get(normalizedRoom)
-            const parsed = parsedByRoom.get(normalizedRoom)
-            const isDerivedFree = Boolean(dayPreview?.complete && dayPreview?.derivedFreeRooms.includes(normalizedRoom))
-
-            const row = base
-                ? { ...base }
-                : {
-                    id: `r-${normalizedRoom}`,
-                    number: catalogRoom.displayName || catalogRoom.roomNumber,
-                    situation: 'volny' as const,
-                    status: 'neni' as const
-                }
-
-            const importedAt = formatImportTimestamp(new Date())
+        return roomNumbers.map((roomNumber) => {
+            const base = existingByRoom.get(roomNumber)
+            const parsed = parsedByRoom.get(roomNumber)
+            const catalogRoom = catalogByRoom.get(roomNumber)
+            const row = buildImportedBaseRow(base, roomNumber, catalogRoom?.displayName || catalogRoom?.roomNumber, importedAt)
 
             if (!parsed) {
                 return {
                     ...row,
-                    departure: undefined,
-                    arrival: undefined,
-                    departureTime: undefined,
-                    arrivalTime: undefined,
-                    nextArrivalPreview: undefined,
-                    occupiedConfirmed: false,
-                    freeConfirmed: isDerivedFree,
-                    stateSource: isDerivedFree ? 'previo-state-pdf' as const : row.stateSource,
-                    stateImportedAt: isDerivedFree ? importedAt : row.stateImportedAt,
-                    stayoverGuestName: undefined,
-                    stayoverUntil: undefined,
-                    situation: 'volny' as const
+                    freeConfirmed: Boolean(dayPreview.complete && dayPreview.derivedFreeRooms.includes(roomNumber))
                 }
             }
 
@@ -576,17 +624,8 @@ export default function App() {
             if (!hasDeparture && !hasArrival) {
                 return {
                     ...row,
-                    situation: 'volny' as const,
-                    departure: undefined,
-                    arrival: undefined,
-                    departureTime: undefined,
-                    arrivalTime: undefined,
-                    nextArrivalPreview: undefined,
                     occupiedConfirmed: true,
-                    freeConfirmed: false,
-                    stateSource: 'previo-state-pdf' as const,
-                    stateImportedAt: importedAt,
-                    stayoverGuestName: parsed.stayoverGuestName,
+                    stayoverGuestName: parsed.stayoverGuestName || parsed.departureGuestName || parsed.arrivalGuestName,
                     stayoverUntil: parsed.stayoverUntil
                 }
             }
@@ -597,39 +636,39 @@ export default function App() {
                     ? 'odjezd'
                     : 'prijezd'
 
-            const arrivalNotes = parsed.arrivalNotes.length ? parsed.arrivalNotes : row.arrival?.notes
-            const arrivalBoxFromNotes = arrivalNotes?.join(' ').match(/\bbox\s*([a-z0-9-]+)/i)
-            const arrivalBox = arrivalBoxFromNotes ? `BOX ${arrivalBoxFromNotes[1].toUpperCase()}` : row.box
+            const preserveOperationalState = shouldPreserveTurnoverOperationalState(base, parsed, mergedSituation)
+            const departureNotes = parsed.departureNotes.length ? parsed.departureNotes : undefined
+            const arrivalNotes = parsed.arrivalNotes.length ? parsed.arrivalNotes : undefined
+            const arrivalBox = extractArrivalBoxFromNotes(arrivalNotes)
 
             return {
                 ...row,
                 situation: mergedSituation,
                 departure: hasDeparture ? {
                     time: parsed.departureTime as string,
-                    guestLabel: parsed.departureGuestName || row.departure?.guestLabel,
-                    notes: parsed.departureNotes.length ? parsed.departureNotes : row.departure?.notes
+                    guestLabel: parsed.departureGuestName,
+                    notes: departureNotes
                 } : undefined,
                 arrival: hasArrival ? {
                     time: parsed.arrivalTime as string,
-                    guestLabel: parsed.arrivalGuestName || row.arrival?.guestLabel,
+                    guestLabel: parsed.arrivalGuestName,
                     box: arrivalBox,
                     notes: arrivalNotes
                 } : undefined,
                 departureTime: parsed.departureTime,
                 arrivalTime: parsed.arrivalTime,
                 box: arrivalBox,
-                nextArrivalPreview: undefined,
-                occupiedConfirmed: false,
-                freeConfirmed: false,
-                stateSource: 'previo-state-pdf' as const,
-                stateImportedAt: importedAt,
-                stayoverGuestName: undefined,
-                stayoverUntil: undefined
+                status: preserveOperationalState ? (base?.status || 'ceka') : 'ceka',
+                assigned: preserveOperationalState ? base?.assigned : undefined,
+                estimatedReady: preserveOperationalState ? base?.estimatedReady : undefined,
+                estimateSetAt: preserveOperationalState ? base?.estimateSetAt : undefined,
+                statusNote: preserveOperationalState ? base?.statusNote : undefined,
+                checkoutException: preserveOperationalState ? Boolean(base?.checkoutException) : false
             }
         })
     }
 
-    function buildMergedPlansFromStateImport(preview: PrevioStateImportPreview) {
+    function buildMergedPlansFromStateImport(preview: PrevioStateImportPreview, importedAt: string) {
         const next: Record<OpsTab, typeof roomsByDay[OpsTab]> = {
             Dnes: [],
             Zitra: [],
@@ -639,19 +678,46 @@ export default function App() {
         const byDate: Record<string, typeof roomsByDay[OpsTab]> = {}
 
         preview.days.forEach((day) => {
-            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day)
+            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day, importedAt)
         })
 
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 const dateIso = preview.parsedTabDates[day]
                 if (!dateIso || !byDate[dateIso]) {
-                    next[day] = buildRoomsForStateDay(dateIso || importedTabDates[day] || '', undefined)
+                    next[day] = roomsByDay[day]
                     return
                 }
                 next[day] = byDate[dateIso]
             })
 
         return { next, byDate }
+    }
+
+    function buildRoomSyncPatch(room: RoomPlan): Partial<RoomPlan> {
+        return {
+            number: room.number,
+            situation: room.situation,
+            status: room.status,
+            departure: room.departure,
+            arrival: room.arrival,
+            nextArrivalPreview: room.nextArrivalPreview,
+            departureTime: room.departureTime,
+            arrivalTime: room.arrivalTime,
+            guestCount: room.guestCount,
+            box: room.box,
+            notes: room.notes,
+            assigned: room.assigned,
+            estimatedReady: room.estimatedReady,
+            estimateSetAt: room.estimateSetAt,
+            statusNote: room.statusNote,
+            checkoutException: room.checkoutException,
+            occupiedConfirmed: room.occupiedConfirmed,
+            freeConfirmed: room.freeConfirmed,
+            stateSource: room.stateSource,
+            stateImportedAt: room.stateImportedAt,
+            stayoverGuestName: room.stayoverGuestName,
+            stayoverUntil: room.stayoverUntil
+        }
     }
 
     async function handleCopyImportDebugText() {
@@ -806,7 +872,8 @@ export default function App() {
 
     async function handleConfirmPrevioStateImport() {
         if (!stateImportPreview || stateImportPreview.confidenceLow || stateImportBlockedByMissingDays) return
-        const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview)
+        const importedAt = formatImportTimestamp(new Date())
+        const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview, importedAt)
         setImportedTabDates(stateImportPreview.parsedTabDates)
         setImportedRoomsByDate(byDate)
         setSelectedImportedDateIso(null)
@@ -815,22 +882,7 @@ export default function App() {
         if (runtimeMode === 'online') {
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 next[day].forEach((room) => {
-                    activeStore.updateRoomPlan(day, room.id, {
-                        situation: room.situation,
-                        departure: room.departure,
-                        arrival: room.arrival,
-                        departureTime: room.departureTime,
-                        arrivalTime: room.arrivalTime,
-                        guestCount: room.guestCount,
-                        box: room.box,
-                        nextArrivalPreview: room.nextArrivalPreview,
-                        occupiedConfirmed: room.occupiedConfirmed,
-                        freeConfirmed: room.freeConfirmed,
-                        stateSource: room.stateSource,
-                        stateImportedAt: room.stateImportedAt,
-                        stayoverGuestName: room.stayoverGuestName,
-                        stayoverUntil: room.stayoverUntil
-                    })
+                    activeStore.updateRoomPlan(day, room.id, buildRoomSyncPatch(room))
                 })
             })
         }
@@ -1023,6 +1075,78 @@ export default function App() {
 
         setCleanupResult(`Vyčištěno testovacích úkolů: ${matchingIds.length}`)
         setCleanupConfirm(false)
+    }
+
+    function buildClearedRoomsForDay(sourceRooms: RoomPlan[]) {
+        const roomNumbers = Array.from(new Set([
+            ...MASTER_ROOM_NUMBERS,
+            ...activeRooms.map((room) => normalizeCatalogRoomNumber(room.roomNumber))
+        ])).sort((a, b) => Number(a) - Number(b))
+
+        const sourceByRoom = new Map(
+            sourceRooms.map((room) => [normalizeCatalogRoomNumber(room.number), room])
+        )
+        const catalogByRoom = new Map(
+            activeRooms.map((room) => [normalizeCatalogRoomNumber(room.roomNumber), room])
+        )
+
+        return roomNumbers.map((roomNumber) => {
+            const base = sourceByRoom.get(roomNumber)
+            const catalog = catalogByRoom.get(roomNumber)
+
+            return {
+                id: base?.id || roomIdForNumber(roomNumber),
+                number: base?.number || catalog?.displayName || catalog?.roomNumber || roomNumber,
+                situation: 'volny' as const,
+                status: 'neni' as const,
+                departure: undefined,
+                arrival: undefined,
+                nextArrivalPreview: undefined,
+                departureTime: undefined,
+                arrivalTime: undefined,
+                guestCount: undefined,
+                box: undefined,
+                notes: undefined,
+                assigned: undefined,
+                estimatedReady: undefined,
+                estimateSetAt: undefined,
+                statusNote: undefined,
+                checkoutException: false,
+                occupiedConfirmed: false,
+                freeConfirmed: false,
+                stateSource: undefined,
+                stateImportedAt: undefined,
+                stayoverGuestName: undefined,
+                stayoverUntil: undefined
+            }
+        })
+    }
+
+    function handleClearDemoPlan() {
+        const clearedPlans: Record<OpsTab, RoomPlan[]> = {
+            Dnes: buildClearedRoomsForDay(roomsByDay.Dnes),
+            Zitra: buildClearedRoomsForDay(roomsByDay.Zitra),
+            Pozitri: buildClearedRoomsForDay(roomsByDay.Pozitri)
+        }
+
+        setRoomsByDay(clearedPlans)
+        setImportedTabDates({})
+        setImportedRoomsByDate({})
+        setSelectedImportedDateIso(null)
+        setStateImportPreview(null)
+        setStateImportPdfStatus('idle')
+        setStateImportPdfError(null)
+
+        if (runtimeMode === 'online') {
+            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                clearedPlans[day].forEach((room) => {
+                    activeStore.updateRoomPlan(day, room.id, buildRoomSyncPatch(room))
+                })
+            })
+        }
+
+        setPlanCleanupResult(`Plán pokojů vyčištěn: ${clearedPlans.Dnes.length + clearedPlans.Zitra.length + clearedPlans.Pozitri.length} záznamů.`)
+        setPlanCleanupConfirm(false)
     }
 
     function handleMaintenanceTaskAction(taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') {
@@ -1752,6 +1876,20 @@ export default function App() {
                                                     </div>
                                                 )}
                                                 {cleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{cleanupResult}</div>}
+                                            </div>
+
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8, border: '1px solid #fecaca', background: '#fff7f7' }}>
+                                                <div style={{ fontSize: 13, color: '#7f1d1d', fontWeight: 700 }}>Údržba plánu pokojů</div>
+                                                <div className="room-meta" style={{ color: '#7f1d1d' }}>Vyčistí staré demo rezervace a stavy pokojů před novým importem Stav. Úkoly, nákupy a údržba zůstanou beze změny.</div>
+                                                {!planCleanupConfirm ? (
+                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setPlanCleanupConfirm(true)}>Vyčistit demo plán</button>
+                                                ) : (
+                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                        <button className="btn danger" onClick={handleClearDemoPlan}>Opravdu vyčistit plán?</button>
+                                                        <button className="btn" onClick={() => setPlanCleanupConfirm(false)}>Zrušit</button>
+                                                    </div>
+                                                )}
+                                                {planCleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{planCleanupResult}</div>}
                                             </div>
 
                                             {importPreview && (
