@@ -38,7 +38,9 @@ export type PrevioParsedRow = {
     guestLabel?: string
     guestCount?: number
     box?: string
-    notes: string[]
+    departureNotes: string[]
+    arrivalNotes: string[]
+    generalNotes: string[]
     warnings: string[]
 }
 
@@ -52,11 +54,16 @@ export type PrevioParseResult = {
         index: number
         pageDate?: string
         room?: string
+        blockStartLine: number
+        blockEndLine: number
         rawBlock: string
         detectedTimes: string[]
+        noteGroups: string[]
         departureTime?: string
         arrivalTime?: string
-        notes: string[]
+        departureNotes: string[]
+        arrivalNotes: string[]
+        generalNotes: string[]
         warnings: string[]
     }>
 }
@@ -67,7 +74,9 @@ export type ParsedTurnover = {
     guestLabel?: string
     guestCount?: number
     box?: string
-    notes: string[]
+    departureNotes: string[]
+    arrivalNotes: string[]
+    generalNotes: string[]
 }
 
 export type PrevioImportPreview = {
@@ -85,7 +94,9 @@ export type PrevioImportPreview = {
         roomNumber: string
         departureTime?: string
         arrivalTime?: string
-        notes: string
+        departureNotesLabel: string
+        arrivalNotesLabel: string
+        generalNotesLabel: string
     }>
 }
 
@@ -197,6 +208,29 @@ function keywordNotes(textLower: string) {
         'toaletní papír'
     ]
     return keywords.filter((k) => textLower.includes(k))
+}
+
+function normalizeBoxText(text: string) {
+    let normalized = text
+        .replace(/\bB\s*OX\b/gi, 'BOX')
+        .replace(/\bbox\b/gi, 'BOX')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+    normalized = normalized.replace(/Recepce\s*:\s*BOX/gi, 'Recepce: BOX')
+    normalized = normalized.replace(/\bBOX\s*([a-z0-9-]+)/gi, (_, value: string) => `BOX ${value.toUpperCase()}`)
+
+    return normalized
+}
+
+function splitNoteGroups(rawText: string) {
+    const rawGroups = rawText
+        .split(/\.\.\.+|…+/)
+        .map((part) => normalizeBoxText(part))
+        .map((part) => part.trim())
+        .filter(Boolean)
+
+    return Array.from(new Set(rawGroups))
 }
 
 export function getDefaultRoomCatalog(): RoomCatalogItem[] {
@@ -324,28 +358,55 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
         }
     }
 
-    function extractBlockNotes(blockText: string) {
-        const notes: string[] = []
-        const normalized = normalizeForMatch(blockText)
+    function assignNotesBySide(
+        noteGroups: string[],
+        departureTime?: string,
+        arrivalTime?: string
+    ) {
+        const departureNotes: string[] = []
+        const arrivalNotes: string[] = []
+        const generalNotes: string[] = []
+        const sideWarnings: string[] = []
 
-        const keywordEntries = [
-            { key: 'detska postylka', label: 'dětská postýlka' },
-            { key: 'gauc', label: 'gauč' },
-            { key: 'extra rucniky', label: 'extra ručníky' },
-            { key: 'late arrival', label: 'late arrival' },
-            { key: 'alfred', label: 'Alfred' }
-        ]
-        keywordEntries.forEach((entry) => {
-            if (normalized.includes(entry.key)) {
-                notes.push(entry.label)
+        if (noteGroups.length === 0) {
+            return { departureNotes, arrivalNotes, generalNotes, sideWarnings }
+        }
+
+        if (departureTime && arrivalTime) {
+            if (noteGroups[0]) departureNotes.push(noteGroups[0])
+            if (noteGroups[1]) arrivalNotes.push(noteGroups[1])
+            if (noteGroups.length > 2) {
+                generalNotes.push(...noteGroups.slice(2))
+                sideWarnings.push('Více než dvě poznámkové skupiny v bloku, zbytek přesunut do obecných poznámek')
             }
-        })
+            return { departureNotes, arrivalNotes, generalNotes, sideWarnings }
+        }
 
-        const boxMentions = [...blockText.matchAll(/(?:recepce\s*:\s*)?box\s*[a-z0-9-]+/ig)]
-            .map((match) => match[0].replace(/\s+/g, ' ').trim())
-        notes.push(...boxMentions)
+        if (arrivalTime && !departureTime) {
+            if (noteGroups.length === 1) {
+                arrivalNotes.push(noteGroups[0])
+            } else {
+                arrivalNotes.push(noteGroups[0])
+                generalNotes.push(...noteGroups.slice(1))
+                sideWarnings.push('Pouze příjezdový čas, více skupin poznámek - další skupiny přesunuty do obecných poznámek')
+            }
+            return { departureNotes, arrivalNotes, generalNotes, sideWarnings }
+        }
 
-        return Array.from(new Set(notes))
+        if (departureTime && !arrivalTime) {
+            if (noteGroups.length === 1) {
+                departureNotes.push(noteGroups[0])
+            } else {
+                departureNotes.push(noteGroups[0])
+                generalNotes.push(...noteGroups.slice(1))
+                sideWarnings.push('Pouze odjezdový čas, více skupin poznámek - další skupiny přesunuty do obecných poznámek')
+            }
+            return { departureNotes, arrivalNotes, generalNotes, sideWarnings }
+        }
+
+        generalNotes.push(...noteGroups)
+        sideWarnings.push('Nelze jednoznačně přiřadit poznámky k odjezdu/příjezdu')
+        return { departureNotes, arrivalNotes, generalNotes, sideWarnings }
     }
 
     function extractBox(blockText: string) {
@@ -416,8 +477,16 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
             const rawBlock = blockLines.join('\n')
             const detectedTimes = detectTimes(rawBlock)
             const { departureTime, arrivalTime } = chooseTimes(detectedTimes)
-            const notes = extractBlockNotes(rawBlock)
-            const box = extractBox(rawBlock)
+            const noteGroups = splitNoteGroups(blockBeforeRoom.join(' '))
+            const {
+                departureNotes,
+                arrivalNotes,
+                generalNotes,
+                sideWarnings
+            } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
+            const noteKeywordMatches = keywordNotes(normalizeForMatch(rawBlock))
+            const allGeneralNotes = Array.from(new Set([...generalNotes, ...noteKeywordMatches]))
+            const box = arrivalTime ? extractBox(arrivalNotes.join(' ')) : undefined
             const guestCount = extractGuestCount(rawBlock)
             const contextDates = extractDateTokens(blockAfterRoom.join(' '))
             const blockWarnings: string[] = []
@@ -434,6 +503,7 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
             if (blockBeforeRoom.length === 0) {
                 blockWarnings.push('Blok nemá text před řádkem pokoje')
             }
+            blockWarnings.push(...sideWarnings)
 
             const operationalDate = pageDate
                 ? formatLocalDate(pageDate)
@@ -446,7 +516,9 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
                 arrivalTime,
                 guestCount,
                 box,
-                notes,
+                departureNotes,
+                arrivalNotes,
+                generalNotes: allGeneralNotes,
                 warnings: blockWarnings
             })
 
@@ -458,11 +530,16 @@ export function parsePrevioPdfText(rawText: string, referenceDate = new Date()):
                 index: lineDebug.length + 1,
                 pageDate: pageDate ? formatLocalDate(pageDate) : undefined,
                 room: marker.room,
+                blockStartLine: blockStart + 1,
+                blockEndLine: blockEnd + 1,
                 rawBlock,
                 detectedTimes,
+                noteGroups,
                 departureTime,
                 arrivalTime,
-                notes,
+                departureNotes,
+                arrivalNotes,
+                generalNotes: allGeneralNotes,
                 warnings: blockWarnings
             })
         })
@@ -540,14 +617,20 @@ export function buildPrevioImportPreview(
         parsedTabDates[tab] = row.dateIso
 
         const normalizedRoom = normalizeRoomKey(row.roomNumber)
-        const prev = byTab[tab].get(normalizedRoom) || { notes: [] }
+        const prev = byTab[tab].get(normalizedRoom) || {
+            departureNotes: [],
+            arrivalNotes: [],
+            generalNotes: []
+        }
         byTab[tab].set(normalizedRoom, {
             departureTime: row.departureTime || prev.departureTime,
             arrivalTime: row.arrivalTime || prev.arrivalTime,
             guestLabel: row.guestLabel || prev.guestLabel,
             guestCount: row.guestCount ?? prev.guestCount,
             box: row.box || prev.box,
-            notes: Array.from(new Set([...(prev.notes || []), ...row.notes]))
+            departureNotes: Array.from(new Set([...(prev.departureNotes || []), ...row.departureNotes])),
+            arrivalNotes: Array.from(new Set([...(prev.arrivalNotes || []), ...row.arrivalNotes])),
+            generalNotes: Array.from(new Set([...(prev.generalNotes || []), ...row.generalNotes]))
         })
     })
 
@@ -572,7 +655,9 @@ export function buildPrevioImportPreview(
                     roomNumber,
                     departureTime: row.departureTime,
                     arrivalTime: row.arrivalTime,
-                    notes: row.notes.join(', ')
+                    departureNotesLabel: row.departureNotes.join(', '),
+                    arrivalNotesLabel: row.arrivalNotes.join(', '),
+                    generalNotesLabel: row.generalNotes.join(', ')
                 })
             })
         })

@@ -464,7 +464,7 @@ export default function App() {
                             guestLabel: parsed.guestLabel,
                             guestCount: parsed.guestCount,
                             box: parsed.box || row.box,
-                            notes: parsed.notes.length ? parsed.notes : row.arrival?.notes
+                            notes: parsed.arrivalNotes.length ? parsed.arrivalNotes : row.arrival?.notes
                         } : undefined,
                         departureTime: parsed.departureTime,
                         arrivalTime: parsed.arrivalTime,
@@ -1309,9 +1309,12 @@ export default function App() {
                                                             <div style={{ marginTop: 8, maxHeight: 280, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12 }}>
                                                                 {importParseResult.lineDebug.map((dbg) => (
                                                                     <div key={`dbg-${dbg.index}-${dbg.room || 'none'}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
-                                                                        <div><strong>Blok {dbg.index}:</strong> Strana/den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'}</div>
+                                                                        <div><strong>Blok {dbg.index}:</strong> Strana/den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'} | Rozsah: {dbg.blockStartLine}-{dbg.blockEndLine}</div>
                                                                         <div>Detekované časy: {dbg.detectedTimes.length ? dbg.detectedTimes.join(', ') : '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
-                                                                        <div>Poznámky: {dbg.notes.length ? dbg.notes.join(', ') : '—'}</div>
+                                                                        <div>Skupiny poznámek: {dbg.noteGroups.length ? dbg.noteGroups.join(' || ') : '—'}</div>
+                                                                        <div>Odjezd pozn.: {dbg.departureNotes.length ? dbg.departureNotes.join(', ') : '—'}</div>
+                                                                        <div>Příjezd pozn.: {dbg.arrivalNotes.length ? dbg.arrivalNotes.join(', ') : '—'}</div>
+                                                                        <div>Obecné pozn.: {dbg.generalNotes.length ? dbg.generalNotes.join(', ') : '—'}</div>
                                                                         <div>Varování: {dbg.warnings.length ? dbg.warnings.join(' | ') : '—'}</div>
                                                                         <pre style={{ marginTop: 6, maxHeight: 120, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: 6, background: '#fff', whiteSpace: 'pre-wrap' }}>{dbg.rawBlock}</pre>
                                                                     </div>
@@ -1328,7 +1331,9 @@ export default function App() {
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
                                                                     <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Poznámky</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odjezd pozn.</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příjezd pozn.</th>
+                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Obecné pozn.</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
@@ -1338,7 +1343,9 @@ export default function App() {
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
                                                                         <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.notes || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotesLabel || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotesLabel || '—'}</td>
+                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.generalNotesLabel || '—'}</td>
                                                                     </tr>
                                                                 ))}
                                                             </tbody>
