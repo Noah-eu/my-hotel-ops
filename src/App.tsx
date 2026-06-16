@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect, useRef } from 'react'
 import type { User } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
 import { RoleSwitch } from './components/RoleSwitch'
@@ -98,6 +98,211 @@ type CreateSupplyRequestInput = {
 }
 
 type StateImportDayRow = PrevioStateImportPreview['days'][number]['rows'][number]
+
+type ImportJobInlinePreviewRow = {
+    dateIso: string
+    roomNumber: string
+    departureTime?: string
+    arrivalTime?: string
+    departureGuestName?: string
+    arrivalGuestName?: string
+    departureNotes: string[]
+    arrivalNotes: string[]
+    isStayover: boolean
+}
+
+type ImportJobInlinePreviewModel = {
+    detectedDaysCount: number
+    turnoverCount: number
+    stayoverCount: number
+    freeCount: number
+    warnings: string[]
+    rows: ImportJobInlinePreviewRow[]
+    byDate: Record<string, RoomPlan[]> | null
+    parsedTabDates: Partial<Record<OpsTab, string>> | null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    return value as Record<string, unknown>
+}
+
+function normalizeNotes(value: unknown): string[] {
+    if (!Array.isArray(value)) return []
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+}
+
+function roomSortKey(roomNumber: string) {
+    const digits = String(roomNumber || '').replace(/\D/g, '')
+    if (!digits) return Number.MAX_SAFE_INTEGER
+    return Number(digits)
+}
+
+function sortInlinePreviewRows(rows: ImportJobInlinePreviewRow[]) {
+    return [...rows].sort((left, right) => {
+        if (left.dateIso !== right.dateIso) return left.dateIso.localeCompare(right.dateIso)
+        const leftRoom = roomSortKey(left.roomNumber)
+        const rightRoom = roomSortKey(right.roomNumber)
+        if (leftRoom !== rightRoom) return leftRoom - rightRoom
+        return left.roomNumber.localeCompare(right.roomNumber)
+    })
+}
+
+function getImportJobByDate(summary: ImportJob['previewSummary']): Record<string, RoomPlan[]> | null {
+    const summaryRecord = asRecord(summary)
+    if (!summaryRecord) return null
+
+    const byDateRaw = asRecord(summaryRecord.byDate)
+    if (!byDateRaw) return null
+
+    const byDate: Record<string, RoomPlan[]> = {}
+    Object.entries(byDateRaw).forEach(([dateIso, rooms]) => {
+        if (!Array.isArray(rooms)) return
+        byDate[dateIso] = rooms as RoomPlan[]
+    })
+
+    return Object.keys(byDate).length > 0 ? byDate : null
+}
+
+function getImportJobParsedTabDates(summary: ImportJob['previewSummary']): Partial<Record<OpsTab, string>> | null {
+    const summaryRecord = asRecord(summary)
+    if (!summaryRecord) return null
+
+    const parsedRaw = asRecord(summaryRecord.parsedTabDates)
+    if (!parsedRaw) return null
+
+    const parsed: Partial<Record<OpsTab, string>> = {}
+    ;(['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+        const value = parsedRaw[day]
+        if (typeof value === 'string' && value.trim()) parsed[day] = value
+    })
+
+    return Object.keys(parsed).length > 0 ? parsed : null
+}
+
+function buildInlineRowsFromByDate(byDate: Record<string, RoomPlan[]>): ImportJobInlinePreviewRow[] {
+    const rows: ImportJobInlinePreviewRow[] = []
+
+    Object.entries(byDate).forEach(([dateIso, dayRooms]) => {
+        dayRooms.forEach((room) => {
+            const departureTime = room.departureTime || room.departure?.time
+            const arrivalTime = room.arrivalTime || room.arrival?.time
+            const stayoverGuestName = room.stayoverGuestName || room.departure?.guestLabel
+            const isStayover = Boolean(!departureTime && !arrivalTime && (stayoverGuestName || room.occupiedConfirmed))
+
+            if (!departureTime && !arrivalTime && !isStayover) return
+
+            rows.push({
+                dateIso,
+                roomNumber: String(room.number || room.id || ''),
+                departureTime,
+                arrivalTime,
+                departureGuestName: room.departure?.guestLabel || (isStayover ? stayoverGuestName : undefined),
+                arrivalGuestName: room.arrival?.guestLabel,
+                departureNotes: normalizeNotes(room.departure?.notes),
+                arrivalNotes: normalizeNotes(room.arrival?.notes),
+                isStayover
+            })
+        })
+    })
+
+    return sortInlinePreviewRows(rows)
+}
+
+function buildImportJobInlinePreviewModel(job: ImportJob): ImportJobInlinePreviewModel | null {
+    const summaryRecord = asRecord(job.previewSummary)
+    if (!summaryRecord) return null
+
+    const byDate = getImportJobByDate(job.previewSummary)
+    const parsedTabDates = getImportJobParsedTabDates(job.previewSummary)
+    const previewRaw = summaryRecord.preview
+
+    if (previewRaw && typeof previewRaw === 'object') {
+        const preview = previewRaw as {
+            days?: Array<{
+                dateIso: string
+                rows: Array<{
+                    departureTime?: string
+                    arrivalTime?: string
+                    departureGuestName?: string
+                    arrivalGuestName?: string
+                    stayoverGuestName?: string
+                    departureNotes?: string[]
+                    arrivalNotes?: string[]
+                    isStayover?: boolean
+                    roomNumber: string
+                }>
+            }>
+            warnings?: string[]
+            turnoverCount?: number
+            stayoverCount?: number
+            derivedFreeCount?: number
+        }
+
+        if (Array.isArray(preview.days)) {
+            const flattenedRows = preview.days.flatMap((day) => {
+                if (!Array.isArray(day.rows)) return []
+                return day.rows.map((row) => ({
+                    dateIso: day.dateIso,
+                    roomNumber: String(row.roomNumber || ''),
+                    departureTime: row.departureTime,
+                    arrivalTime: row.arrivalTime,
+                    departureGuestName: row.departureGuestName || (row.isStayover ? row.stayoverGuestName : undefined),
+                    arrivalGuestName: row.arrivalGuestName,
+                    departureNotes: normalizeNotes(row.departureNotes),
+                    arrivalNotes: normalizeNotes(row.arrivalNotes),
+                    isStayover: Boolean(row.isStayover)
+                }))
+            })
+
+            const fallbackRows = byDate ? buildInlineRowsFromByDate(byDate) : []
+
+            return {
+                detectedDaysCount: preview.days.length,
+                turnoverCount: typeof preview.turnoverCount === 'number' ? preview.turnoverCount : (job.turnoverCount ?? 0),
+                stayoverCount: typeof preview.stayoverCount === 'number' ? preview.stayoverCount : (job.stayoverCount ?? 0),
+                freeCount: typeof preview.derivedFreeCount === 'number' ? preview.derivedFreeCount : (job.freeCount ?? 0),
+                warnings: normalizeNotes(preview.warnings),
+                rows: flattenedRows.length > 0 ? sortInlinePreviewRows(flattenedRows) : fallbackRows,
+                byDate,
+                parsedTabDates
+            }
+        }
+    }
+
+    if (!byDate) return null
+
+    const byDateRows = buildInlineRowsFromByDate(byDate)
+    const missingDateLabels = normalizeNotes(summaryRecord.missingDateLabels)
+
+    return {
+        detectedDaysCount: typeof job.detectedDaysCount === 'number' ? job.detectedDaysCount : Object.keys(byDate).length,
+        turnoverCount: typeof job.turnoverCount === 'number'
+            ? job.turnoverCount
+            : byDateRows.filter((row) => Boolean(row.departureTime || row.arrivalTime)).length,
+        stayoverCount: typeof job.stayoverCount === 'number'
+            ? job.stayoverCount
+            : byDateRows.filter((row) => row.isStayover).length,
+        freeCount: typeof job.freeCount === 'number'
+            ? job.freeCount
+            : Object.values(byDate).reduce((sum, rooms) => sum + rooms.filter((room) => room.freeConfirmed).length, 0),
+        warnings: missingDateLabels.length > 0
+            ? missingDateLabels.map((label) => `Chybějící den: ${label}`)
+            : normalizeNotes(job.warnings),
+        rows: byDateRows,
+        byDate,
+        parsedTabDates
+    }
+}
+
+function formatPreviewRowDate(dateIso: string) {
+    const parsed = new Date(`${dateIso}T00:00:00`)
+    if (Number.isNaN(parsed.getTime())) return dateIso
+    return parsed.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' })
+}
 
 function isCleaningDomain(category: SupplyRequest['category']) {
     return category !== 'maintenance'
@@ -285,10 +490,14 @@ export default function App() {
     const [selectedImportJobId, setSelectedImportJobId] = useState<string | null>(null)
     const [activeStateImportJobId, setActiveStateImportJobId] = useState<string | null>(null)
     const [generatingImportPreviewJobId, setGeneratingImportPreviewJobId] = useState<string | null>(null)
+    const [openImportJobPreviewId, setOpenImportJobPreviewId] = useState<string | null>(null)
+    const [expandedImportJobPreviewRows, setExpandedImportJobPreviewRows] = useState<Record<string, boolean>>({})
+    const [importJobPreviewInlineErrors, setImportJobPreviewInlineErrors] = useState<Record<string, string>>({})
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
     const [planCleanupResult, setPlanCleanupResult] = useState<string | null>(null)
+    const importJobPreviewPanelRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
 
@@ -637,12 +846,12 @@ export default function App() {
         if (!job || !job.storagePath) return
 
         setGeneratingImportPreviewJobId(jobId)
-        setSelectedImportJobId(jobId)
-        setStateImportPreview(null)
-        setStateImportRawText('')
-        setStateImportParseResult(null)
-        setStateImportPdfStatus('loading')
-        setStateImportPdfError(null)
+        setImportJobPreviewInlineErrors((prev) => {
+            if (!(jobId in prev)) return prev
+            const next = { ...prev }
+            delete next[jobId]
+            return next
+        })
 
         try {
             if (!authUser || authUser.isAnonymous) {
@@ -680,18 +889,7 @@ export default function App() {
             if (responseBody?.job) {
                 const updatedJob = responseBody.job as ImportJob
                 upsertImportJobInState(updatedJob)
-                setSelectedImportJobId(updatedJob.id)
-                setActiveStateImportJobId(updatedJob.id)
-                setStateImportPreview(updatedJob.previewSummary?.preview || null)
-            } else {
-                setSelectedImportJobId(jobId)
-                setStateImportPreview(null)
             }
-
-            setStateImportRawText('')
-            setStateImportParseResult(null)
-            setStateImportPdfStatus('loaded')
-            setStateImportPdfError(null)
         } catch (error: any) {
             const timeoutHit = error?.name === 'AbortError'
             const message = timeoutHit
@@ -706,12 +904,10 @@ export default function App() {
                     ? { ...item, ...failedPatch }
                     : item
             ))))
-
-            setStateImportPdfStatus('error')
-            setStateImportPdfError(message)
-            setStateImportPreview(null)
-            setStateImportRawText('')
-            setStateImportParseResult(null)
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: message
+            }))
         } finally {
             setGeneratingImportPreviewJobId(null)
         }
@@ -1126,10 +1322,30 @@ export default function App() {
 
     async function handleConfirmImportJob(jobId: string) {
         const job = importJobs.find((item) => item.id === jobId)
-        if (!job || !job.previewSummary?.byDate || !job.previewSummary?.parsedTabDates) return
+        const previewModel = job ? buildImportJobInlinePreviewModel(job) : null
+        const byDate = job ? getImportJobByDate(job.previewSummary) : null
+        const parsedTabDates = job ? getImportJobParsedTabDates(job.previewSummary) : null
 
-        const byDate = job.previewSummary.byDate
-        const parsedTabDates = job.previewSummary.parsedTabDates
+        if (!job || !previewModel || !byDate || !parsedTabDates) {
+            const message = 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'
+            if (job) {
+                setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                    item.id === jobId
+                        ? { ...item, error: message }
+                        : item
+                ))))
+                setImportJobPreviewInlineErrors((prev) => ({
+                    ...prev,
+                    [jobId]: message
+                }))
+                setOpenImportJobPreviewId(jobId)
+                console.warn('[import-job-preview] Potvrzení blokováno kvůli nevalidnímu náhledu', {
+                    jobId,
+                    previewSummaryKeys: Object.keys(asRecord(job.previewSummary) || {})
+                })
+            }
+            return
+        }
 
         const next: Record<OpsTab, RoomPlan[]> = {
             Dnes: roomsByDay.Dnes,
@@ -1190,6 +1406,19 @@ export default function App() {
     function handleDeleteImportJob(jobId: string) {
         activeStore.deleteImportJob(jobId)
         setImportJobs((prev) => prev.filter((item) => item.id !== jobId))
+        if (openImportJobPreviewId === jobId) setOpenImportJobPreviewId(null)
+        setExpandedImportJobPreviewRows((prev) => {
+            if (!(jobId in prev)) return prev
+            const next = { ...prev }
+            delete next[jobId]
+            return next
+        })
+        setImportJobPreviewInlineErrors((prev) => {
+            if (!(jobId in prev)) return prev
+            const next = { ...prev }
+            delete next[jobId]
+            return next
+        })
         if (selectedImportJobId === jobId) {
             setSelectedImportJobId(null)
             setStateImportPreview(null)
@@ -1197,34 +1426,43 @@ export default function App() {
         }
     }
 
-    function isValidStoredStateImportPreview(preview: ImportJob['previewSummary'] extends { preview?: infer T } ? T : unknown): preview is NonNullable<ImportJob['previewSummary']>['preview'] {
-        if (!preview || typeof preview !== 'object') return false
-        const maybe = preview as NonNullable<ImportJob['previewSummary']>['preview']
-        return Array.isArray(maybe.days)
-            && typeof maybe.turnoverCount === 'number'
-            && typeof maybe.stayoverCount === 'number'
-            && typeof maybe.derivedFreeCount === 'number'
-            && Array.isArray(maybe.warnings)
-    }
-
     function handleShowImportJobPreview(jobId: string) {
-        const job = importJobs.find((item) => item.id === jobId)
-        if (!job || !isValidStoredStateImportPreview(job.previewSummary?.preview)) {
-            setSelectedImportJobId(jobId)
-            setActiveStateImportJobId(null)
-            setStateImportPreview(null)
-            setStateImportPdfStatus('error')
-            setStateImportPdfError('Náhled importu není dostupný. Zkuste vytvořit náhled znovu.')
+        if (openImportJobPreviewId === jobId) {
+            setOpenImportJobPreviewId(null)
             return
         }
 
-        setSelectedImportJobId(jobId)
-        setActiveStateImportJobId(jobId)
-        setStateImportPreview(null)
-        setStateImportPdfStatus('loaded')
-        setStateImportPdfError(null)
-        setStateImportRawText('')
-        setStateImportParseResult(null)
+        const job = importJobs.find((item) => item.id === jobId)
+        const previewModel = job ? buildImportJobInlinePreviewModel(job) : null
+
+        if (!previewModel) {
+            const message = 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'
+            console.warn('[import-job-preview] Neplatný nebo chybějící náhled import jobu', {
+                jobId,
+                previewSummaryKeys: Object.keys(asRecord(job?.previewSummary) || {})
+            })
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: message
+            }))
+        } else {
+            setImportJobPreviewInlineErrors((prev) => {
+                if (!(jobId in prev)) return prev
+                const next = { ...prev }
+                delete next[jobId]
+                return next
+            })
+        }
+
+        setOpenImportJobPreviewId(jobId)
+        setExpandedImportJobPreviewRows((prev) => ({
+            ...prev,
+            [jobId]: false
+        }))
+
+        window.setTimeout(() => {
+            importJobPreviewPanelRefs.current[jobId]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        }, 50)
     }
 
     function handleRoleChange(nextUserId: string) {
@@ -2118,7 +2356,18 @@ export default function App() {
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginBottom: 8 }}>
                                                 <div style={{ fontSize: 14, fontWeight: 800 }}>Importy z Previa</div>
                                                 {importJobs.length === 0 && <div className="room-meta">Zatím nejsou žádné import joby.</div>}
-                                                {importJobs.map((job) => (
+                                                {importJobs.map((job) => {
+                                                    const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
+                                                    const hasPreviewSummary = Boolean(asRecord(job.previewSummary))
+                                                    const canConfirm = Boolean(job.status === 'needs_review' && inlinePreviewModel?.byDate && inlinePreviewModel?.parsedTabDates)
+                                                    const isInlinePreviewOpen = openImportJobPreviewId === job.id
+                                                    const inlinePreviewError = importJobPreviewInlineErrors[job.id]
+                                                    const rowsExpanded = Boolean(expandedImportJobPreviewRows[job.id])
+                                                    const visibleRows = inlinePreviewModel
+                                                        ? (rowsExpanded ? inlinePreviewModel.rows : inlinePreviewModel.rows.slice(0, 20))
+                                                        : []
+
+                                                    return (
                                                     <div key={job.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
                                                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                                                             <div style={{ fontWeight: 700 }}>{job.fileName}</div>
@@ -2149,8 +2398,10 @@ export default function App() {
                                                         )}
                                                         {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
                                                         <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                            {job.previewSummary?.preview && (
-                                                                <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>Zobrazit náhled</button>
+                                                            {hasPreviewSummary && (
+                                                                <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>
+                                                                    {isInlinePreviewOpen ? 'Skrýt náhled' : 'Zobrazit náhled'}
+                                                                </button>
                                                             )}
                                                             {job.source === 'email' && job.storagePath && (
                                                                 <button
@@ -2160,12 +2411,12 @@ export default function App() {
                                                                 >
                                                                     {generatingImportPreviewJobId === job.id
                                                                         ? 'Vytvářím náhled...'
-                                                                        : (job.previewSummary?.preview ? 'Přegenerovat náhled' : 'Vytvořit náhled')}
+                                                                        : (hasPreviewSummary ? 'Přegenerovat náhled' : 'Vytvořit náhled')}
                                                                 </button>
                                                             )}
                                                             <button
                                                                 className="btn"
-                                                                disabled={job.status !== 'needs_review' || !job.previewSummary?.byDate || !job.previewSummary?.parsedTabDates}
+                                                                disabled={!canConfirm}
                                                                 onClick={() => void handleConfirmImportJob(job.id)}
                                                             >
                                                                 Potvrdit import
@@ -2173,8 +2424,91 @@ export default function App() {
                                                             <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
                                                             <button className="btn danger" onClick={() => handleDeleteImportJob(job.id)}>Smazat import job</button>
                                                         </div>
+
+                                                        {isInlinePreviewOpen && (
+                                                            <div
+                                                                ref={(node) => {
+                                                                    importJobPreviewPanelRefs.current[job.id] = node
+                                                                }}
+                                                                style={{ marginTop: 10, border: '1px solid #bae6fd', background: '#f0f9ff', borderRadius: 8, padding: 8, display: 'grid', gap: 8 }}
+                                                            >
+                                                                {inlinePreviewModel ? (
+                                                                    <>
+                                                                        <div style={{ fontWeight: 800, color: '#0c4a6e' }}>Náhled importu Stav</div>
+                                                                        <div className="room-meta" style={{ color: '#0c4a6e' }}>Detekované dny: {inlinePreviewModel.detectedDaysCount} • Turnover pokoje: {inlinePreviewModel.turnoverCount} • Probíhající pobyty: {inlinePreviewModel.stayoverCount} • Odvozené volné pokoje: {inlinePreviewModel.freeCount}</div>
+                                                                        {inlinePreviewModel.warnings.length > 0 && (
+                                                                            <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                                                {inlinePreviewModel.warnings.slice(0, 8).map((warning, index) => (
+                                                                                    <div key={`${job.id}-inline-warning-${index}`}>{warning}</div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                        {inlinePreviewError && (
+                                                                            <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
+                                                                                {inlinePreviewError}
+                                                                            </div>
+                                                                        )}
+                                                                        <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
+                                                                            <div style={{ maxHeight: 280, overflow: 'auto' }}>
+                                                                                <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
+                                                                                    <thead>
+                                                                                        <tr style={{ background: '#f8fafc' }}>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Odj. pozn.</th>
+                                                                                            <th style={{ textAlign: 'left', padding: 6 }}>Příj. pozn.</th>
+                                                                                        </tr>
+                                                                                    </thead>
+                                                                                    <tbody>
+                                                                                        {visibleRows.length > 0 ? visibleRows.map((row, index) => (
+                                                                                            <tr key={`${job.id}-inline-row-${row.dateIso}-${row.roomNumber}-${index}`}>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{formatPreviewRowDate(row.dateIso)}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber || '—'}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotes.length ? row.departureNotes.join('; ') : '—'}</td>
+                                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotes.length ? row.arrivalNotes.join('; ') : '—'}</td>
+                                                                                            </tr>
+                                                                                        )) : (
+                                                                                            <tr>
+                                                                                                <td colSpan={8} style={{ padding: 8, borderTop: '1px solid #e2e8f0', color: '#475569' }}>
+                                                                                                    Náhled je dostupný, ale neobsahuje tabulkové řádky.
+                                                                                                </td>
+                                                                                            </tr>
+                                                                                        )}
+                                                                                    </tbody>
+                                                                                </table>
+                                                                            </div>
+                                                                        </div>
+                                                                        {inlinePreviewModel.rows.length > 20 && (
+                                                                            <button
+                                                                                className="btn"
+                                                                                style={{ width: 'fit-content' }}
+                                                                                onClick={() => setExpandedImportJobPreviewRows((prev) => ({
+                                                                                    ...prev,
+                                                                                    [job.id]: !rowsExpanded
+                                                                                }))}
+                                                                            >
+                                                                                {rowsExpanded ? 'Zobrazit méně' : `Zobrazit vše (${inlinePreviewModel.rows.length})`}
+                                                                            </button>
+                                                                        )}
+                                                                    </>
+                                                                ) : (
+                                                                    <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
+                                                                        {inlinePreviewError || 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                ))}
+                                                    )
+                                                })}
                                             </div>
 
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
