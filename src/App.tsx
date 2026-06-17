@@ -108,6 +108,11 @@ type ReportRoomProblemInput = {
     priority: Task['priority']
 }
 
+type LateTaskRoomFocusRequest = {
+    requestId: number
+    roomNumber: string
+}
+
 function isRoomLikelyAlreadyTouched(room: RoomPlan) {
     if (room.status === 'prevzato' || room.status === 'probihá' || room.status === 'odhad' || room.status === 'hotovo' || room.status === 'problem') return true
     if (Boolean(room.assigned)) return true
@@ -841,6 +846,11 @@ export default function App() {
     const [importCleanupFeedback, setImportCleanupFeedback] = useState<ImportCleanupFeedback | null>(null)
     const [rollingBackJobId, setRollingBackJobId] = useState<string | null>(null)
     const [rollbackAvailabilityByJobId, setRollbackAvailabilityByJobId] = useState<Record<string, RollbackAvailability>>({})
+    const [lateTaskRoomFocusRequest, setLateTaskRoomFocusRequest] = useState<LateTaskRoomFocusRequest | null>(null)
+    const [lateTaskLastFocusedRoomNumber, setLateTaskLastFocusedRoomNumber] = useState<string | null>(null)
+    const [lateTaskNavMessage, setLateTaskNavMessage] = useState<string | null>(null)
+    const lateTaskFocusRequestCounterRef = useRef(0)
+    const lateTaskNavMessageTimeoutRef = useRef<number | null>(null)
     const [installHintDismissed, setInstallHintDismissed] = useState(() => {
         if (typeof window === 'undefined') return false
         return window.localStorage.getItem('chill_ops_install_hint_dismissed') === '1'
@@ -1027,6 +1037,52 @@ export default function App() {
         () => tasks.filter((task) => task.assignedToRole === 'maintenance'),
         [tasks]
     )
+
+    const todayDateIso = formatLocalDateIso(new Date())
+
+    const unacknowledgedLateTodayTasks = useMemo(() => (
+        visibleTodayTasks.filter((task) => (
+            task.taskDateIso === todayDateIso
+            && task.attentionRequired
+            && task.attentionReason === 'late_today_room_task'
+            && task.status !== 'read'
+            && task.status !== 'done'
+            && task.status !== 'cancelled'
+        ))
+    ), [visibleTodayTasks, todayDateIso])
+
+    const orderedLateRoomNumbers = useMemo(() => {
+        const roomOrder = new Map<string, number>()
+        roomsByDay.Dnes.forEach((room, index) => {
+            roomOrder.set(room.number, index)
+        })
+
+        const uniqueRooms = Array.from(new Set(unacknowledgedLateTodayTasks.map((task) => task.roomNumber)))
+        return uniqueRooms.sort((left, right) => {
+            const leftOrder = roomOrder.get(left)
+            const rightOrder = roomOrder.get(right)
+            if (typeof leftOrder === 'number' && typeof rightOrder === 'number') return leftOrder - rightOrder
+            if (typeof leftOrder === 'number') return -1
+            if (typeof rightOrder === 'number') return 1
+            return left.localeCompare(right)
+        })
+    }, [unacknowledgedLateTodayTasks, roomsByDay])
+
+    const unacknowledgedLateTodayCount = unacknowledgedLateTodayTasks.length
+
+    useEffect(() => {
+        if (orderedLateRoomNumbers.length === 0) {
+            setLateTaskLastFocusedRoomNumber(null)
+        }
+    }, [orderedLateRoomNumbers])
+
+    useEffect(() => {
+        return () => {
+            if (lateTaskNavMessageTimeoutRef.current) {
+                window.clearTimeout(lateTaskNavMessageTimeoutRef.current)
+            }
+        }
+    }, [])
 
     const visibleSupplies = useMemo(() => {
         const role = (currentUser?.role || 'cleaner') as UserRole
@@ -2716,6 +2772,7 @@ export default function App() {
         const targetIds = tasks
             .filter((task) => (
                 task.roomNumber === roomNumber
+                && task.taskDateIso === todayDateIso
                 && task.attentionRequired
                 && task.attentionReason === 'late_today_room_task'
                 && task.status !== 'read'
@@ -2740,6 +2797,50 @@ export default function App() {
                 }
                 : task
         )))
+    }
+
+    function showLateTaskNavigationMessage(message: string) {
+        setLateTaskNavMessage(message)
+        if (lateTaskNavMessageTimeoutRef.current) {
+            window.clearTimeout(lateTaskNavMessageTimeoutRef.current)
+        }
+        lateTaskNavMessageTimeoutRef.current = window.setTimeout(() => {
+            setLateTaskNavMessage(null)
+            lateTaskNavMessageTimeoutRef.current = null
+        }, 4000)
+    }
+
+    function handleJumpToLateTaskRoom() {
+        if (orderedLateRoomNumbers.length === 0) return
+
+        const currentIndex = lateTaskLastFocusedRoomNumber
+            ? orderedLateRoomNumbers.indexOf(lateTaskLastFocusedRoomNumber)
+            : -1
+        const nextIndex = currentIndex >= 0 && currentIndex + 1 < orderedLateRoomNumbers.length
+            ? currentIndex + 1
+            : 0
+        const targetRoomNumber = orderedLateRoomNumbers[nextIndex]
+
+        setView('today')
+        setSelectedImportedDateIso(null)
+        setTab('Dnes')
+        setLateTaskLastFocusedRoomNumber(targetRoomNumber)
+        setLateTaskNavMessage(null)
+
+        lateTaskFocusRequestCounterRef.current += 1
+        setLateTaskRoomFocusRequest({
+            requestId: lateTaskFocusRequestCounterRef.current,
+            roomNumber: targetRoomNumber
+        })
+    }
+
+    function handleLateTaskFocusResult(result: { requestId: number; roomNumber: string; found: boolean }) {
+        if (lateTaskRoomFocusRequest?.requestId !== result.requestId) return
+        if (!result.found) {
+            console.warn('[late-task-nav] room not found for focus', result.roomNumber)
+            showLateTaskNavigationMessage('Nový úkol existuje, ale pokoj se nepodařilo najít.')
+        }
+        setLateTaskRoomFocusRequest(null)
     }
 
     function handleCreateTask(roomId: string, input: CreateTaskInput) {
@@ -3664,6 +3765,12 @@ export default function App() {
                             <div style={{ marginTop: 10, padding: 10, background: '#fff', borderRadius: 10 }}>Orientační plán – může se změnit novou rezervací.</div>
                         )}
 
+                        {lateTaskNavMessage && (
+                            <div style={{ marginTop: 10, padding: 10, borderRadius: 10, border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontWeight: 700 }}>
+                                {lateTaskNavMessage}
+                            </div>
+                        )}
+
                         <div style={{ marginTop: 12 }}>
                             {view === 'today' && (
                                 <DashboardToday
@@ -3679,6 +3786,8 @@ export default function App() {
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
                                     staff={staff}
+                                    focusLateTaskRoomRequest={lateTaskRoomFocusRequest}
+                                    onFocusLateTaskRoomResult={handleLateTaskFocusResult}
                                     readOnly={isExtraImportedDay}
                                 />
                             )}
@@ -4657,6 +4766,20 @@ export default function App() {
                                 />
                             )}
                         </div>
+
+                        {unacknowledgedLateTodayCount > 0 && (
+                            <button
+                                type="button"
+                                className="late-task-fab"
+                                onClick={handleJumpToLateTaskRoom}
+                                title="Přejít na nový úkol po kontrole"
+                                aria-label="Přejít na nový úkol po kontrole"
+                            >
+                                {unacknowledgedLateTodayCount === 1
+                                    ? '1 nový úkol'
+                                    : `${unacknowledgedLateTodayCount} nových úkolů`}
+                            </button>
+                        )}
                     </>
                 )}
             </div>

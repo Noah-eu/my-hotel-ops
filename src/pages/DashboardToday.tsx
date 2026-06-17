@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { RoomPlan, Task, UserRole } from '../types'
 
 type RoomActionPayload = {
@@ -17,6 +17,11 @@ type CreateTaskInput = {
 type ReportRoomProblemInput = {
     description: string
     priority: Task['priority']
+}
+
+type LateTaskRoomFocusRequest = {
+    requestId: number
+    roomNumber: string
 }
 
 const arrivalPreparationTitles = new Set([
@@ -198,6 +203,8 @@ export default function DashboardToday({
     currentUserId,
     currentUserName,
     staff,
+    focusLateTaskRoomRequest,
+    onFocusLateTaskRoomResult,
     readOnly
 }: {
     rooms: RoomPlan[]
@@ -212,6 +219,8 @@ export default function DashboardToday({
     currentUserId: string
     currentUserName?: string
     staff: Array<{ id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }>
+    focusLateTaskRoomRequest?: LateTaskRoomFocusRequest | null
+    onFocusLateTaskRoomResult?: (result: { requestId: number; roomNumber: string; found: boolean }) => void
     readOnly?: boolean
 }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
@@ -228,10 +237,56 @@ export default function DashboardToday({
     const [problemText, setProblemText] = useState<string>('')
     const [problemPriority, setProblemPriority] = useState<Task['priority']>('normal')
     const [problemFormError, setProblemFormError] = useState<string | null>(null)
+    const [highlightedRoomId, setHighlightedRoomId] = useState<string | null>(null)
     const isCleaningRole = role === 'cleaner' || role === 'lead'
     const canCreateTask = role === 'admin' || role === 'lead'
     const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
     const relativeEstimateOptions = [30, 45, 60]
+
+    useEffect(() => {
+        if (!focusLateTaskRoomRequest) return
+
+        const targetRoom = rooms.find((room) => room.number === focusLateTaskRoomRequest.roomNumber)
+        if (!targetRoom) {
+            onFocusLateTaskRoomResult?.({
+                requestId: focusLateTaskRoomRequest.requestId,
+                roomNumber: focusLateTaskRoomRequest.roomNumber,
+                found: false
+            })
+            return
+        }
+
+        setExpandedRoom(targetRoom.id)
+        setEstimatingRoom(null)
+        setTaskPanelRoom(null)
+        setProblemPanelRoom(null)
+
+        const frameId = window.requestAnimationFrame(() => {
+            const roomElement = document.querySelector(`[data-room-id="${targetRoom.id}"]`) as HTMLElement | null
+            if (!roomElement) {
+                onFocusLateTaskRoomResult?.({
+                    requestId: focusLateTaskRoomRequest.requestId,
+                    roomNumber: focusLateTaskRoomRequest.roomNumber,
+                    found: false
+                })
+                return
+            }
+
+            roomElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            setHighlightedRoomId(targetRoom.id)
+            window.setTimeout(() => setHighlightedRoomId((prev) => (prev === targetRoom.id ? null : prev)), 2600)
+
+            onFocusLateTaskRoomResult?.({
+                requestId: focusLateTaskRoomRequest.requestId,
+                roomNumber: focusLateTaskRoomRequest.roomNumber,
+                found: true
+            })
+        })
+
+        return () => {
+            window.cancelAnimationFrame(frameId)
+        }
+    }, [focusLateTaskRoomRequest, rooms])
 
     function toggleExpandedRoom(roomId: string) {
         setExpandedRoom((prev) => {
@@ -491,7 +546,12 @@ export default function DashboardToday({
                     ))
 
                     return (
-                        <div key={room.id} className={`daily-row-wrap ${stateRowClass} ${index % 2 === 0 ? 'row-even' : 'row-odd'}`}>
+                        <div
+                            key={room.id}
+                            data-room-id={room.id}
+                            data-room-number={room.number}
+                            className={`daily-row-wrap ${stateRowClass} ${index % 2 === 0 ? 'row-even' : 'row-odd'}${highlightedRoomId === room.id ? ' late-room-focus-highlight' : ''}`}
+                        >
                             <div className="daily-row">
                                 <div className="room-col">
                                     <div className="room-no">{room.number}</div>
