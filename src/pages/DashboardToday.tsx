@@ -14,6 +14,11 @@ type CreateTaskInput = {
     note?: string
 }
 
+type ReportRoomProblemInput = {
+    description: string
+    priority: Task['priority']
+}
+
 const arrivalPreparationTitles = new Set([
     'Připravit postýlku',
     'Připravit gauč',
@@ -187,10 +192,12 @@ export default function DashboardToday({
     onCreateTask,
     onUpdateTaskStatus,
     onAcknowledgeLateTasks,
+    onReportProblem,
     role,
     dayLabel,
     currentUserId,
     currentUserName,
+    staff,
     readOnly
 }: {
     rooms: RoomPlan[]
@@ -199,10 +206,12 @@ export default function DashboardToday({
     onCreateTask: (roomId: string, input: CreateTaskInput) => void
     onUpdateTaskStatus: (taskId: string, status: Task['status']) => void
     onAcknowledgeLateTasks: (roomNumber: string) => void
+    onReportProblem: (roomId: string, input: ReportRoomProblemInput) => void
     role: UserRole
     dayLabel: string
     currentUserId: string
     currentUserName?: string
+    staff: Array<{ id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }>
     readOnly?: boolean
 }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
@@ -214,6 +223,11 @@ export default function DashboardToday({
     const [taskAssignedRole, setTaskAssignedRole] = useState<Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>>('cleaner')
     const [taskPriority, setTaskPriority] = useState<Task['priority']>('normal')
     const [taskNote, setTaskNote] = useState<string>('')
+    const [taskFormError, setTaskFormError] = useState<string | null>(null)
+    const [problemPanelRoom, setProblemPanelRoom] = useState<string | null>(null)
+    const [problemText, setProblemText] = useState<string>('')
+    const [problemPriority, setProblemPriority] = useState<Task['priority']>('normal')
+    const [problemFormError, setProblemFormError] = useState<string | null>(null)
     const isCleaningRole = role === 'cleaner' || role === 'lead'
     const canCreateTask = role === 'admin' || role === 'lead'
     const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
@@ -228,9 +242,13 @@ export default function DashboardToday({
             if (nextExpanded !== roomId && estimatingRoom === roomId) {
                 setEstimatingRoom(null)
             }
+            if (nextExpanded !== roomId && problemPanelRoom === roomId) {
+                setProblemPanelRoom(null)
+            }
             if (nextExpanded === roomId) {
                 if (taskPanelRoom && taskPanelRoom !== roomId) setTaskPanelRoom(null)
                 if (estimatingRoom && estimatingRoom !== roomId) setEstimatingRoom(null)
+                if (problemPanelRoom && problemPanelRoom !== roomId) setProblemPanelRoom(null)
             }
             return nextExpanded
         })
@@ -251,6 +269,10 @@ export default function DashboardToday({
         setTaskAssignedRole('cleaner')
         setTaskPriority('normal')
         setTaskNote('')
+        setTaskFormError(null)
+        if (problemPanelRoom === roomId) {
+            setProblemPanelRoom(null)
+        }
     }
 
     function pickQuickTask(label: string, category: Task['category']) {
@@ -265,23 +287,69 @@ export default function DashboardToday({
 
     function submitTask(roomId: string) {
         if (readOnly) return
-        if (!taskTitle.trim()) return
+        if (!taskTitle.trim()) {
+            setTaskFormError('Napište, co je potřeba udělat.')
+            return
+        }
 
-        onCreateTask(roomId, {
-            title: taskTitle.trim(),
-            category: taskCategory,
-            priority: taskPriority,
-            assignedToRole: taskAssignedRole,
-            note: taskNote.trim() || undefined
-        })
+        try {
+            onCreateTask(roomId, {
+                title: taskTitle.trim(),
+                category: taskCategory,
+                priority: taskPriority,
+                assignedToRole: taskAssignedRole,
+                note: taskNote.trim() || undefined
+            })
 
-        setTaskPanelRoom(null)
-        setSelectedQuickTask('')
-        setTaskTitle('')
-        setTaskCategory('cleaning')
-        setTaskAssignedRole('cleaner')
-        setTaskPriority('normal')
-        setTaskNote('')
+            setTaskPanelRoom(null)
+            setSelectedQuickTask('')
+            setTaskTitle('')
+            setTaskCategory('cleaning')
+            setTaskAssignedRole('cleaner')
+            setTaskPriority('normal')
+            setTaskNote('')
+            setTaskFormError(null)
+        } catch (error: any) {
+            console.error('[task-create] save failed', error)
+            setTaskFormError(error?.message || 'Úkol se nepodařilo uložit. Zkuste to prosím znovu.')
+        }
+    }
+
+    function openProblemPanel(roomId: string) {
+        setExpandedRoom(roomId)
+        setTaskPanelRoom((prev) => (prev === roomId ? null : prev))
+        setEstimatingRoom((prev) => (prev === roomId ? null : prev))
+        if (problemPanelRoom === roomId) {
+            setProblemPanelRoom(null)
+            return
+        }
+
+        setProblemPanelRoom(roomId)
+        setProblemText('')
+        setProblemPriority('normal')
+        setProblemFormError(null)
+    }
+
+    function submitProblem(roomId: string) {
+        if (readOnly) return
+        if (!problemText.trim()) {
+            setProblemFormError('Popište problém.')
+            return
+        }
+
+        try {
+            onReportProblem(roomId, {
+                description: problemText.trim(),
+                priority: problemPriority
+            })
+            setProblemPanelRoom(null)
+            setProblemText('')
+            setProblemPriority('normal')
+            setProblemFormError(null)
+        } catch (error: any) {
+            console.error('[problem-report] save failed', error)
+            setProblemFormError(error?.message || 'Problém se nepodařilo uložit. Zkuste to prosím znovu.')
+        }
     }
 
     function statusClass(status: RoomPlan['status']) {
@@ -396,6 +464,7 @@ export default function DashboardToday({
 
                 {rooms.map((room, index) => {
                     const isExpanded = expandedRoom === room.id
+                    const isProblemPanelOpen = problemPanelRoom === room.id
                     const stateOnlyRoom = isStateOnlyRoom(room)
                     const stateRowClass = room.occupiedConfirmed
                         ? 'status-row-stayover'
@@ -507,7 +576,7 @@ export default function DashboardToday({
                                                         title="Označit jako hotovo"
                                                         disabled={readOnly}
                                                     >
-                                                        {task.title}
+                                                        {task.title || 'Bez názvu úkolu'}
                                                     </button>
                                                 ))}
                                             </div>
@@ -565,7 +634,7 @@ export default function DashboardToday({
                                             }}
                                         >
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                                <div style={{ fontWeight: 700 }}>{task.title || 'Bez názvu úkolu'}</div>
                                                 {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
                                                     <span style={{ fontSize: 11, fontWeight: 800, color: '#9a3412', border: '1px solid #fdba74', background: '#ffedd5', borderRadius: 999, padding: '2px 8px' }}>
                                                         Přidáno během dne
@@ -573,7 +642,7 @@ export default function DashboardToday({
                                                 )}
                                             </div>
                                             <div style={{ color: '#475569' }}>
-                                                {roleLabel(task.assignedToRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
+                                                {roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
                                             </div>
                                         </div>
                                     ))}
@@ -616,7 +685,7 @@ export default function DashboardToday({
                                     >
                                         Hotovo
                                     </button>
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly || stateOnlyRoom} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => onAction(room.id, 'problem')}>Problém</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly || stateOnlyRoom} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => openProblemPanel(room.id)}>Problém</button>
                                     {canCreateTask && <button className="chip" disabled={readOnly || stateOnlyRoom} onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
 
                                     <div style={{ width: '100%', marginTop: 8, paddingTop: 8, borderTop: '1px dashed rgba(148,163,184,0.6)' }}>
@@ -678,7 +747,10 @@ export default function DashboardToday({
                                             {selectedQuickTask === 'Vlastní úkol' && (
                                                 <input
                                                     value={taskTitle}
-                                                    onChange={(e) => setTaskTitle(e.target.value)}
+                                                    onChange={(e) => {
+                                                        setTaskTitle(e.target.value)
+                                                        if (taskFormError) setTaskFormError(null)
+                                                    }}
                                                     placeholder="Název úkolu"
                                                     style={{ width: '100%', marginBottom: 8, minHeight: 38, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px' }}
                                                 />
@@ -719,14 +791,60 @@ export default function DashboardToday({
                                                 style={{ width: '100%', marginTop: 8, minHeight: 64, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical' }}
                                             />
 
+                                            {taskFormError && (
+                                                <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c', fontWeight: 700 }}>{taskFormError}</div>
+                                            )}
+
                                             <button
                                                 className="action-large"
                                                 style={{ width: '100%', marginTop: 8 }}
                                                 onClick={() => submitTask(room.id)}
-                                                disabled={!taskTitle.trim()}
                                             >
                                                 Vytvořit úkol
                                             </button>
+                                        </div>
+                                    )}
+
+                                    {isProblemPanelOpen && (
+                                        <div style={{ width: '100%', marginTop: 8, padding: 10, border: '1px solid rgba(248,113,113,0.5)', borderRadius: 10, background: 'rgba(254,242,242,0.9)' }}>
+                                            <div style={{ fontWeight: 800, marginBottom: 8, color: '#991b1b' }}>Nahlásit problém</div>
+                                            <div style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 8 }}>Pokoj {room.number}</div>
+
+                                            <textarea
+                                                value={problemText}
+                                                onChange={(e) => {
+                                                    setProblemText(e.target.value)
+                                                    if (problemFormError) setProblemFormError(null)
+                                                }}
+                                                placeholder="Popište problém"
+                                                style={{ width: '100%', minHeight: 72, borderRadius: 8, border: '1px solid #fca5a5', padding: '8px 10px', resize: 'vertical', background: '#fff' }}
+                                            />
+
+                                            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                                                <button
+                                                    className="btn"
+                                                    style={problemPriority === 'normal' ? { borderColor: '#fca5a5', background: '#fee2e2', color: '#7f1d1d' } : {}}
+                                                    onClick={() => setProblemPriority('normal')}
+                                                >
+                                                    Normální
+                                                </button>
+                                                <button
+                                                    className="btn"
+                                                    style={problemPriority === 'urgent' ? { borderColor: '#fca5a5', background: '#fee2e2', color: '#7f1d1d' } : {}}
+                                                    onClick={() => setProblemPriority('urgent')}
+                                                >
+                                                    Urgentní
+                                                </button>
+                                            </div>
+
+                                            {problemFormError && (
+                                                <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c', fontWeight: 700 }}>{problemFormError}</div>
+                                            )}
+
+                                            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                                                <button className="action-large" style={{ background: '#dc2626' }} onClick={() => submitProblem(room.id)}>Uložit</button>
+                                                <button className="btn" onClick={() => setProblemPanelRoom(null)}>Zrušit</button>
+                                            </div>
                                         </div>
                                     )}
 
@@ -740,14 +858,14 @@ export default function DashboardToday({
                                                         <div key={`active-task-${room.id}-${task.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 8px' }}>
                                                             <div>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                                    <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                                                    <div style={{ fontWeight: 700 }}>{task.title || 'Bez názvu úkolu'}</div>
                                                                     {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
                                                                         <span style={{ fontSize: 11, fontWeight: 800, color: '#9a3412', border: '1px solid #fdba74', background: '#ffedd5', borderRadius: 999, padding: '2px 8px' }}>
                                                                             Nové
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <div style={{ color: '#475569', fontSize: 12 }}>{roleLabel(task.assignedToRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'}</div>
+                                                                <div style={{ color: '#475569', fontSize: 12 }}>{roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'}</div>
                                                             </div>
                                                             {canDelete && (
                                                                 <button

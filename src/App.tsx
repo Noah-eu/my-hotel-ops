@@ -92,6 +92,7 @@ type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 
 type RoomActionPayload = {
     estimateTime?: string
     relativeMinutes?: number
+    problemText?: string
 }
 
 type CreateTaskInput = {
@@ -100,6 +101,11 @@ type CreateTaskInput = {
     priority: Task['priority']
     assignedToRole: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>
     note?: string
+}
+
+type ReportRoomProblemInput = {
+    description: string
+    priority: Task['priority']
 }
 
 function isRoomLikelyAlreadyTouched(room: RoomPlan) {
@@ -2618,7 +2624,7 @@ export default function App() {
         if (action === 'hotovo') patch = { status: 'hotovo' }
         if (action === 'prevzit') patch = { status: 'prevzato', assigned: assignedName }
         if (action === 'odhad') patch = { status: 'odhad', estimatedReady: computedEstimate || '12:30', estimateSetAt: setAt, assigned: assignedName }
-        if (action === 'problem') patch = { status: 'problem', statusNote: 'Problém nahlášen' }
+        if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen' }
         if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true }
         if (action === 'clear_exception') patch = { checkoutException: false, statusNote: undefined, status: 'ceka' }
         if (runtimeMode === 'online') {
@@ -2659,7 +2665,7 @@ export default function App() {
                     return {
                         ...r,
                         status: 'problem',
-                        statusNote: 'Problém nahlášen'
+                        statusNote: payload?.problemText?.trim() || 'Problém nahlášen'
                     }
                 }
                 if (action === 'host_zustava') {
@@ -2737,8 +2743,17 @@ export default function App() {
     }
 
     function handleCreateTask(roomId: string, input: CreateTaskInput) {
+        if (!input.title.trim()) {
+            throw new Error('Napište, co je potřeba udělat.')
+        }
+
         const room = roomsByDay[tab].find((r) => r.id === roomId)
-        if (!room || !currentUser) return
+        if (!room) {
+            throw new Error('Pokoj se nepodařilo najít.')
+        }
+        if (!currentUser) {
+            throw new Error('Chybí přihlášený uživatel.')
+        }
 
         const createdAt = formatNowHHmm(new Date())
         const todayIso = formatLocalDateIso(new Date())
@@ -2781,6 +2796,51 @@ export default function App() {
         }
 
         setTasks((prev) => [newTask, ...prev])
+    }
+
+    function handleReportRoomProblem(roomId: string, input: ReportRoomProblemInput) {
+        const description = input.description.trim()
+        if (!description) {
+            throw new Error('Popište problém.')
+        }
+
+        const room = roomsByDay[tab].find((r) => r.id === roomId)
+        if (!room) {
+            throw new Error('Pokoj se nepodařilo najít.')
+        }
+        if (!currentUser) {
+            throw new Error('Chybí přihlášený uživatel.')
+        }
+
+        const now = new Date()
+        const createdAt = formatNowHHmm(now)
+        const newItem: MaintenanceItem = {
+            id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            roomNumber: formatRoomNumber(room.number),
+            title: description,
+            category: 'room_issue',
+            priority: input.priority,
+            status: 'new',
+            reportedBy: currentUser.name,
+            createdAt,
+            note: `Nahlášeno z pokojů (${dayLabel || tab})`
+        }
+
+        if (runtimeMode === 'online') {
+            activeStore.createMaintenanceItem({
+                id: newItem.id,
+                roomNumber: newItem.roomNumber,
+                title: newItem.title,
+                category: newItem.category,
+                priority: newItem.priority,
+                note: newItem.note,
+                reportedBy: newItem.reportedBy,
+                createdAt: newItem.createdAt
+            })
+        }
+        setMaintenanceItems((prev) => [newItem, ...prev])
+
+        handleAction(roomId, 'problem', { problemText: description })
     }
 
     function handleCleanupTestTasks() {
@@ -3613,10 +3673,12 @@ export default function App() {
                                     onCreateTask={handleCreateTask}
                                     onUpdateTaskStatus={handleUpdateTaskStatus}
                                     onAcknowledgeLateTasks={handleAcknowledgeRoomLateTasks}
+                                    onReportProblem={handleReportRoomProblem}
                                     role={(currentUser?.role || 'cleaner') as UserRole}
                                     dayLabel={dayLabel}
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
+                                    staff={staff}
                                     readOnly={isExtraImportedDay}
                                 />
                             )}

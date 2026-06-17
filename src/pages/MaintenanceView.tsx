@@ -136,6 +136,11 @@ export default function MaintenanceView({
 
                     {m.note && <div style={{ fontSize: 14, color: '#334155' }}>{m.note}</div>}
                     {m.materialNeeded && <div style={{ fontSize: 14, color: '#6b21a8', fontWeight: 600 }}>Materiál: {m.materialNeeded}</div>}
+                    <div style={{ fontSize: 12, color: '#64748b' }}>
+                        Nahlásil: {m.reportedBy || 'Neznámý'} • Vytvořeno: {m.createdAt || '-'}
+                        {m.assignedTo ? ` • Řeší: ${m.assignedTo}` : ''}
+                        {m.updatedAt ? ` • Aktualizace: ${m.updatedAt}` : ''}
+                    </div>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {canActAsMaintenance && !m.assignedTo && (
@@ -239,6 +244,9 @@ export default function MaintenanceView({
 
                 <h4 style={{ margin: '8px 0' }}>Závady</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {sortedItems.length === 0 && (
+                        <div className="room-card" style={{ color: '#475569' }}>Žádné nahlášené problémy.</div>
+                    )}
                     {sortedItems.map(renderItemCard)}
                 </div>
 
