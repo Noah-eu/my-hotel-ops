@@ -489,10 +489,10 @@ export default function DashboardToday({
 
             <div className="daily-table">
                 <div className="daily-summary" aria-label="Denní souhrn pokojů">
-                    <div className="daily-summary-chip"><span>Odjezdy</span><strong>{dailySummary.departures}</strong></div>
-                    <div className="daily-summary-chip"><span>Příjezdy</span><strong>{dailySummary.arrivals}</strong></div>
-                    <div className="daily-summary-chip"><span>Obsazené</span><strong>{dailySummary.occupied}</strong></div>
-                    <div className="daily-summary-chip"><span>Volné</span><strong>{dailySummary.free}</strong></div>
+                    <div className="daily-summary-chip summary-departures"><span className="daily-summary-label">Odjezdy</span><strong className="daily-summary-value">{dailySummary.departures}</strong></div>
+                    <div className="daily-summary-chip summary-arrivals"><span className="daily-summary-label">Příjezdy</span><strong className="daily-summary-value">{dailySummary.arrivals}</strong></div>
+                    <div className="daily-summary-chip summary-occupied"><span className="daily-summary-label">Obsazené</span><strong className="daily-summary-value">{dailySummary.occupied}</strong></div>
+                    <div className="daily-summary-chip summary-free"><span className="daily-summary-label">Volné</span><strong className="daily-summary-value">{dailySummary.free}</strong></div>
                 </div>
                 <div className="daily-table-header">
                     <div>Pokoj</div>
