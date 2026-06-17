@@ -148,6 +148,7 @@ type RollbackAvailability = 'checking' | 'available' | 'legacy'
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
+const IMPORT_CONFIRM_SUPERSEDED_MESSAGE = 'Tento import je starší než novější Stav PDF. Nepotvrzujte ho.'
 const IMPORT_CLEANUP_OLD_DAYS = 30
 
 if (import.meta.env.DEV) {
@@ -394,6 +395,56 @@ function importJobStatusStyle(status: ImportJob['status']) {
     if (status === 'cancelled') return { background: '#e2e8f0', color: '#475569', border: '1px solid #cbd5e1' }
     if (status === 'parsed') return { background: '#dbeafe', color: '#1e3a8a', border: '1px solid #93c5fd' }
     return { background: '#e0f2fe', color: '#0c4a6e', border: '1px solid #7dd3fc' }
+}
+
+function importJobSortTimestamp(job: ImportJob) {
+    const candidate = job.receivedAt || job.parsedAt || job.confirmedAt
+    if (!candidate) return 0
+    const ms = new Date(candidate).getTime()
+    return Number.isNaN(ms) ? 0 : ms
+}
+
+function getLatestPrevioStateJob(jobs: ImportJob[]) {
+    const sorted = jobs
+        .filter((job) => job.type === 'previo-state-pdf')
+        .sort((a, b) => {
+            const tsDiff = importJobSortTimestamp(b) - importJobSortTimestamp(a)
+            if (tsDiff !== 0) return tsDiff
+            return (b.receivedAt || '').localeCompare(a.receivedAt || '')
+        })
+    return sorted[0] || null
+}
+
+function getSupersededPrevioStateJobIds(jobs: ImportJob[]) {
+    const newest = getLatestPrevioStateJob(jobs)
+    if (!newest) return new Set<string>()
+
+    const newestTs = importJobSortTimestamp(newest)
+    const superseded = new Set<string>()
+
+    jobs.forEach((job) => {
+        if (job.type !== 'previo-state-pdf') return
+        if (job.id === newest.id) return
+        if (job.status === 'confirmed' || job.status === 'cancelled') return
+        if (importJobSortTimestamp(job) <= newestTs) {
+            superseded.add(job.id)
+        }
+    })
+
+    return superseded
+}
+
+function getSupersededUnconfirmedPrevioJobs(jobs: ImportJob[]) {
+    const supersededIds = getSupersededPrevioStateJobIds(jobs)
+    return jobs.filter((job) => supersededIds.has(job.id))
+}
+
+// Future-ready helper for possible auto-confirm mode. Do not call automatically yet.
+function getFutureAutoConfirmCandidate(jobs: ImportJob[]) {
+    const newest = getLatestPrevioStateJob(jobs)
+    if (!newest) return null
+    if (newest.status !== 'needs_review') return null
+    return newest
 }
 
 function formatBytes(bytes?: number) {
@@ -888,6 +939,23 @@ export default function App() {
         )),
         [importJobs, rollbackAvailabilityByJobId]
     )
+
+    const newestPrevioStateJob = useMemo(
+        () => getLatestPrevioStateJob(importJobs),
+        [importJobs]
+    )
+
+    const supersededPrevioStateJobIds = useMemo(
+        () => getSupersededPrevioStateJobIds(importJobs),
+        [importJobs]
+    )
+
+    const supersededUnconfirmedPrevioJobs = useMemo(
+        () => getSupersededUnconfirmedPrevioJobs(importJobs),
+        [importJobs]
+    )
+
+    const selectedImportJobIsSuperseded = Boolean(selectedImportJob && supersededPrevioStateJobIds.has(selectedImportJob.id))
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -1795,6 +1863,10 @@ export default function App() {
         const targetJob = activeStateImportJobId
             ? importJobs.find((job) => job.id === activeStateImportJobId) || null
             : null
+        if (targetJob && supersededPrevioStateJobIds.has(targetJob.id)) {
+            setStateImportPdfError(IMPORT_CONFIRM_SUPERSEDED_MESSAGE)
+            return
+        }
         const parserVersion = targetJob?.previewSummary?.parserVersion || targetJob?.parserVersion || PREVIO_STAV_PARSER_VERSION
         const safety = resolveImportSafety(stateImportPreview, statePreviewMissingDateLabels, parserVersion, targetJob?.previewSummary?.safety)
 
@@ -1882,6 +1954,19 @@ export default function App() {
 
     async function handleConfirmImportJob(jobId: string) {
         const job = importJobs.find((item) => item.id === jobId)
+        if (job && supersededPrevioStateJobIds.has(job.id)) {
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === jobId
+                    ? { ...item, error: IMPORT_CONFIRM_SUPERSEDED_MESSAGE }
+                    : item
+            ))))
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: IMPORT_CONFIRM_SUPERSEDED_MESSAGE
+            }))
+            setOpenImportJobPreviewId(jobId)
+            return
+        }
         const previewModel = job ? buildImportJobInlinePreviewModel(job) : null
         const byDate = job ? getImportJobByDate(job.previewSummary) : null
         const parsedTabDates = job ? getImportJobParsedTabDates(job.previewSummary) : null
@@ -2217,6 +2302,43 @@ export default function App() {
             setImportCleanupResult(`Smazáno importů: ${summary.deletedJobIds.length}${warningSuffix}`)
         } catch (error: any) {
             setImportCleanupResult(error?.message || 'Hromadné mazání importů selhalo.')
+        } finally {
+            setImportCleanupInProgress(false)
+        }
+    }
+
+    async function handleCleanupSupersededImports() {
+        const latestJobId = newestPrevioStateJob?.id
+        const protectedRollbackJobId = latestRollbackCandidateJob?.id
+        const targets = supersededUnconfirmedPrevioJobs.filter((job) => {
+            if (job.id === latestJobId) return false
+            if (job.id === protectedRollbackJobId) return false
+            return true
+        })
+
+        if (targets.length === 0) {
+            setImportCleanupResult('Nenalezeny žádné nahrazené importy ke smazání.')
+            return
+        }
+
+        const confirmed = window.confirm(`Opravdu smazat ${targets.length} nahrazených importů? Tato akce odstraní i uložená PDF.`)
+        if (!confirmed) return
+
+        setImportCleanupInProgress(true)
+        setImportCleanupResult(null)
+
+        try {
+            const summary = await deleteImportJobsWithStorage(targets.map((job) => job.id))
+            if (summary.deletedJobIds.length === 0) {
+                setImportCleanupResult('Nenalezeny žádné nahrazené importy ke smazání.')
+                return
+            }
+            const warningSuffix = summary.storageWarnings.length > 0
+                ? ` U ${summary.storageWarnings.length} PDF se nepodařilo potvrdit smazání.`
+                : ''
+            setImportCleanupResult(`Smazáno nahrazených importů: ${summary.deletedJobIds.length}.${warningSuffix}`)
+        } catch (error: any) {
+            setImportCleanupResult(error?.message || 'Mazání nahrazených importů selhalo.')
         } finally {
             setImportCleanupInProgress(false)
         }
@@ -3287,6 +3409,13 @@ export default function App() {
                                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                         <button
                                                             className="btn danger"
+                                                            disabled={importCleanupInProgress || supersededUnconfirmedPrevioJobs.length === 0}
+                                                            onClick={() => void handleCleanupSupersededImports()}
+                                                        >
+                                                            {importCleanupInProgress ? 'Mažu importy...' : 'Smazat nahrazené importy'}
+                                                        </button>
+                                                        <button
+                                                            className="btn danger"
                                                             disabled={importCleanupInProgress}
                                                             onClick={() => void handleBulkImportCleanup('test_unconfirmed')}
                                                         >
@@ -3303,6 +3432,11 @@ export default function App() {
                                                     <div className="room-meta" style={{ color: '#475569' }}>
                                                         Staré importy mažou záznam i uložené PDF. Poslední potvrzený import se kvůli rollbacku ponechává.
                                                     </div>
+                                                    {newestPrevioStateJob && (
+                                                        <div className="room-meta" style={{ color: '#0c4a6e' }}>
+                                                            Nejnovější Stav import: {newestPrevioStateJob.fileName} • {new Date(newestPrevioStateJob.receivedAt).toLocaleString('cs-CZ')}
+                                                        </div>
+                                                    )}
                                                     {importCleanupResult && (
                                                         <div className="room-meta" style={{ color: importCleanupResult.includes('selhalo') ? '#b91c1c' : '#166534' }}>
                                                             {importCleanupResult}
@@ -3311,6 +3445,8 @@ export default function App() {
                                                 </div>
                                                 {importJobs.length === 0 && <div className="room-meta">Zatím nejsou žádné import joby.</div>}
                                                 {importJobs.map((job) => {
+                                                    const isNewestPrevioStateJob = newestPrevioStateJob?.id === job.id
+                                                    const isSupersededPrevioStateJob = supersededPrevioStateJobIds.has(job.id)
                                                     const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
                                                     const jobPreview = (job.previewSummary?.preview || null) as PrevioStateImportPreview | null
                                                     const jobMissingDateLabels = job.previewSummary?.missingDateLabels || []
@@ -3331,6 +3467,7 @@ export default function App() {
                                                         && inlinePreviewModel?.byDate
                                                         && inlinePreviewModel?.parsedTabDates
                                                         && !jobSafety?.blocked
+                                                        && !isSupersededPrevioStateJob
                                                     )
                                                     const isInlinePreviewOpen = openImportJobPreviewId === job.id
                                                     const inlinePreviewError = importJobPreviewInlineErrors[job.id]
@@ -3343,15 +3480,30 @@ export default function App() {
                                                         <div key={job.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
                                                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                                                                 <div style={{ fontWeight: 700 }}>{job.fileName}</div>
-                                                                <div style={{ ...importJobStatusStyle(job.status), padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
-                                                                    {importJobStatusLabel(job.status)}
+                                                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                                    {isNewestPrevioStateJob && (
+                                                                        <div style={{ background: '#dbeafe', color: '#1e3a8a', border: '1px solid #93c5fd', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                            Nejnovější import
+                                                                        </div>
+                                                                    )}
+                                                                    {isSupersededPrevioStateJob && (
+                                                                        <div style={{ background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                            Nahrazeno novějším importem
+                                                                        </div>
+                                                                    )}
+                                                                    <div style={{ ...importJobStatusStyle(job.status), padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                        {importJobStatusLabel(job.status)}
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                             <div className="room-meta" style={{ marginTop: 4 }}>
                                                                 Zdroj: {job.source === 'email' ? 'E-mail' : 'Manuální'} • Přijato: {job.receivedAt ? new Date(job.receivedAt).toLocaleString('cs-CZ') : '—'}
                                                             </div>
                                                             <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
+                                                                Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Potvrzeno: {job.confirmedAt ? new Date(job.confirmedAt).toLocaleString('cs-CZ') : '—'}
+                                                            </div>
+                                                            <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
                                                             </div>
                                                             <div className="room-meta" style={{ marginTop: 2 }}>
                                                                 Typ obsahu: {job.contentType || '—'} • Velikost: {formatBytes(job.sizeBytes)} • Storage: {job.storagePath || 'není k dispozici'}
@@ -3393,6 +3545,11 @@ export default function App() {
                                                                 </div>
                                                             )}
                                                             {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
+                                                            {isSupersededPrevioStateJob && (
+                                                                <div style={{ marginTop: 6, fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                    {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
+                                                                </div>
+                                                            )}
                                                             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                                 {hasPreviewSummary && (
                                                                     <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>
@@ -3582,6 +3739,12 @@ export default function App() {
                                                         </div>
                                                     )}
 
+                                                    {selectedImportJobIsSuperseded && (
+                                                        <div style={{ fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8, padding: 8, fontWeight: 700 }}>
+                                                            {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
+                                                        </div>
+                                                    )}
+
                                                     {stateImportRawText && (
                                                         <details>
                                                             <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text Stav z PDF</summary>
@@ -3665,7 +3828,7 @@ export default function App() {
                                                     <div style={{ display: 'flex', gap: 8 }}>
                                                         <button
                                                             className="btn"
-                                                            disabled={stateImportBlockedForUi}
+                                                            disabled={stateImportBlockedForUi || selectedImportJobIsSuperseded}
                                                             onClick={() => {
                                                                 if (selectedImportJob?.id) {
                                                                     void handleConfirmImportJob(selectedImportJob.id)
