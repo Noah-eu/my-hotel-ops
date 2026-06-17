@@ -39,6 +39,8 @@ export interface CreateTaskInput {
     attentionReason?: 'late_today_room_task'
     acknowledgedAt?: string
     acknowledgedBy?: string
+    maintenanceAcknowledgedAt?: string
+    maintenanceAcknowledgedBy?: string
 }
 
 export interface CreateSupplyRequestInput {
@@ -64,6 +66,8 @@ export interface CreateMaintenanceItemInput {
     note?: string
     reportedBy: string
     createdAt: string
+    maintenanceAcknowledgedAt?: string
+    maintenanceAcknowledgedBy?: string
 }
 
 export interface CreateImportJobInput {
@@ -101,6 +105,7 @@ export interface OpsStore {
     updateImportJob(jobId: string, patch: Partial<ImportJob>): void
     deleteImportJob(jobId: string): void
     createTask(input: CreateTaskInput): Task | null
+    updateTask(taskId: string, patch: Partial<Task>): void
     updateTaskStatus(taskId: string, status: Task['status']): void
     createSupplyRequest(input: CreateSupplyRequestInput): SupplyRequest | null
     cancelSupplyRequest(requestId: string): void

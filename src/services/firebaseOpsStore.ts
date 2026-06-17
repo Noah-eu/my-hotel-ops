@@ -503,11 +503,29 @@ export function createFirebaseOpsStore(): OpsStore {
                 attentionRequired: input.attentionRequired,
                 attentionReason: input.attentionReason,
                 acknowledgedAt: input.acknowledgedAt,
-                acknowledgedBy: input.acknowledgedBy
+                acknowledgedBy: input.acknowledgedBy,
+                maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
             }
             const { cleaned } = sanitizeForFirestore(task, `tasks.${task.id}`)
             void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), cleaned))
             return task
+        },
+        updateTask(taskId: string, patch: Partial<Task>) {
+            if (!firestoreDb) return
+            const { cleaned } = sanitizeForFirestore(patch, `tasks.${taskId}.patch`)
+            const deletePatch = Object.entries(patch).reduce<Record<string, unknown>>((acc, [key, value]) => {
+                if (typeof value !== 'undefined') return acc
+                acc[key] = deleteField()
+                return acc
+            }, {})
+
+            const updatePatch = {
+                ...(cleaned as Record<string, unknown>),
+                ...deletePatch
+            }
+            if (Object.keys(updatePatch).length === 0) return
+            void runWrite('updateTask', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', taskId), updatePatch))
         },
         updateTaskStatus(taskId: string, status: Task['status']) {
             if (!firestoreDb) return
@@ -561,7 +579,9 @@ export function createFirebaseOpsStore(): OpsStore {
                 status: 'new',
                 note: input.note,
                 reportedBy: input.reportedBy,
-                createdAt: input.createdAt
+                createdAt: input.createdAt,
+                maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
             }
             const { cleaned } = sanitizeForFirestore(item, `maintenanceItems.${item.id}`)
             void runWrite('createMaintenanceItem', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id), cleaned))

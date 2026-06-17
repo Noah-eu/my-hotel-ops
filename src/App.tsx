@@ -113,6 +113,20 @@ type LateTaskRoomFocusRequest = {
     roomNumber: string
 }
 
+type MaintenanceAttentionTarget = {
+    id: string
+    kind: 'task' | 'item'
+    roomNumber?: string
+    createdAt: string
+    sortGroup: number
+}
+
+type MaintenanceFocusRequest = {
+    requestId: number
+    targetId: string
+    targetKind: 'task' | 'item'
+}
+
 function isRoomLikelyAlreadyTouched(room: RoomPlan) {
     if (room.status === 'prevzato' || room.status === 'probihá' || room.status === 'odhad' || room.status === 'hotovo' || room.status === 'problem') return true
     if (Boolean(room.assigned)) return true
@@ -748,6 +762,16 @@ function applyScheduleSnapshot(room: RoomPlan, snapshot?: RoomPlanScheduleSnapsh
 }
 
 export default function App() {
+    function normalizeIdentity(value?: string) {
+        if (!value) return ''
+        return value
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim()
+    }
+
     function normalizeCatalogRoomNumber(value: string) {
         const trimmed = value.trim()
         const match = trimmed.match(/\b(\d{3})\b/)
@@ -849,8 +873,13 @@ export default function App() {
     const [lateTaskRoomFocusRequest, setLateTaskRoomFocusRequest] = useState<LateTaskRoomFocusRequest | null>(null)
     const [lateTaskLastFocusedRoomNumber, setLateTaskLastFocusedRoomNumber] = useState<string | null>(null)
     const [lateTaskNavMessage, setLateTaskNavMessage] = useState<string | null>(null)
+    const [maintenanceFocusRequest, setMaintenanceFocusRequest] = useState<MaintenanceFocusRequest | null>(null)
+    const [maintenanceLastFocusedTargetId, setMaintenanceLastFocusedTargetId] = useState<string | null>(null)
+    const [maintenanceNavMessage, setMaintenanceNavMessage] = useState<string | null>(null)
     const lateTaskFocusRequestCounterRef = useRef(0)
     const lateTaskNavMessageTimeoutRef = useRef<number | null>(null)
+    const maintenanceFocusRequestCounterRef = useRef(0)
+    const maintenanceNavMessageTimeoutRef = useRef<number | null>(null)
     const [installHintDismissed, setInstallHintDismissed] = useState(() => {
         if (typeof window === 'undefined') return false
         return window.localStorage.getItem('chill_ops_install_hint_dismissed') === '1'
@@ -1034,7 +1063,15 @@ export default function App() {
     )
 
     const maintenanceTasks = useMemo(
-        () => tasks.filter((task) => task.assignedToRole === 'maintenance'),
+        () => tasks.filter((task) => {
+            const assignedName = normalizeIdentity(task.assignedToName)
+            return (
+                task.assignedToRole === 'maintenance'
+                || task.category === 'maintenance'
+                || assignedName.includes('serhii')
+                || assignedName.includes('udrzb')
+            )
+        }),
         [tasks]
     )
 
@@ -1070,6 +1107,55 @@ export default function App() {
 
     const unacknowledgedLateTodayCount = unacknowledgedLateTodayTasks.length
 
+    const unacknowledgedMaintenanceTaskTargets = useMemo(() => (
+        maintenanceTasks
+            .filter((task) => task.status !== 'done' && task.status !== 'cancelled' && !task.maintenanceAcknowledgedAt)
+            .map<MaintenanceAttentionTarget>((task) => ({
+                id: task.id,
+                kind: 'task',
+                roomNumber: task.roomNumber,
+                createdAt: task.createdAt || '',
+                sortGroup: 1
+            }))
+    ), [maintenanceTasks])
+
+    const unacknowledgedMaintenanceItemTargets = useMemo(() => (
+        maintenanceItems
+            .filter((item) => item.status !== 'done' && item.status !== 'cancelled' && !item.maintenanceAcknowledgedAt)
+            .map<MaintenanceAttentionTarget>((item) => ({
+                id: item.id,
+                kind: 'item',
+                roomNumber: item.roomNumber,
+                createdAt: item.createdAt || '',
+                sortGroup: 0
+            }))
+    ), [maintenanceItems])
+
+    const orderedMaintenanceAttentionTargets = useMemo(() => {
+        const roomOrder = new Map<string, number>()
+        roomsByDay.Dnes.forEach((room, index) => {
+            roomOrder.set(room.number, index)
+        })
+
+        return [...unacknowledgedMaintenanceItemTargets, ...unacknowledgedMaintenanceTaskTargets]
+            .sort((left, right) => {
+                const leftRoomOrder = left.roomNumber ? roomOrder.get(left.roomNumber) : undefined
+                const rightRoomOrder = right.roomNumber ? roomOrder.get(right.roomNumber) : undefined
+
+                if (typeof leftRoomOrder === 'number' && typeof rightRoomOrder === 'number' && leftRoomOrder !== rightRoomOrder) {
+                    return leftRoomOrder - rightRoomOrder
+                }
+                if (typeof leftRoomOrder === 'number' && typeof rightRoomOrder !== 'number') return -1
+                if (typeof leftRoomOrder !== 'number' && typeof rightRoomOrder === 'number') return 1
+
+                if (left.sortGroup !== right.sortGroup) return left.sortGroup - right.sortGroup
+                if (left.createdAt !== right.createdAt) return left.createdAt.localeCompare(right.createdAt)
+                return left.id.localeCompare(right.id)
+            })
+    }, [roomsByDay, unacknowledgedMaintenanceItemTargets, unacknowledgedMaintenanceTaskTargets])
+
+    const unacknowledgedMaintenanceCount = orderedMaintenanceAttentionTargets.length
+
     useEffect(() => {
         if (orderedLateRoomNumbers.length === 0) {
             setLateTaskLastFocusedRoomNumber(null)
@@ -1077,9 +1163,18 @@ export default function App() {
     }, [orderedLateRoomNumbers])
 
     useEffect(() => {
+        if (orderedMaintenanceAttentionTargets.length === 0) {
+            setMaintenanceLastFocusedTargetId(null)
+        }
+    }, [orderedMaintenanceAttentionTargets])
+
+    useEffect(() => {
         return () => {
             if (lateTaskNavMessageTimeoutRef.current) {
                 window.clearTimeout(lateTaskNavMessageTimeoutRef.current)
+            }
+            if (maintenanceNavMessageTimeoutRef.current) {
+                window.clearTimeout(maintenanceNavMessageTimeoutRef.current)
             }
         }
     }, [])
@@ -2749,7 +2844,13 @@ export default function App() {
     function handleUpdateTaskStatus(taskId: string, status: Task['status']) {
         const now = new Date().toISOString()
         const actor = currentUser?.name || currentUser?.id || 'staff'
-        if (runtimeMode === 'online') {
+        if (status === 'read') {
+            activeStore.updateTask(taskId, {
+                status,
+                acknowledgedAt: now,
+                acknowledgedBy: actor
+            })
+        } else {
             activeStore.updateTaskStatus(taskId, status)
         }
         setTasks((prev) => prev.map((task) => {
@@ -2783,9 +2884,11 @@ export default function App() {
 
         if (targetIds.length === 0) return
 
-        if (runtimeMode === 'online') {
-            targetIds.forEach((taskId) => activeStore.updateTaskStatus(taskId, 'read'))
-        }
+        targetIds.forEach((taskId) => activeStore.updateTask(taskId, {
+            status: 'read',
+            acknowledgedAt: now,
+            acknowledgedBy: actor
+        }))
 
         setTasks((prev) => prev.map((task) => (
             targetIds.includes(task.id)
@@ -2799,6 +2902,36 @@ export default function App() {
         )))
     }
 
+    function handleAcknowledgeMaintenanceTask(taskId: string) {
+        const now = new Date().toISOString()
+        const actor = currentUser?.name || currentUser?.id || 'staff'
+
+        activeStore.updateTask(taskId, {
+            maintenanceAcknowledgedAt: now,
+            maintenanceAcknowledgedBy: actor
+        })
+
+        setTasks((prev) => prev.map((task) => (
+            task.id === taskId
+                ? {
+                    ...task,
+                    maintenanceAcknowledgedAt: task.maintenanceAcknowledgedAt || now,
+                    maintenanceAcknowledgedBy: task.maintenanceAcknowledgedBy || actor
+                }
+                : task
+        )))
+    }
+
+    function handleAcknowledgeMaintenanceItem(itemId: string) {
+        const now = new Date().toISOString()
+        const actor = currentUser?.name || currentUser?.id || 'staff'
+
+        handleUpdateMaintenanceItem(itemId, {
+            maintenanceAcknowledgedAt: now,
+            maintenanceAcknowledgedBy: actor
+        })
+    }
+
     function showLateTaskNavigationMessage(message: string) {
         setLateTaskNavMessage(message)
         if (lateTaskNavMessageTimeoutRef.current) {
@@ -2807,6 +2940,17 @@ export default function App() {
         lateTaskNavMessageTimeoutRef.current = window.setTimeout(() => {
             setLateTaskNavMessage(null)
             lateTaskNavMessageTimeoutRef.current = null
+        }, 4000)
+    }
+
+    function showMaintenanceNavigationMessage(message: string) {
+        setMaintenanceNavMessage(message)
+        if (maintenanceNavMessageTimeoutRef.current) {
+            window.clearTimeout(maintenanceNavMessageTimeoutRef.current)
+        }
+        maintenanceNavMessageTimeoutRef.current = window.setTimeout(() => {
+            setMaintenanceNavMessage(null)
+            maintenanceNavMessageTimeoutRef.current = null
         }, 4000)
     }
 
@@ -2841,6 +2985,51 @@ export default function App() {
             showLateTaskNavigationMessage('Nový úkol existuje, ale pokoj se nepodařilo najít.')
         }
         setLateTaskRoomFocusRequest(null)
+    }
+
+    function handleJumpToMaintenanceAttention() {
+        if (orderedMaintenanceAttentionTargets.length === 0) return
+
+        const currentIndex = maintenanceLastFocusedTargetId
+            ? orderedMaintenanceAttentionTargets.findIndex((target) => `${target.kind}:${target.id}` === maintenanceLastFocusedTargetId)
+            : -1
+        const nextIndex = currentIndex >= 0 && currentIndex + 1 < orderedMaintenanceAttentionTargets.length
+            ? currentIndex + 1
+            : 0
+        const target = orderedMaintenanceAttentionTargets[nextIndex]
+
+        setView('maintenance')
+        setMaintenanceNavMessage(null)
+        setMaintenanceLastFocusedTargetId(`${target.kind}:${target.id}`)
+
+        maintenanceFocusRequestCounterRef.current += 1
+        setMaintenanceFocusRequest({
+            requestId: maintenanceFocusRequestCounterRef.current,
+            targetId: target.id,
+            targetKind: target.kind
+        })
+    }
+
+    function handleMaintenanceFocusResult(result: { requestId: number; targetId: string; targetKind: 'task' | 'item'; found: boolean }) {
+        if (maintenanceFocusRequest?.requestId !== result.requestId) return
+        if (!result.found) {
+            console.warn('[maintenance-task-nav] target not found for focus', `${result.targetKind}:${result.targetId}`)
+            showMaintenanceNavigationMessage('Nový úkol údržby existuje, ale nepodařilo se ho najít.')
+        }
+        setMaintenanceFocusRequest(null)
+    }
+
+    function handleJumpToRoomFromMaintenance(roomNumber?: string) {
+        const trimmed = (roomNumber || '').trim()
+        if (!trimmed) return
+        setView('today')
+        setSelectedImportedDateIso(null)
+        setTab('Dnes')
+        lateTaskFocusRequestCounterRef.current += 1
+        setLateTaskRoomFocusRequest({
+            requestId: lateTaskFocusRequestCounterRef.current,
+            roomNumber: trimmed
+        })
     }
 
     function handleCreateTask(roomId: string, input: CreateTaskInput) {
@@ -3768,6 +3957,12 @@ export default function App() {
                         {lateTaskNavMessage && (
                             <div style={{ marginTop: 10, padding: 10, borderRadius: 10, border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c', fontWeight: 700 }}>
                                 {lateTaskNavMessage}
+                            </div>
+                        )}
+
+                        {maintenanceNavMessage && (
+                            <div style={{ marginTop: 10, padding: 10, borderRadius: 10, border: '1px solid #fecaca', background: '#fff1f2', color: '#9f1239', fontWeight: 700 }}>
+                                {maintenanceNavMessage}
                             </div>
                         )}
 
@@ -4752,6 +4947,12 @@ export default function App() {
                                     onCreateMaintenance={handleCreateMaintenanceItem}
                                     onUpdateMaintenance={handleUpdateMaintenanceItem}
                                     onMaterialNeeded={handleMaterialNeeded}
+                                    onAcknowledgeTask={handleAcknowledgeMaintenanceTask}
+                                    onAcknowledgeMaintenanceItem={handleAcknowledgeMaintenanceItem}
+                                    onTaskAction={handleMaintenanceTaskAction}
+                                    onJumpToRoom={handleJumpToRoomFromMaintenance}
+                                    focusRequest={maintenanceFocusRequest}
+                                    onFocusResult={handleMaintenanceFocusResult}
                                 />
                             )}
                             {view === 'supplies' && (
@@ -4771,6 +4972,7 @@ export default function App() {
                             <button
                                 type="button"
                                 className="late-task-fab"
+                                style={unacknowledgedMaintenanceCount > 0 ? { top: 'calc(84px + env(safe-area-inset-top))' } : undefined}
                                 onClick={handleJumpToLateTaskRoom}
                                 title="Přejít na nový úkol po kontrole"
                                 aria-label="Přejít na nový úkol po kontrole"
@@ -4778,6 +4980,21 @@ export default function App() {
                                 {unacknowledgedLateTodayCount === 1
                                     ? '1 nový úkol'
                                     : `${unacknowledgedLateTodayCount} nových úkolů`}
+                            </button>
+                        )}
+
+                        {(unacknowledgedMaintenanceCount > 0 && ((currentUser?.role === 'maintenance') || isAdminUser)) && (
+                            <button
+                                type="button"
+                                className="maintenance-task-fab"
+                                style={unacknowledgedLateTodayCount > 0 ? { top: 'calc(136px + env(safe-area-inset-top))' } : undefined}
+                                onClick={handleJumpToMaintenanceAttention}
+                                title="Přejít na nový úkol údržby"
+                                aria-label="Přejít na nový úkol údržby"
+                            >
+                                {unacknowledgedMaintenanceCount === 1
+                                    ? '1 nový problém'
+                                    : `${unacknowledgedMaintenanceCount} úkolů údržby`}
                             </button>
                         )}
                     </>

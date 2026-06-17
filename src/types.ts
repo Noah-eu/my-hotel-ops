@@ -217,6 +217,8 @@ export interface Task {
     attentionReason?: 'late_today_room_task'
     acknowledgedAt?: string
     acknowledgedBy?: string
+    maintenanceAcknowledgedAt?: string
+    maintenanceAcknowledgedBy?: string
 }
 
 export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'
@@ -240,7 +242,7 @@ export interface MaintenanceItem {
     id: string
     roomNumber?: string
     title: string
-    category: 'water' | 'drain' | 'electricity' | 'lock' | 'safe' | 'tv_wifi' | 'heating' | 'furniture' | 'appliance' | 'other'
+    category: 'water' | 'drain' | 'electricity' | 'lock' | 'safe' | 'tv_wifi' | 'heating' | 'furniture' | 'appliance' | 'room_issue' | 'other'
     priority: 'normal' | 'urgent'
     status: 'new' | 'accepted' | 'in_progress' | 'waiting_material' | 'done' | 'cannot_today' | 'cancelled'
     note?: string
@@ -249,4 +251,6 @@ export interface MaintenanceItem {
     createdAt: string
     updatedAt?: string
     materialNeeded?: string
+    maintenanceAcknowledgedAt?: string
+    maintenanceAcknowledgedBy?: string
 }

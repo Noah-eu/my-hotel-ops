@@ -127,10 +127,18 @@ export function createLocalOpsStore(): OpsStore {
                 attentionRequired: input.attentionRequired,
                 attentionReason: input.attentionReason,
                 acknowledgedAt: input.acknowledgedAt,
-                acknowledgedBy: input.acknowledgedBy
+                acknowledgedBy: input.acknowledgedBy,
+                maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
             }
             withState((state) => ({ ...state, tasks: [task, ...state.tasks] }))
             return task
+        },
+        updateTask(taskId: string, patch: Partial<Task>) {
+            withState((state) => ({
+                ...state,
+                tasks: state.tasks.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
+            }))
         },
         updateTaskStatus(taskId: string, status: Task['status']) {
             withState((state) => ({
@@ -178,7 +186,9 @@ export function createLocalOpsStore(): OpsStore {
                 status: 'new',
                 note: input.note,
                 reportedBy: input.reportedBy,
-                createdAt: input.createdAt
+                createdAt: input.createdAt,
+                maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
             }
             withState((state) => ({ ...state, maintenanceItems: [item, ...state.maintenanceItems] }))
             return item

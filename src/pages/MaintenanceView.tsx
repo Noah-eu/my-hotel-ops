@@ -1,5 +1,11 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Task, MaintenanceItem, UserRole } from '../types'
+
+type MaintenanceFocusRequest = {
+    requestId: number
+    targetId: string
+    targetKind: 'task' | 'item'
+}
 
 function statusLabel(status: MaintenanceItem['status']) {
     switch (status) {
@@ -37,7 +43,13 @@ export default function MaintenanceView({
     role,
     onCreateMaintenance,
     onUpdateMaintenance,
-    onMaterialNeeded
+    onMaterialNeeded,
+    onAcknowledgeTask,
+    onAcknowledgeMaintenanceItem,
+    onTaskAction,
+    onJumpToRoom,
+    focusRequest,
+    onFocusResult
 }: {
     maintenanceItems: MaintenanceItem[]
     tasks: Task[]
@@ -46,6 +58,12 @@ export default function MaintenanceView({
     onCreateMaintenance: (input: { roomNumber?: string; title: string; category: MaintenanceItem['category']; priority: MaintenanceItem['priority']; note?: string }) => void
     onUpdateMaintenance: (itemId: string, patch: Partial<MaintenanceItem>) => void
     onMaterialNeeded: (itemId: string, materialText: string) => void
+    onAcknowledgeTask: (taskId: string) => void
+    onAcknowledgeMaintenanceItem: (itemId: string) => void
+    onTaskAction: (taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') => void
+    onJumpToRoom: (roomNumber?: string) => void
+    focusRequest?: MaintenanceFocusRequest | null
+    onFocusResult?: (result: { requestId: number; targetId: string; targetKind: 'task' | 'item'; found: boolean }) => void
 }) {
     const [creating, setCreating] = useState(false)
     const [newRoom, setNewRoom] = useState('')
@@ -55,6 +73,7 @@ export default function MaintenanceView({
     const [newNote, setNewNote] = useState('')
     const [materialInput, setMaterialInput] = useState<Record<string, string>>({})
     const [materialOpenItemId, setMaterialOpenItemId] = useState<string | null>(null)
+    const [highlightTargetKey, setHighlightTargetKey] = useState<string | null>(null)
 
     const isAdmin = role === 'admin'
     const isLead = role === 'lead'
@@ -80,10 +99,50 @@ export default function MaintenanceView({
                 return 'Nábytek'
             case 'appliance':
                 return 'Spotřebič'
+            case 'room_issue':
+                return 'Problém pokoje'
             default:
                 return 'Jiné'
         }
     }
+
+    useEffect(() => {
+        if (!focusRequest) return
+
+        const targetSelector = focusRequest.targetKind === 'item'
+            ? `[data-maintenance-item-id="${focusRequest.targetId}"]`
+            : `[data-maintenance-task-id="${focusRequest.targetId}"]`
+
+        const frameId = window.requestAnimationFrame(() => {
+            const target = document.querySelector(targetSelector) as HTMLElement | null
+            if (!target) {
+                onFocusResult?.({
+                    requestId: focusRequest.requestId,
+                    targetId: focusRequest.targetId,
+                    targetKind: focusRequest.targetKind,
+                    found: false
+                })
+                return
+            }
+
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            setHighlightTargetKey(`${focusRequest.targetKind}:${focusRequest.targetId}`)
+            window.setTimeout(() => {
+                setHighlightTargetKey((prev) => (prev === `${focusRequest.targetKind}:${focusRequest.targetId}` ? null : prev))
+            }, 2600)
+
+            onFocusResult?.({
+                requestId: focusRequest.requestId,
+                targetId: focusRequest.targetId,
+                targetKind: focusRequest.targetKind,
+                found: true
+            })
+        })
+
+        return () => {
+            window.cancelAnimationFrame(frameId)
+        }
+    }, [focusRequest])
 
     const visibleItems = maintenanceItems.filter(i => i.status !== 'cancelled')
 
@@ -117,9 +176,19 @@ export default function MaintenanceView({
     function renderItemCard(m: MaintenanceItem) {
         const canActAsMaintenance = isMaintenance && (!m.assignedTo || m.assignedTo === currentUserId)
         const cardStatusColor = statusColor(m)
+        const unreadForMaintenance = m.status !== 'done' && m.status !== 'cancelled' && !m.maintenanceAcknowledgedAt
 
         return (
-            <div key={m.id} className="room-card" style={{ borderLeft: `6px solid ${cardStatusColor}`, padding: 12 }}>
+            <div
+                key={m.id}
+                data-maintenance-item-id={m.id}
+                className="room-card"
+                style={{
+                    borderLeft: `6px solid ${cardStatusColor}`,
+                    padding: 12,
+                    ...(highlightTargetKey === `item:${m.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {})
+                }}
+            >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
                         <div style={{ fontWeight: 800, fontSize: 17, color: '#0f172a' }}>{m.roomNumber ? `Pokoj ${m.roomNumber}` : 'Místo'}</div>
@@ -142,7 +211,14 @@ export default function MaintenanceView({
                         {m.updatedAt ? ` • Aktualizace: ${m.updatedAt}` : ''}
                     </div>
 
+                    {m.roomNumber && (
+                        <button className="chip" style={{ width: 'fit-content' }} onClick={() => onJumpToRoom(m.roomNumber)}>Přejít na pokoj</button>
+                    )}
+
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {unreadForMaintenance && (
+                            <button className="chip" style={{ padding: '8px 10px', borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeMaintenanceItem(m.id)}>Přečteno</button>
+                        )}
                         {canActAsMaintenance && !m.assignedTo && (
                             <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'accepted', assignedTo: currentUserId })}>Převzít</button>
                         )}
@@ -254,12 +330,40 @@ export default function MaintenanceView({
                     <div style={{ marginTop: 12 }}>
                         <h4>Úkoly z pokojů</h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {tasks.map(t => (
-                                <div key={t.id} className="room-card">
-                                    <div style={{ fontWeight: 700 }}>{t.roomNumber} – {t.title}</div>
-                                    <div style={{ fontSize: 13, color: '#64748b' }}>{t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status}</div>
-                                </div>
-                            ))}
+                            {tasks
+                                .filter((task) => task.status !== 'cancelled')
+                                .map((t) => {
+                                    const unreadForMaintenance = t.status !== 'done' && !t.maintenanceAcknowledgedAt
+                                    return (
+                                        <div
+                                            key={t.id}
+                                            data-maintenance-task-id={t.id}
+                                            className="room-card"
+                                            style={highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {}}
+                                        >
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                <div style={{ fontWeight: 700 }}>{t.roomNumber || 'Pokoj ?'} – {t.title || 'Bez názvu úkolu'}</div>
+                                                <div style={{ fontSize: 13, color: '#64748b' }}>
+                                                    {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {t.createdAt || '-'}
+                                                </div>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                    {unreadForMaintenance && (
+                                                        <button className="chip" style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeTask(t.id)}>Přečteno</button>
+                                                    )}
+                                                    {t.status !== 'done' && (
+                                                        <button className="chip" onClick={() => onTaskAction(t.id, 'done')}>Hotovo</button>
+                                                    )}
+                                                    {t.status !== 'accepted' && t.status !== 'in_progress' && t.status !== 'done' && (
+                                                        <button className="chip" onClick={() => onTaskAction(t.id, 'accepted')}>Převzato</button>
+                                                    )}
+                                                    {t.roomNumber && (
+                                                        <button className="chip" onClick={() => onJumpToRoom(t.roomNumber)}>Přejít na pokoj</button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
                         </div>
                     </div>
                 )}
