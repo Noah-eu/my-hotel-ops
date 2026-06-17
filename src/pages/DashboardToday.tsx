@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { RoomPlan, Task, UserRole } from '../types'
 
 type RoomActionPayload = {
@@ -381,6 +381,36 @@ export default function DashboardToday({
         return !hasTurnover && (room.occupiedConfirmed || room.freeConfirmed)
     }
 
+    const dailySummary = useMemo(() => {
+        return rooms.reduce((summary, room) => {
+            const hasDeparture = Boolean(room.departureTime || room.departure?.time || room.departure?.guestLabel)
+            const hasArrival = Boolean(room.arrivalTime || room.arrival?.time || room.arrival?.guestLabel)
+            const hasTurnover = hasDeparture || hasArrival
+
+            const occupied = Boolean(
+                room.occupiedConfirmed
+                || (!hasTurnover && Boolean(room.stayoverGuestName))
+            )
+
+            const free = Boolean(
+                room.freeConfirmed
+                || (!hasTurnover && !occupied)
+            )
+
+            if (hasDeparture) summary.departures += 1
+            if (hasArrival) summary.arrivals += 1
+            if (occupied) summary.occupied += 1
+            if (free) summary.free += 1
+
+            return summary
+        }, {
+            departures: 0,
+            arrivals: 0,
+            occupied: 0,
+            free: 0
+        })
+    }, [rooms])
+
     return (
         <div className="section">
             <h3>Denní plán pokojů</h3>
@@ -458,6 +488,12 @@ export default function DashboardToday({
             </div>
 
             <div className="daily-table">
+                <div className="daily-summary" aria-label="Denní souhrn pokojů">
+                    <div className="daily-summary-chip"><span>Odjezdy</span><strong>{dailySummary.departures}</strong></div>
+                    <div className="daily-summary-chip"><span>Příjezdy</span><strong>{dailySummary.arrivals}</strong></div>
+                    <div className="daily-summary-chip"><span>Obsazené</span><strong>{dailySummary.occupied}</strong></div>
+                    <div className="daily-summary-chip"><span>Volné</span><strong>{dailySummary.free}</strong></div>
+                </div>
                 <div className="daily-table-header">
                     <div>Pokoj</div>
                     <div>Odjezd</div>
