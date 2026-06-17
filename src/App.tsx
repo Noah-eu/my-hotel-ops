@@ -144,6 +144,8 @@ type ImportJobInlinePreviewModel = {
 type ImportCleanupMode = 'test_unconfirmed' | 'old'
 type RollbackAvailability = 'checking' | 'available' | 'legacy'
 
+const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
+
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CLEANUP_OLD_DAYS = 30
 
@@ -677,6 +679,7 @@ export default function App() {
     const [onlineError, setOnlineError] = useState<string | null>(null)
     const [diagOpen, setDiagOpen] = useState(false)
     const [authUser, setAuthUser] = useState<User | null>(null)
+    const [isStandalone, setIsStandalone] = useState(false)
     const [profileLoading, setProfileLoading] = useState(false)
     const [onlineProfile, setOnlineProfile] = useState<OnlineStaffProfile | null>(null)
     const [missingProfileUid, setMissingProfileUid] = useState<string | null>(null)
@@ -775,6 +778,7 @@ export default function App() {
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
     const isAdminUser = currentUser?.role === 'admin'
+    const showInstallHint = isAdminUser && !isStandalone
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
@@ -2742,6 +2746,25 @@ export default function App() {
     }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, importJobs, latestStateImportBackup, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
 
     useEffect(() => {
+        const updateStandaloneMode = () => {
+            const displayModeStandalone = typeof window !== 'undefined'
+                && window.matchMedia
+                && window.matchMedia('(display-mode: standalone)').matches
+            const iosStandalone = typeof window !== 'undefined'
+                && typeof (window.navigator as Navigator & { standalone?: boolean }).standalone === 'boolean'
+                && Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone)
+            setIsStandalone(Boolean(displayModeStandalone || iosStandalone))
+        }
+
+        updateStandaloneMode()
+        window.addEventListener('appinstalled', updateStandaloneMode)
+
+        return () => {
+            window.removeEventListener('appinstalled', updateStandaloneMode)
+        }
+    }, [])
+
+    useEffect(() => {
         if (!firebaseEnvDiagnostics.firebaseConfigured) {
             setDiagnostics((prev) => ({
                 ...prev,
@@ -3022,7 +3045,7 @@ export default function App() {
         <div className="app">
             <div className="topbar">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div className="title">My Hotel Ops</div>
+                    <div className="title">{APP_SHORT_NAME}</div>
                     <div style={{ fontSize: 11, color: '#64748b', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px' }}>
                         {diagnostics.activeMode === 'online' ? 'Online režim' : diagnostics.activeMode === 'fallback' ? 'Fallback režim' : 'Demo režim'}
                     </div>
@@ -3168,6 +3191,12 @@ export default function App() {
                             <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
                             <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
                         </div>
+
+                        {showInstallHint && (
+                            <div className="room-meta" style={{ marginTop: 8 }}>
+                                Pro rychlejsi pouziti si aplikaci pridejte na plochu.
+                            </div>
+                        )}
 
                         {(currentUser?.id === 'david' || currentUser?.role === 'admin') && (
                             <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>

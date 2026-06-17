@@ -1,0 +1,15 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Chill Ops">
+  <defs>
+    <linearGradient id="fbg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b7db0"/>
+      <stop offset="1" stop-color="#0aa59c"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#fbg)"/>
+  <rect x="14" y="14" width="20" height="20" rx="3" fill="#fff"/>
+  <rect x="17" y="17" width="4" height="4" fill="#34a9d8"/>
+  <rect x="24" y="17" width="4" height="4" fill="#34a9d8"/>
+  <rect x="17" y="24" width="4" height="4" fill="#34a9d8"/>
+  <rect x="24" y="24" width="4" height="4" fill="#34a9d8"/>
+  <path d="M30 41l6 6 16-17" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

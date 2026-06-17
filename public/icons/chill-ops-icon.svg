@@ -1,0 +1,23 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Chill Ops Icon</title>
+  <desc id="desc">Rounded square hotel operations icon with building, checkmark and mop accent.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b7db0"/>
+      <stop offset="1" stop-color="#0aa59c"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="102" fill="url(#bg)"/>
+  <g fill="#fff">
+    <rect x="112" y="116" width="176" height="176" rx="20"/>
+    <rect x="136" y="140" width="30" height="30" fill="#34a9d8"/>
+    <rect x="183" y="140" width="30" height="30" fill="#34a9d8"/>
+    <rect x="230" y="140" width="30" height="30" fill="#34a9d8"/>
+    <rect x="136" y="187" width="30" height="30" fill="#34a9d8"/>
+    <rect x="183" y="187" width="30" height="30" fill="#34a9d8"/>
+    <rect x="230" y="187" width="30" height="30" fill="#34a9d8"/>
+  </g>
+  <path d="M251 312l44 43 119-124" fill="none" stroke="#fff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="397" y="173" width="22" height="111" rx="11" fill="#fff"/>
+  <rect x="373" y="267" width="77" height="22" rx="11" fill="#34a9d8"/>
+</svg>

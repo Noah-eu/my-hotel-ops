@@ -1,6 +1,8 @@
 import { initializeApp } from 'firebase/app'
 import {
+    browserLocalPersistence,
     getAuth,
+    setPersistence,
     signInAnonymously,
     onAuthStateChanged,
     signInWithEmailAndPassword,
@@ -71,6 +73,14 @@ devLog('Env validation result', firebaseEnvDiagnostics)
 export const firebaseApp = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
 export const firestoreDb = firebaseApp ? getFirestore(firebaseApp) : null
 export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null
+const authPersistenceReady = firebaseAuth
+    ? setPersistence(firebaseAuth, browserLocalPersistence).catch((error) => {
+        devLog('Auth persistence setup failed', {
+            code: error?.code || null,
+            message: error?.message || 'Unknown persistence error'
+        })
+    })
+    : Promise.resolve()
 
 export type AppMode = 'demo' | 'online'
 export const appMode: AppMode = hasFirebaseConfig ? 'online' : 'demo'
@@ -112,6 +122,7 @@ export async function ensureAuthenticatedUser(options?: { allowAnonymous?: boole
     const timeoutMs = options?.timeoutMs ?? 15000
 
     if (!firebaseAuth) return null
+    await authPersistenceReady
 
     const current = firebaseAuth.currentUser
     if (current && (allowAnonymous || !current.isAnonymous)) {
@@ -130,6 +141,7 @@ export async function ensureAuthenticatedUser(options?: { allowAnonymous?: boole
 
 export async function ensureAnonymousAuth(): Promise<User | null> {
     if (!firebaseAuth) return null
+    await authPersistenceReady
     if (!allowAnonymousAuth) {
         throw Object.assign(new Error('Anonymous auth is disabled'), { code: 'auth/anonymous-disabled' })
     }
@@ -165,6 +177,7 @@ export async function ensureAnonymousAuth(): Promise<User | null> {
 
 export async function signInWithEmailPassword(email: string, password: string): Promise<User | null> {
     if (!firebaseAuth) return null
+    await authPersistenceReady
     const credential = await signInWithEmailAndPassword(firebaseAuth, email, password)
     await credential.user.getIdToken()
     devLog('Email/password auth success', { uid: credential.user.uid })
