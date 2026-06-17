@@ -817,6 +817,7 @@ export default function App() {
     const [expandedImportJobPreviewRows, setExpandedImportJobPreviewRows] = useState<Record<string, boolean>>({})
     const [importJobPreviewInlineErrors, setImportJobPreviewInlineErrors] = useState<Record<string, string>>({})
     const [showConfirmedImportHistory, setShowConfirmedImportHistory] = useState(false)
+    const [showManualPrevioImportSection, setShowManualPrevioImportSection] = useState(false)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
@@ -4170,277 +4171,297 @@ export default function App() {
                                                 )}
                                             </div>
 
-                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
-                                                <label style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Nahrát PDF Stav</label>
-                                                <div className="room-meta" style={{ color: '#0c4a6e' }}>Doporučeno – obsahuje příjezdy, odjezdy i probíhající pobyty.</div>
-                                                <input
-                                                    type="file"
-                                                    accept="application/pdf,.pdf"
-                                                    onChange={(e) => {
-                                                        const nextFile = e.target.files?.[0] || null
-                                                        void handlePrevioStatePdfSelected(nextFile)
-                                                    }}
-                                                />
-                                                {stateImportPdfStatus === 'loading' && <div className="room-meta">Načítám PDF Stav...</div>}
-                                                {stateImportPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF Stav načteno</div>}
-                                                {stateImportPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{stateImportPdfError || 'PDF Stav se nepodařilo načíst.'}</div>}
-                                            </div>
-
-                                            {stateImportPreviewForUi && (
-                                                <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
-                                                    <div style={{ fontWeight: 800 }}>Náhled importu Stav</div>
-                                                    <div className="room-meta">Parser: {stateImportParserVersionForUi || 'neznámá verze'}</div>
-                                                    <div className="room-meta">Detekované dny: {stateImportPreviewForUi.days.length}</div>
-                                                    <div className="room-meta">Turnover pokoje: {stateImportPreviewForUi.turnoverCount}</div>
-                                                    <div className="room-meta">Probíhající pobyty: {stateImportPreviewForUi.stayoverCount}</div>
-                                                    <div className="room-meta">Odvozené potvrzeně volné pokoje: {stateImportPreviewForUi.derivedFreeCount}</div>
-                                                    <div className="room-meta">Mimo seznam pokojů: {stateImportPreviewForUi.unknownRooms.length ? stateImportPreviewForUi.unknownRooms.join(', ') : 'žádné'}</div>
-                                                    {stateImportSafetyForUi && (
-                                                        <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: stateImportSafetyForUi.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: stateImportSafetyForUi.blocked ? '#fef2f2' : '#ecfdf3', color: stateImportSafetyForUi.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
-                                                            {stateImportSafetyForUi.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
-                                                            {(stateImportSafetyForUi.blocks.length > 0 || stateImportSafetyForUi.warnings.length > 0) && (
-                                                                <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
-                                                                    {Array.from(new Set([...stateImportSafetyForUi.blocks, ...stateImportSafetyForUi.warnings])).map((warning) => (
-                                                                        <li key={`state-safety-${warning}`}>{warning}</li>
-                                                                    ))}
-                                                                </ul>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    {stateImportActionMessage && (
-                                                        <div style={{ fontSize: 12, color: '#166534', background: '#ecfdf3', border: '1px solid #86efac', borderRadius: 8, padding: 8 }}>
-                                                            {stateImportActionMessage}
-                                                        </div>
-                                                    )}
-                                                    {stateImportWarningsForUi.length > 0 && (
-                                                        <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
-                                                            {stateImportWarningsForUi.slice(0, 10).map((warning) => (
-                                                                <div key={`state-warning-${warning}`}>{warning}</div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-
-                                                    {selectedImportJobIsSuperseded && (
-                                                        <div style={{ fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8, padding: 8, fontWeight: 700 }}>
-                                                            {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
-                                                        </div>
-                                                    )}
-
-                                                    {stateImportRawText && (
-                                                        <details>
-                                                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text Stav z PDF</summary>
-                                                            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                                                                <button className="btn" onClick={() => void handleCopyStateImportDebugText()}>Kopírovat</button>
-                                                                <button className="btn" onClick={handleDownloadStateImportDebugText}>Stáhnout TXT</button>
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 8 }}>
-                                                                Délka textu: {stateImportRawText.length} znaků, řádků: {stateImportParseResult?.lineCount || 0}
-                                                            </div>
-                                                            <pre style={{ marginTop: 8, maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12, whiteSpace: 'pre-wrap' }}>
-                                                                {stateImportRawText.slice(0, 5000)}
-                                                            </pre>
-                                                        </details>
-                                                    )}
-
-                                                    <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-                                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                                                            <thead>
-                                                                <tr style={{ background: '#f8fafc' }}>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Turnover</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Probíhající</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Volné (odvozené)</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Kompletní</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                {stateImportPreviewForUi.days.map((day) => (
-                                                                    <tr key={`state-day-${day.dateIso}`}>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.dateLabel}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.turnoverCount}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.stayoverCount}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.derivedFreeRooms.length}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.complete ? 'ano' : 'ne'}</td>
-                                                                    </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
-                                                    </div>
-
-                                                    <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
-                                                        <div style={{ maxHeight: 280, overflow: 'auto' }}>
-                                                            <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
-                                                                <thead>
-                                                                    <tr style={{ background: '#f8fafc' }}>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odj. počet</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příj. počet</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odj. pozn.</th>
-                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příj. pozn.</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody>
-                                                                    {stateImportPreviewForUi.days.flatMap((day) => (
-                                                                        day.rows.map((row, index) => (
-                                                                            <tr key={`state-detail-${day.dateIso}-${row.roomNumber}-${index}`}>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{formatPreviewRowDate(day.dateIso)}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || (row.isStayover ? row.stayoverGuestName || '—' : '—')}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.departureGuestCount === 'number' ? `${row.departureGuestCount}p` : '—'}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.arrivalGuestCount === 'number' ? `${row.arrivalGuestCount}p` : '—'}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotes.length ? row.departureNotes.join('; ') : '—'}</td>
-                                                                                <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotes.length ? row.arrivalNotes.join('; ') : '—'}</td>
-                                                                            </tr>
-                                                                        ))
-                                                                    ))}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
-                                                    </div>
-
-                                                    <div style={{ display: 'flex', gap: 8 }}>
-                                                        <button
-                                                            className="btn"
-                                                            disabled={stateImportBlockedForUi || selectedImportJobIsSuperseded}
-                                                            onClick={() => {
-                                                                if (selectedImportJob?.id) {
-                                                                    void handleConfirmImportJob(selectedImportJob.id)
-                                                                    return
-                                                                }
-                                                                void handleConfirmPrevioStateImport()
-                                                            }}
-                                                        >
-                                                            Potvrdit import Stav
-                                                        </button>
-                                                        <button className="btn" onClick={handleCancelPrevioStateImport}>Zrušit</button>
-                                                    </div>
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8, border: '1px solid #dbeafe', background: '#f8fbff' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                                    <div style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Ruční import PDF (nouzově)</div>
+                                                    <button
+                                                        type="button"
+                                                        className="btn"
+                                                        onClick={() => setShowManualPrevioImportSection((prev) => !prev)}
+                                                    >
+                                                        {showManualPrevioImportSection ? 'Skrýt ruční import' : 'Zobrazit ruční import'}
+                                                    </button>
                                                 </div>
-                                            )}
+                                                <div className="room-meta" style={{ color: '#64748b' }}>
+                                                    Použijte jen pokud nepřišel automatický e-mail z Previa nebo potřebujete testovat PDF.
+                                                </div>
 
-                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-                                                <label style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Nahrát PDF příjezdy/odjezdy</label>
-                                                <input
-                                                    type="file"
-                                                    accept="application/pdf,.pdf"
-                                                    onChange={(e) => {
-                                                        const nextFile = e.target.files?.[0] || null
-                                                        void handlePrevioPdfSelected(nextFile)
-                                                    }}
-                                                />
-                                                {importPdfStatus === 'loading' && <div className="room-meta">Načítám PDF...</div>}
-                                                {importPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF načteno</div>}
-                                                {importPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{importPdfError || 'PDF se nepodařilo načíst.'}</div>}
-                                            </div>
-
-                                            {importPreview && (
-                                                <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
-                                                    <div style={{ fontWeight: 800 }}>Náhled importu</div>
-                                                    <div className="room-meta">Počet rozpoznaných řádků: {importPreview.parsedRows}</div>
-                                                    <div className="room-meta">Řádků bez času: {importPreview.rowsWithoutTimes}</div>
-                                                    <div className="room-meta">Mimo seznam pokojů: {importPreview.unknownRooms.length ? importPreview.unknownRooms.join(', ') : 'žádné'}</div>
-                                                    <div className="room-meta">Bez příjezdu/odjezdu: {importPreview.noTurnoverRooms.length}</div>
-                                                    {importPreview.confidenceLow && (
-                                                        <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
-                                                            Import není bezpečný – parser našel málo pokojů nebo příliš mnoho řádků bez času. Import nepotvrzovat.
+                                                {showManualPrevioImportSection && (
+                                                    <>
+                                                        <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
+                                                            <label style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Nahrát PDF Stav</label>
+                                                            <div className="room-meta" style={{ color: '#0c4a6e' }}>Doporučeno – obsahuje příjezdy, odjezdy i probíhající pobyty.</div>
+                                                            <input
+                                                                type="file"
+                                                                accept="application/pdf,.pdf"
+                                                                onChange={(e) => {
+                                                                    const nextFile = e.target.files?.[0] || null
+                                                                    void handlePrevioStatePdfSelected(nextFile)
+                                                                }}
+                                                            />
+                                                            {stateImportPdfStatus === 'loading' && <div className="room-meta">Načítám PDF Stav...</div>}
+                                                            {stateImportPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF Stav načteno</div>}
+                                                            {stateImportPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{stateImportPdfError || 'PDF Stav se nepodařilo načíst.'}</div>}
                                                         </div>
-                                                    )}
-                                                    {importPreview.warnings.length > 0 && (
-                                                        <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
-                                                            {importPreview.warnings.slice(0, 8).map((warning) => (
-                                                                <div key={warning}>{warning}</div>
-                                                            ))}
-                                                        </div>
-                                                    )}
 
-                                                    {importRawText && (
-                                                        <details>
-                                                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text z PDF</summary>
-                                                            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                                                                <button className="btn" onClick={() => void handleCopyImportDebugText()}>Kopírovat</button>
-                                                                <button className="btn" onClick={handleDownloadImportDebugText}>Stáhnout TXT</button>
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 8 }}>
-                                                                Délka textu: {importRawText.length} znaků, řádků: {importParseResult?.lineCount || 0}
-                                                            </div>
-                                                            <pre style={{ marginTop: 8, maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12, whiteSpace: 'pre-wrap' }}>
-                                                                {importRawText.slice(0, 5000)}
-                                                            </pre>
-                                                        </details>
-                                                    )}
-
-                                                    {importParseResult && (
-                                                        <details>
-                                                            <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug parseru</summary>
-                                                            <div style={{ marginTop: 8, maxHeight: 280, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12 }}>
-                                                                {importParseResult.lineDebug.map((dbg) => (
-                                                                    <div key={`dbg-${dbg.index}-${dbg.room || 'none'}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
-                                                                        <div><strong>Blok {dbg.index}:</strong> Strana: {dbg.page} | Den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'} | Předchozí: {dbg.previousRoom || '—'} | Následující: {dbg.nextRoom || '—'} | Rozsah řádků: {dbg.blockStartLine}-{dbg.blockEndLine} | Y: {dbg.yStart.toFixed(1)} → {dbg.yEnd.toFixed(1)}</div>
-                                                                        <div>Detekované časy: {dbg.detectedTimes.length ? dbg.detectedTimes.join(', ') : '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
-                                                                        <div>Odjezd host: {dbg.departureGuestLabel || '—'} | Příjezd host: {dbg.arrivalGuestLabel || '—'}</div>
-                                                                        <div>Sloupec pokoj: {dbg.roomColumnText || '—'}</div>
-                                                                        <div>Sloupec odjezd: {dbg.departureColumnText || '—'}</div>
-                                                                        <div>Sloupec příjezd: {dbg.arrivalColumnText || '—'}</div>
-                                                                        <div>Sloupec odjezd pozn.: {dbg.departureNoteColumnText || '—'}</div>
-                                                                        <div>Sloupec příjezd pozn.: {dbg.arrivalNoteColumnText || '—'}</div>
-                                                                        <div>Skupiny poznámek: {dbg.noteGroups.length ? dbg.noteGroups.join(' || ') : '—'}</div>
-                                                                        <div>Odjezd pozn.: {dbg.departureNotes.length ? dbg.departureNotes.join(', ') : '—'}</div>
-                                                                        <div>Příjezd pozn.: {dbg.arrivalNotes.length ? dbg.arrivalNotes.join(', ') : '—'}</div>
-                                                                        <div>Obecné pozn.: {dbg.generalNotes.length ? dbg.generalNotes.join(', ') : '—'}</div>
-                                                                        <div>Varování: {dbg.warnings.length ? dbg.warnings.join(' | ') : '—'}</div>
-                                                                        <pre style={{ marginTop: 6, maxHeight: 120, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: 6, background: '#fff', whiteSpace: 'pre-wrap' }}>{dbg.rawBlock}</pre>
+                                                        {stateImportPreviewForUi && (
+                                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                                                                <div style={{ fontWeight: 800 }}>Náhled importu Stav</div>
+                                                                <div className="room-meta">Parser: {stateImportParserVersionForUi || 'neznámá verze'}</div>
+                                                                <div className="room-meta">Detekované dny: {stateImportPreviewForUi.days.length}</div>
+                                                                <div className="room-meta">Turnover pokoje: {stateImportPreviewForUi.turnoverCount}</div>
+                                                                <div className="room-meta">Probíhající pobyty: {stateImportPreviewForUi.stayoverCount}</div>
+                                                                <div className="room-meta">Odvozené potvrzeně volné pokoje: {stateImportPreviewForUi.derivedFreeCount}</div>
+                                                                <div className="room-meta">Mimo seznam pokojů: {stateImportPreviewForUi.unknownRooms.length ? stateImportPreviewForUi.unknownRooms.join(', ') : 'žádné'}</div>
+                                                                {stateImportSafetyForUi && (
+                                                                    <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: stateImportSafetyForUi.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: stateImportSafetyForUi.blocked ? '#fef2f2' : '#ecfdf3', color: stateImportSafetyForUi.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
+                                                                        {stateImportSafetyForUi.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
+                                                                        {(stateImportSafetyForUi.blocks.length > 0 || stateImportSafetyForUi.warnings.length > 0) && (
+                                                                            <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                                {Array.from(new Set([...stateImportSafetyForUi.blocks, ...stateImportSafetyForUi.warnings])).map((warning) => (
+                                                                                    <li key={`state-safety-${warning}`}>{warning}</li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        )}
                                                                     </div>
-                                                                ))}
+                                                                )}
+                                                                {stateImportActionMessage && (
+                                                                    <div style={{ fontSize: 12, color: '#166534', background: '#ecfdf3', border: '1px solid #86efac', borderRadius: 8, padding: 8 }}>
+                                                                        {stateImportActionMessage}
+                                                                    </div>
+                                                                )}
+                                                                {stateImportWarningsForUi.length > 0 && (
+                                                                    <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                                        {stateImportWarningsForUi.slice(0, 10).map((warning) => (
+                                                                            <div key={`state-warning-${warning}`}>{warning}</div>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+
+                                                                {selectedImportJobIsSuperseded && (
+                                                                    <div style={{ fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8, padding: 8, fontWeight: 700 }}>
+                                                                        {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
+                                                                    </div>
+                                                                )}
+
+                                                                {stateImportRawText && (
+                                                                    <details>
+                                                                        <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text Stav z PDF</summary>
+                                                                        <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                                                            <button className="btn" onClick={() => void handleCopyStateImportDebugText()}>Kopírovat</button>
+                                                                            <button className="btn" onClick={handleDownloadStateImportDebugText}>Stáhnout TXT</button>
+                                                                        </div>
+                                                                        <div className="room-meta" style={{ marginTop: 8 }}>
+                                                                            Délka textu: {stateImportRawText.length} znaků, řádků: {stateImportParseResult?.lineCount || 0}
+                                                                        </div>
+                                                                        <pre style={{ marginTop: 8, maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                                                            {stateImportRawText.slice(0, 5000)}
+                                                                        </pre>
+                                                                    </details>
+                                                                )}
+
+                                                                <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                                                        <thead>
+                                                                            <tr style={{ background: '#f8fafc' }}>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Turnover</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Probíhající</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Volné (odvozené)</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Kompletní</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {stateImportPreviewForUi.days.map((day) => (
+                                                                                <tr key={`state-day-${day.dateIso}`}>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.dateLabel}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.turnoverCount}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.stayoverCount}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.derivedFreeRooms.length}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{day.complete ? 'ano' : 'ne'}</td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+
+                                                                <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
+                                                                    <div style={{ maxHeight: 280, overflow: 'auto' }}>
+                                                                        <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
+                                                                            <thead>
+                                                                                <tr style={{ background: '#f8fafc' }}>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. počet</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. počet</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. pozn.</th>
+                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. pozn.</th>
+                                                                                </tr>
+                                                                            </thead>
+                                                                            <tbody>
+                                                                                {stateImportPreviewForUi.days.flatMap((day) => (
+                                                                                    day.rows.map((row, index) => (
+                                                                                        <tr key={`state-detail-${day.dateIso}-${row.roomNumber}-${index}`}>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{formatPreviewRowDate(day.dateIso)}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || (row.isStayover ? row.stayoverGuestName || '—' : '—')}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.departureGuestCount === 'number' ? `${row.departureGuestCount}p` : '—'}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.arrivalGuestCount === 'number' ? `${row.arrivalGuestCount}p` : '—'}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotes.length ? row.departureNotes.join('; ') : '—'}</td>
+                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotes.length ? row.arrivalNotes.join('; ') : '—'}</td>
+                                                                                        </tr>
+                                                                                    ))
+                                                                                ))}
+                                                                            </tbody>
+                                                                        </table>
+                                                                    </div>
+                                                                </div>
+
+                                                                <div style={{ display: 'flex', gap: 8 }}>
+                                                                    <button
+                                                                        className="btn"
+                                                                        disabled={stateImportBlockedForUi || selectedImportJobIsSuperseded}
+                                                                        onClick={() => {
+                                                                            if (selectedImportJob?.id) {
+                                                                                void handleConfirmImportJob(selectedImportJob.id)
+                                                                                return
+                                                                            }
+                                                                            void handleConfirmPrevioStateImport()
+                                                                        }}
+                                                                    >
+                                                                        Potvrdit import Stav
+                                                                    </button>
+                                                                    <button className="btn" onClick={handleCancelPrevioStateImport}>Zrušit</button>
+                                                                </div>
                                                             </div>
-                                                        </details>
-                                                    )}
+                                                        )}
 
-                                                    <div style={{ maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-                                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                                                            <thead>
-                                                                <tr style={{ background: '#f8fafc' }}>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Datum</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odjezd pozn.</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příjezd pozn.</th>
-                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Obecné pozn.</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                {importPreview.previewRows.map((row) => (
-                                                                    <tr key={`${row.tab}-${row.roomNumber}-${row.departureTime || '-'}-${row.arrivalTime || '-'}`}>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.dateLabel}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotesLabel || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotesLabel || '—'}</td>
-                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.generalNotesLabel || '—'}</td>
-                                                                    </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
-                                                    </div>
+                                                        <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                                                            <label style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Nahrát PDF příjezdy/odjezdy</label>
+                                                            <input
+                                                                type="file"
+                                                                accept="application/pdf,.pdf"
+                                                                onChange={(e) => {
+                                                                    const nextFile = e.target.files?.[0] || null
+                                                                    void handlePrevioPdfSelected(nextFile)
+                                                                }}
+                                                            />
+                                                            {importPdfStatus === 'loading' && <div className="room-meta">Načítám PDF...</div>}
+                                                            {importPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF načteno</div>}
+                                                            {importPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{importPdfError || 'PDF se nepodařilo načíst.'}</div>}
+                                                        </div>
 
-                                                    <div style={{ display: 'flex', gap: 8 }}>
-                                                        <button className="btn" disabled={importPreview.confidenceLow} onClick={() => void handleConfirmPrevioImport()}>Potvrdit import</button>
-                                                        <button className="btn" onClick={handleCancelPrevioImport}>Zrušit</button>
-                                                    </div>
-                                                </div>
-                                            )}
+                                                        {importPreview && (
+                                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                                                                <div style={{ fontWeight: 800 }}>Náhled importu</div>
+                                                                <div className="room-meta">Počet rozpoznaných řádků: {importPreview.parsedRows}</div>
+                                                                <div className="room-meta">Řádků bez času: {importPreview.rowsWithoutTimes}</div>
+                                                                <div className="room-meta">Mimo seznam pokojů: {importPreview.unknownRooms.length ? importPreview.unknownRooms.join(', ') : 'žádné'}</div>
+                                                                <div className="room-meta">Bez příjezdu/odjezdu: {importPreview.noTurnoverRooms.length}</div>
+                                                                {importPreview.confidenceLow && (
+                                                                    <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
+                                                                        Import není bezpečný – parser našel málo pokojů nebo příliš mnoho řádků bez času. Import nepotvrzovat.
+                                                                    </div>
+                                                                )}
+                                                                {importPreview.warnings.length > 0 && (
+                                                                    <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                                        {importPreview.warnings.slice(0, 8).map((warning) => (
+                                                                            <div key={warning}>{warning}</div>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+
+                                                                {importRawText && (
+                                                                    <details>
+                                                                        <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text z PDF</summary>
+                                                                        <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                                                            <button className="btn" onClick={() => void handleCopyImportDebugText()}>Kopírovat</button>
+                                                                            <button className="btn" onClick={handleDownloadImportDebugText}>Stáhnout TXT</button>
+                                                                        </div>
+                                                                        <div className="room-meta" style={{ marginTop: 8 }}>
+                                                                            Délka textu: {importRawText.length} znaků, řádků: {importParseResult?.lineCount || 0}
+                                                                        </div>
+                                                                        <pre style={{ marginTop: 8, maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                                                            {importRawText.slice(0, 5000)}
+                                                                        </pre>
+                                                                    </details>
+                                                                )}
+
+                                                                {importParseResult && (
+                                                                    <details>
+                                                                        <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug parseru</summary>
+                                                                        <div style={{ marginTop: 8, maxHeight: 280, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#f8fafc', fontSize: 12 }}>
+                                                                            {importParseResult.lineDebug.map((dbg) => (
+                                                                                <div key={`dbg-${dbg.index}-${dbg.room || 'none'}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6, marginBottom: 6 }}>
+                                                                                    <div><strong>Blok {dbg.index}:</strong> Strana: {dbg.page} | Den: {dbg.pageDate || '—'} | Pokoj: {dbg.room || '—'} | Předchozí: {dbg.previousRoom || '—'} | Následující: {dbg.nextRoom || '—'} | Rozsah řádků: {dbg.blockStartLine}-{dbg.blockEndLine} | Y: {dbg.yStart.toFixed(1)} → {dbg.yEnd.toFixed(1)}</div>
+                                                                                    <div>Detekované časy: {dbg.detectedTimes.length ? dbg.detectedTimes.join(', ') : '—'} | Odjezd: {dbg.departureTime || '—'} | Příjezd: {dbg.arrivalTime || '—'}</div>
+                                                                                    <div>Odjezd host: {dbg.departureGuestLabel || '—'} | Příjezd host: {dbg.arrivalGuestLabel || '—'}</div>
+                                                                                    <div>Sloupec pokoj: {dbg.roomColumnText || '—'}</div>
+                                                                                    <div>Sloupec odjezd: {dbg.departureColumnText || '—'}</div>
+                                                                                    <div>Sloupec příjezd: {dbg.arrivalColumnText || '—'}</div>
+                                                                                    <div>Sloupec odjezd pozn.: {dbg.departureNoteColumnText || '—'}</div>
+                                                                                    <div>Sloupec příjezd pozn.: {dbg.arrivalNoteColumnText || '—'}</div>
+                                                                                    <div>Skupiny poznámek: {dbg.noteGroups.length ? dbg.noteGroups.join(' || ') : '—'}</div>
+                                                                                    <div>Odjezd pozn.: {dbg.departureNotes.length ? dbg.departureNotes.join(', ') : '—'}</div>
+                                                                                    <div>Příjezd pozn.: {dbg.arrivalNotes.length ? dbg.arrivalNotes.join(', ') : '—'}</div>
+                                                                                    <div>Obecné pozn.: {dbg.generalNotes.length ? dbg.generalNotes.join(', ') : '—'}</div>
+                                                                                    <div>Varování: {dbg.warnings.length ? dbg.warnings.join(' | ') : '—'}</div>
+                                                                                    <pre style={{ marginTop: 6, maxHeight: 120, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, padding: 6, background: '#fff', whiteSpace: 'pre-wrap' }}>{dbg.rawBlock}</pre>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </details>
+                                                                )}
+
+                                                                <div style={{ maxHeight: 240, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                                                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                                                        <thead>
+                                                                            <tr style={{ background: '#f8fafc' }}>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Datum</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odjezd pozn.</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příjezd pozn.</th>
+                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Obecné pozn.</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {importPreview.previewRows.map((row) => (
+                                                                                <tr key={`${row.tab}-${row.roomNumber}-${row.departureTime || '-'}-${row.arrivalTime || '-'}`}>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.dateLabel}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotesLabel || '—'}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotesLabel || '—'}</td>
+                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.generalNotesLabel || '—'}</td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+
+                                                                <div style={{ display: 'flex', gap: 8 }}>
+                                                                    <button className="btn" disabled={importPreview.confidenceLow} onClick={() => void handleConfirmPrevioImport()}>Potvrdit import</button>
+                                                                    <button className="btn" onClick={handleCancelPrevioImport}>Zrušit</button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </div>
 
                                             <h3 style={{ marginTop: 14 }}>Údržba dat / Nebezpečné akce</h3>
 
