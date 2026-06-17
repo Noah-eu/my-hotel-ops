@@ -4,9 +4,12 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const {
+    PREVIO_STAV_PARSER_VERSION,
     extractStateTextFromPdfBuffer,
     parsePrevioStatePdfText,
-    buildPrevioStateImportPreview
+    buildPrevioStateImportPreview,
+    evaluatePrevioStateImportSafety,
+    detectMissingDatesInRange
 } = require('../netlify/functions/lib/previo-state-preview.js')
 
 const root = process.cwd()
@@ -189,6 +192,61 @@ function runChecks(parsed) {
     return failures
 }
 
+function runSafetyChecks(preview) {
+    const failures = []
+    const missingDateLabels = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
+        .map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
+            day: 'numeric',
+            month: 'numeric',
+            year: 'numeric'
+        }))
+
+    const safety = evaluatePrevioStateImportSafety({
+        preview,
+        missingDateLabels,
+        parserVersion: PREVIO_STAV_PARSER_VERSION,
+        checkedAt: new Date()
+    })
+
+    expect(failures, safety.blocked === false, 'Current Stav fixture preview should be safety OK')
+
+    const syntheticUnsafe = {
+        ...preview,
+        amPmEvidence: true,
+        days: preview.days.map((day, index) => {
+            if (index !== 0) return day
+            const updatedRows = day.rows.map((row, rowIndex) => {
+                if (rowIndex >= 6) return row
+                return {
+                    ...row,
+                    departureTime: '06:30',
+                    arrivalTime: '02:00'
+                }
+            })
+            return {
+                ...day,
+                rows: updatedRows
+            }
+        })
+    }
+
+    const syntheticSafety = evaluatePrevioStateImportSafety({
+        preview: syntheticUnsafe,
+        missingDateLabels: [],
+        parserVersion: PREVIO_STAV_PARSER_VERSION,
+        checkedAt: new Date()
+    })
+
+    expect(failures, syntheticSafety.blocked === true, 'Synthetic bad preview with 02:00/06:30 should be blocked')
+    expect(
+        failures,
+        syntheticSafety.blocks.some((line) => line.includes('01:00-07:30')),
+        'Synthetic bad preview should trigger suspicious night-time safety block'
+    )
+
+    return failures
+}
+
 async function main() {
     const fixturePath = await requireStavFixture()
     const pdfBuffer = await fs.readFile(fixturePath)
@@ -198,6 +256,7 @@ async function main() {
     const preview = buildPrevioStateImportPreview(parsed, [], new Date())
 
     const failures = runChecks(parsed)
+    failures.push(...runSafetyChecks(preview))
     if (failures.length > 0) {
         console.error('[validate:previo-state] FAIL')
         failures.forEach((failure) => console.error(`- ${failure}`))

@@ -57,10 +57,79 @@ export type ImportJobType = 'previo-state-pdf'
 export type ImportJobSource = 'email' | 'manual'
 export type ImportJobStatus = 'received' | 'parsed' | 'needs_review' | 'confirmed' | 'failed' | 'cancelled'
 
+export type ImportSafetyStatus = 'ok' | 'blocked'
+
+export interface ImportJobSafetySummary {
+    status: ImportSafetyStatus
+    blocked: boolean
+    warnings: string[]
+    blocks: string[]
+    checkedAt: string
+    parserVersion: string
+    parserVersionMissing: boolean
+    parserVersionOutdated: boolean
+    metrics?: {
+        turnoverRows?: number
+        suspiciousNightRows?: number
+        arrivalsAtEleven?: number
+        departuresBeforeEight?: number
+        turnoverRowsMissingGuestName?: number
+        parsedRows?: number
+        parsedDayCount?: number
+        previewDayCount?: number
+    }
+}
+
+export type RoomPlanScheduleSnapshot = {
+    situation?: RoomSituation
+    departure?: DepartureInfo | null
+    arrival?: ArrivalInfo | null
+    nextArrivalPreview?: NextArrivalPreview | null
+    departureTime?: string
+    arrivalTime?: string
+    guestCount?: number
+    box?: string
+    notes?: string[]
+    occupiedConfirmed?: boolean
+    freeConfirmed?: boolean
+    stateSource?: 'previo-state-pdf'
+    stateImportedAt?: string
+    planDateIso?: string
+    stayoverGuestName?: string
+    stayoverUntil?: string
+}
+
+export interface ImportBackupRoomSnapshot {
+    roomId: string
+    roomNumber: string
+    schedule: RoomPlanScheduleSnapshot
+}
+
+export interface ImportJobBackupPayload {
+    jobId: string
+    createdAt: string
+    createdBy?: string
+    affectedDates: string[]
+    affectedRoomCount: number
+    snapshotByDate: Record<string, ImportBackupRoomSnapshot[]>
+}
+
+export interface ImportJobBackupSummary {
+    backupId: string
+    createdAt: string
+    createdBy?: string
+    affectedDates: string[]
+    affectedRoomCount: number
+    rolledBackAt?: string
+    rolledBackBy?: string
+}
+
 export interface ImportJobPreviewSummary {
     parsedTabDates?: Partial<Record<'Dnes' | 'Zitra' | 'Pozitri', string>>
     byDate?: Record<string, RoomPlan[]>
     missingDateLabels?: string[]
+    parserVersion?: string
+    safety?: ImportJobSafetySummary
     preview?: {
         days: Array<{
             dateIso: string
@@ -95,6 +164,11 @@ export interface ImportJobPreviewSummary {
         stayoverCount: number
         derivedFreeCount: number
         confidenceLow: boolean
+        amPmEvidence?: boolean
+        parsedDateCount?: number
+        completeDateCount?: number
+        dayTotals?: Record<string, { arrivals?: number; departures?: number; stayovers?: number }>
+        parserVersion?: string
         parsedTabDates: Partial<Record<'Dnes' | 'Zitra' | 'Pozitri', string>>
     }
 }
@@ -120,6 +194,8 @@ export interface ImportJob {
     storagePath?: string
     previewSummary?: ImportJobPreviewSummary
     parserVersion?: string
+    backupSummary?: ImportJobBackupSummary
+    backupPayload?: ImportJobBackupPayload
 }
 
 export interface Task {

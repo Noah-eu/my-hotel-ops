@@ -1,8 +1,10 @@
 import type { OpsTab } from './opsStore'
 import type { PrevioPdfExtract, RoomCatalogItem } from './previoPdfParser'
 import { extractTextFromPdfFile } from './previoPdfParser'
+import type { ImportJobSafetySummary } from '../types'
 
 const PDF_PAGE_BREAK = '[[[PREVIO_PAGE_BREAK]]]'
+export const PREVIO_STAV_PARSER_VERSION = 'stav-parser-v3-real-pdf-fixture'
 
 export const MASTER_ROOM_NUMBERS = [
     '001', '101', '102', '103', '104', '105', '201', '202', '203', '204', '205', '301', '302', '303', '304', '305'
@@ -46,6 +48,7 @@ export type PrevioStateParseResult = {
     rawTextLength: number
     lineCount: number
     completeDates: string[]
+    amPmEvidence: boolean
     dayTotals: Record<string, { arrivals?: number; departures?: number; stayovers?: number }>
 }
 
@@ -58,7 +61,19 @@ export type PrevioStateImportPreview = {
     stayoverCount: number
     derivedFreeCount: number
     confidenceLow: boolean
+    amPmEvidence: boolean
+    parsedDateCount: number
+    completeDateCount: number
+    dayTotals: Record<string, { arrivals?: number; departures?: number; stayovers?: number }>
+    parserVersion: string
     parsedTabDates: Partial<Record<OpsTab, string>>
+}
+
+type PrevioStateImportSafetyInput = {
+    preview: Pick<PrevioStateImportPreview, 'days' | 'parsedRows' | 'confidenceLow' | 'amPmEvidence' | 'parsedDateCount' | 'dayTotals'>
+    missingDateLabels?: string[]
+    parserVersion?: string
+    checkedAt?: Date
 }
 
 type PrevioStatePdfSource = string | PrevioPdfExtract
@@ -110,6 +125,11 @@ function normalizeTimeWithMeridiem(hourRaw: string, minuteRaw: string, meridiemR
 function toMinutes(hhmm: string) {
     const [h, m] = hhmm.split(':').map(Number)
     return h * 60 + m
+}
+
+function toMinutesSafe(hhmm?: string) {
+    if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return null
+    return toMinutes(hhmm)
 }
 
 function formatLocalDate(date: Date) {
@@ -672,6 +692,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
     const rows: PrevioStateParsedRow[] = []
     const parsedDates: string[] = []
     const completeDates = new Set<string>()
+    let amPmEvidence = false
     const dayTotals: Record<string, { arrivals?: number; departures?: number; stayovers?: number }> = {}
 
     const pages = rawText
@@ -751,6 +772,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 }
 
                 const hadAmPm = departureInfo.hadAmPm || arrivalInfo.hadAmPm
+                if (hadAmPm) amPmEvidence = true
                 if (hadAmPm && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
                     blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
                 }
@@ -859,7 +881,9 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 blockWarnings.push('Pokoj není v master seznamu')
             }
 
-            if (/\b(?:AM|PM)\b/i.test(timeSource) && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
+            const hadAmPm = /\b(?:AM|PM)\b/i.test(timeSource)
+            if (hadAmPm) amPmEvidence = true
+            if (hadAmPm && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
                 blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
             }
 
@@ -927,6 +951,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
         rawTextLength: rawText.length,
         lineCount: allLines.length,
         completeDates: Array.from(completeDates).sort(),
+        amPmEvidence,
         dayTotals
     }
 }
@@ -1040,6 +1065,135 @@ export function buildPrevioStateImportPreview(
         stayoverCount,
         derivedFreeCount,
         confidenceLow,
+        amPmEvidence: parsed.amPmEvidence,
+        parsedDateCount: parsed.parsedDates.length,
+        completeDateCount: parsed.completeDates.length,
+        dayTotals: parsed.dayTotals,
+        parserVersion: PREVIO_STAV_PARSER_VERSION,
         parsedTabDates
+    }
+}
+
+export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyInput): ImportJobSafetySummary {
+    const preview = input.preview
+    const missingDateLabels = input.missingDateLabels || []
+    const parserVersion = String(input.parserVersion || '').trim()
+    const parserVersionMissing = !parserVersion
+    const parserVersionOutdated = parserVersionMissing || parserVersion !== PREVIO_STAV_PARSER_VERSION
+    const checkedAt = (input.checkedAt || new Date()).toISOString()
+
+    const blocks: string[] = []
+    const warnings: string[] = []
+
+    const rows = preview.days.flatMap((day) => day.rows)
+    const turnoverRows = rows.filter((row) => Boolean(row.departureTime || row.arrivalTime))
+    const arrivals = rows.filter((row) => Boolean(row.arrivalTime))
+    const departures = rows.filter((row) => Boolean(row.departureTime))
+
+    const suspiciousNightRows = turnoverRows.filter((row) => {
+        const dep = toMinutesSafe(row.departureTime)
+        const arr = toMinutesSafe(row.arrivalTime)
+        const lower = 60
+        const upper = 450
+        return (dep !== null && dep >= lower && dep <= upper) || (arr !== null && arr >= lower && arr <= upper)
+    })
+
+    if (preview.amPmEvidence && suspiciousNightRows.length > 0) {
+        blocks.push('Detekovány podezřelé noční časy (01:00-07:30) v AM/PM režimu.')
+    }
+
+    const arrivalsAtEleven = arrivals.filter((row) => row.arrivalTime === '11:00').length
+    if (arrivals.length >= 4 && arrivalsAtEleven >= 3 && arrivalsAtEleven / arrivals.length >= 0.35) {
+        blocks.push('Příliš mnoho příjezdů je přesně v 11:00.')
+    }
+
+    const departuresBeforeEight = departures.filter((row) => {
+        const minute = toMinutesSafe(row.departureTime)
+        return minute !== null && minute < 8 * 60
+    }).length
+    if (departures.length >= 4 && departuresBeforeEight >= 3 && departuresBeforeEight / departures.length >= 0.35) {
+        blocks.push('Příliš mnoho odjezdů je před 08:00.')
+    }
+
+    const turnoverRowsMissingGuestName = turnoverRows.filter((row) => {
+        const missingDepartureGuest = Boolean(row.departureTime && !row.departureGuestName)
+        const missingArrivalGuest = Boolean(row.arrivalTime && !row.arrivalGuestName)
+        return missingDepartureGuest || missingArrivalGuest
+    }).length
+    if (turnoverRows.length >= 6 && turnoverRowsMissingGuestName >= 4 && turnoverRowsMissingGuestName / turnoverRows.length >= 0.3) {
+        blocks.push('U mnoha turnover řádků chybí jména hostů.')
+    }
+
+    if (preview.parsedDateCount > preview.days.length) {
+        blocks.push('Počet dnů v náhledu je nižší než počet dnů detekovaných v PDF.')
+    }
+
+    const minimumExpectedRows = Math.max(12, preview.days.length * 6)
+    if (preview.parsedRows < minimumExpectedRows) {
+        blocks.push(`Počet parsovaných řádků je nečekaně nízký (${preview.parsedRows}).`)
+    }
+
+    if (missingDateLabels.length > 0) {
+        blocks.push(`V náhledu chybí dny uprostřed rozsahu: ${missingDateLabels.join(', ')}`)
+    }
+
+    if (preview.confidenceLow) {
+        blocks.push('Import není bezpečný podle confidenceLow parseru.')
+    }
+
+    let totalsMismatchDetected = false
+    const dayByIso = new Map(preview.days.map((day) => [day.dateIso, day]))
+    Object.entries(preview.dayTotals || {}).forEach(([dateIso, totals]) => {
+        const day = dayByIso.get(dateIso)
+        if (!day) return
+
+        const arrivalsCount = day.rows.filter((row) => Boolean(row.arrivalTime)).length
+        const departuresCount = day.rows.filter((row) => Boolean(row.departureTime)).length
+        const arrivalGuests = day.rows.reduce((sum, row) => sum + (typeof row.arrivalGuestCount === 'number' ? row.arrivalGuestCount : 0), 0)
+        const departureGuests = day.rows.reduce((sum, row) => sum + (typeof row.departureGuestCount === 'number' ? row.departureGuestCount : 0), 0)
+
+        const effectiveArrivals = arrivalGuests > 0 ? arrivalGuests : arrivalsCount
+        const effectiveDepartures = departureGuests > 0 ? departureGuests : departuresCount
+
+        const mismatchArrivals = typeof totals.arrivals === 'number'
+            && Math.abs(effectiveArrivals - totals.arrivals) > Math.max(2, Math.round(totals.arrivals * 0.2))
+        const mismatchDepartures = typeof totals.departures === 'number'
+            && Math.abs(effectiveDepartures - totals.departures) > Math.max(2, Math.round(totals.departures * 0.2))
+
+        if (mismatchArrivals || mismatchDepartures) {
+            totalsMismatchDetected = true
+        }
+    })
+
+    if (totalsMismatchDetected) {
+        blocks.push('Počty v náhledu nesedí s řádkem Celkem v PDF.')
+    }
+
+    if (parserVersionOutdated) {
+        warnings.push('Náhled byl vytvořen starší verzí parseru. Doporučujeme přegenerovat.')
+    }
+
+    const blocked = blocks.length > 0
+    const status: ImportJobSafetySummary['status'] = blocked ? 'blocked' : 'ok'
+
+    return {
+        status,
+        blocked,
+        warnings,
+        blocks,
+        checkedAt,
+        parserVersion: parserVersion || PREVIO_STAV_PARSER_VERSION,
+        parserVersionMissing,
+        parserVersionOutdated,
+        metrics: {
+            turnoverRows: turnoverRows.length,
+            suspiciousNightRows: suspiciousNightRows.length,
+            arrivalsAtEleven,
+            departuresBeforeEight,
+            turnoverRowsMissingGuestName,
+            parsedRows: preview.parsedRows,
+            parsedDayCount: preview.parsedDateCount,
+            previewDayCount: preview.days.length
+        }
     }
 }

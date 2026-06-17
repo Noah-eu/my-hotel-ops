@@ -3,9 +3,11 @@ const { getAuth } = require('firebase-admin/auth')
 const { getFirestore } = require('firebase-admin/firestore')
 const { getStorage } = require('firebase-admin/storage')
 const {
+    PREVIO_STAV_PARSER_VERSION,
     extractStateTextFromPdfBuffer,
     parsePrevioStatePdfText,
     buildPrevioStateImportPreview,
+    evaluatePrevioStateImportSafety,
     detectMissingDatesInRange,
     buildByDateFromPreview
 } = require('./lib/previo-state-preview')
@@ -187,13 +189,19 @@ exports.handler = async (event) => {
         const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
         const missingDateLabels = missingDateIsos.map((dateIso) => formatDateLabel(dateIso))
         const byDate = buildByDateFromPreview(preview, roomCatalog)
+        const safety = evaluatePrevioStateImportSafety({
+            preview,
+            missingDateLabels,
+            parserVersion: PREVIO_STAV_PARSER_VERSION,
+            checkedAt: new Date()
+        })
 
-        const previewWarnings = [...preview.warnings]
+        const previewWarnings = [...preview.warnings, ...safety.warnings, ...safety.blocks]
         if (missingDateLabels.length > 0) {
             previewWarnings.push(`V náhledu chybí dny uprostřed rozsahu: ${missingDateLabels.join(', ')}`)
         }
 
-        const nextStatus = preview.confidenceLow || missingDateLabels.length > 0
+        const nextStatus = preview.confidenceLow || missingDateLabels.length > 0 || safety.blocked
             ? 'parsed'
             : 'needs_review'
 
@@ -209,9 +217,11 @@ exports.handler = async (event) => {
                 parsedTabDates: preview.parsedTabDates,
                 byDate,
                 missingDateLabels,
+                parserVersion: PREVIO_STAV_PARSER_VERSION,
+                safety,
                 preview
             },
-            parserVersion: 'previo-state-pdf-v1',
+            parserVersion: PREVIO_STAV_PARSER_VERSION,
             error: null
         }
 

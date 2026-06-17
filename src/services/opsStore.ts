@@ -1,4 +1,4 @@
-import { ImportJob, MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../types'
+import { ImportJob, ImportJobBackupPayload, MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../types'
 
 export type OpsTab = 'Dnes' | 'Zitra' | 'Pozitri'
 export type OpsView = 'today' | 'admin' | 'maintenance' | 'supplies'
@@ -16,6 +16,7 @@ export interface OpsPersistedState {
     importedTabDates?: Partial<Record<OpsTab, string>>
     importedRoomsByDate?: Record<string, RoomPlan[]>
     importJobs?: ImportJob[]
+    latestStateImportBackup?: ImportJobBackupPayload | null
     tasks: Task[]
     supplyRequests: SupplyRequest[]
     maintenanceItems: MaintenanceItem[]

@@ -7,7 +7,17 @@ import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
-import { ImportJob, RoomPlan, MaintenanceItem, SupplyRequest, Task, UserRole } from './types'
+import {
+    ImportJob,
+    ImportJobBackupPayload,
+    ImportJobSafetySummary,
+    RoomPlan,
+    RoomPlanScheduleSnapshot,
+    MaintenanceItem,
+    SupplyRequest,
+    Task,
+    UserRole
+} from './types'
 import {
     appMode,
     firebaseEnvDiagnostics,
@@ -30,8 +40,10 @@ import {
 } from './services/previoPdfParser'
 import {
     buildPrevioStateImportPreview,
+    evaluatePrevioStateImportSafety,
     extractStateTextFromPdfFile,
     MASTER_ROOM_NUMBERS,
+    PREVIO_STAV_PARSER_VERSION,
     parsePrevioStatePdfText,
     type PrevioStateImportPreview,
     type PrevioStateParseResult
@@ -122,7 +134,11 @@ type ImportJobInlinePreviewModel = {
     rows: ImportJobInlinePreviewRow[]
     byDate: Record<string, RoomPlan[]> | null
     parsedTabDates: Partial<Record<OpsTab, string>> | null
+    parserVersion?: string
+    safety?: ImportJobSafetySummary
 }
+
+const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -223,6 +239,11 @@ function buildImportJobInlinePreviewModel(job: ImportJob): ImportJobInlinePrevie
     const byDate = getImportJobByDate(job.previewSummary)
     const parsedTabDates = getImportJobParsedTabDates(job.previewSummary)
     const previewRaw = summaryRecord.preview
+    const parserVersion = typeof summaryRecord.parserVersion === 'string'
+        ? summaryRecord.parserVersion
+        : job.parserVersion
+    const safetyRaw = asRecord(summaryRecord.safety)
+    const safety = safetyRaw ? (safetyRaw as unknown as ImportJobSafetySummary) : undefined
 
     if (previewRaw && typeof previewRaw === 'object') {
         const preview = previewRaw as {
@@ -276,7 +297,9 @@ function buildImportJobInlinePreviewModel(job: ImportJob): ImportJobInlinePrevie
                 warnings: normalizeNotes(preview.warnings),
                 rows: flattenedRows.length > 0 ? sortInlinePreviewRows(flattenedRows) : fallbackRows,
                 byDate,
-                parsedTabDates
+                parsedTabDates,
+                parserVersion,
+                safety
             }
         }
     }
@@ -302,7 +325,9 @@ function buildImportJobInlinePreviewModel(job: ImportJob): ImportJobInlinePrevie
             : normalizeNotes(job.warnings),
         rows: byDateRows,
         byDate,
-        parsedTabDates
+        parsedTabDates,
+        parserVersion,
+        safety
     }
 }
 
@@ -416,6 +441,210 @@ function detectMissingDatesInRange(dateIsos: string[]) {
     return missing
 }
 
+function toMinutesSafe(value?: string) {
+    if (!value || !/^\d{1,2}:\d{2}$/.test(value)) return null
+    const [h, m] = value.split(':').map(Number)
+    return h * 60 + m
+}
+
+function buildPreviewSafetyFallbackWarnings(preview: PrevioStateImportPreview, missingDateLabels: string[]) {
+    const warnings: string[] = []
+
+    const turnoverRows = preview.days.flatMap((day) => day.rows).filter((row) => Boolean(row.departureTime || row.arrivalTime))
+    const arrivals = turnoverRows.filter((row) => Boolean(row.arrivalTime))
+    const departures = turnoverRows.filter((row) => Boolean(row.departureTime))
+
+    const suspiciousNightRows = turnoverRows.filter((row) => {
+        const dep = toMinutesSafe(row.departureTime)
+        const arr = toMinutesSafe(row.arrivalTime)
+        return (dep !== null && dep >= 60 && dep <= 450) || (arr !== null && arr >= 60 && arr <= 450)
+    })
+    if (preview.amPmEvidence && suspiciousNightRows.length > 0) {
+        warnings.push('Detekovány podezřelé noční časy (01:00-07:30) v AM/PM režimu.')
+    }
+
+    const arrivalsAtEleven = arrivals.filter((row) => row.arrivalTime === '11:00').length
+    if (arrivals.length >= 4 && arrivalsAtEleven >= 3 && arrivalsAtEleven / arrivals.length >= 0.35) {
+        warnings.push('Příliš mnoho příjezdů je přesně v 11:00.')
+    }
+
+    const departuresBeforeEight = departures.filter((row) => {
+        const minute = toMinutesSafe(row.departureTime)
+        return minute !== null && minute < 8 * 60
+    }).length
+    if (departures.length >= 4 && departuresBeforeEight >= 3 && departuresBeforeEight / departures.length >= 0.35) {
+        warnings.push('Příliš mnoho odjezdů je před 08:00.')
+    }
+
+    const turnoverRowsMissingGuestName = turnoverRows.filter((row) => {
+        const missingDepartureGuest = Boolean(row.departureTime && !row.departureGuestName)
+        const missingArrivalGuest = Boolean(row.arrivalTime && !row.arrivalGuestName)
+        return missingDepartureGuest || missingArrivalGuest
+    }).length
+    if (turnoverRows.length >= 6 && turnoverRowsMissingGuestName >= 4 && turnoverRowsMissingGuestName / turnoverRows.length >= 0.3) {
+        warnings.push('U mnoha turnover řádků chybí jména hostů.')
+    }
+
+    if (preview.parsedDateCount > preview.days.length) {
+        warnings.push('Počet dnů v náhledu je nižší než počet dnů detekovaných v PDF.')
+    }
+
+    const minimumExpectedRows = Math.max(12, preview.days.length * 6)
+    if (preview.parsedRows < minimumExpectedRows) {
+        warnings.push(`Počet parsovaných řádků je nečekaně nízký (${preview.parsedRows}).`)
+    }
+
+    if (missingDateLabels.length > 0) {
+        warnings.push(`V náhledu chybí dny uprostřed rozsahu: ${missingDateLabels.join(', ')}`)
+    }
+
+    if (preview.confidenceLow) {
+        warnings.push('Import není bezpečný podle confidenceLow parseru.')
+    }
+
+    let totalsMismatchDetected = false
+    const dayByIso = new Map(preview.days.map((day) => [day.dateIso, day]))
+    Object.entries(preview.dayTotals || {}).forEach(([dateIso, totals]) => {
+        const day = dayByIso.get(dateIso)
+        if (!day) return
+
+        const arrivalsCount = day.rows.filter((row) => Boolean(row.arrivalTime)).length
+        const departuresCount = day.rows.filter((row) => Boolean(row.departureTime)).length
+        const arrivalGuests = day.rows.reduce((sum, row) => sum + (typeof row.arrivalGuestCount === 'number' ? row.arrivalGuestCount : 0), 0)
+        const departureGuests = day.rows.reduce((sum, row) => sum + (typeof row.departureGuestCount === 'number' ? row.departureGuestCount : 0), 0)
+
+        const effectiveArrivals = arrivalGuests > 0 ? arrivalGuests : arrivalsCount
+        const effectiveDepartures = departureGuests > 0 ? departureGuests : departuresCount
+
+        const mismatchArrivals = typeof totals.arrivals === 'number'
+            && Math.abs(effectiveArrivals - totals.arrivals) > Math.max(2, Math.round(totals.arrivals * 0.2))
+        const mismatchDepartures = typeof totals.departures === 'number'
+            && Math.abs(effectiveDepartures - totals.departures) > Math.max(2, Math.round(totals.departures * 0.2))
+
+        if (mismatchArrivals || mismatchDepartures) {
+            totalsMismatchDetected = true
+        }
+    })
+    if (totalsMismatchDetected) {
+        warnings.push('Počty v náhledu nesedí s řádkem Celkem v PDF.')
+    }
+
+    return warnings
+}
+
+function resolveImportSafety(
+    preview: PrevioStateImportPreview | null,
+    missingDateLabels: string[],
+    parserVersion?: string,
+    storedSafety?: ImportJobSafetySummary
+): ImportJobSafetySummary | null {
+    if (!preview) return null
+
+    const evaluated = evaluatePrevioStateImportSafety({
+        preview,
+        missingDateLabels,
+        parserVersion,
+        checkedAt: new Date()
+    })
+
+    if (!storedSafety) {
+        return evaluated
+    }
+
+    const mergedWarnings = Array.from(new Set([
+        ...(storedSafety.warnings || []),
+        ...(storedSafety.blocks || []),
+        ...buildPreviewSafetyFallbackWarnings(preview, missingDateLabels),
+        ...evaluated.warnings,
+        ...evaluated.blocks
+    ]))
+
+    const parserVersionMissing = storedSafety.parserVersionMissing || evaluated.parserVersionMissing
+    const parserVersionOutdated = storedSafety.parserVersionOutdated || evaluated.parserVersionOutdated
+    const blocked = Boolean(storedSafety.blocked || evaluated.blocked)
+
+    return {
+        status: blocked ? 'blocked' : 'ok',
+        blocked,
+        warnings: mergedWarnings,
+        blocks: mergedWarnings,
+        checkedAt: evaluated.checkedAt,
+        parserVersion: parserVersion || storedSafety.parserVersion || PREVIO_STAV_PARSER_VERSION,
+        parserVersionMissing,
+        parserVersionOutdated,
+        metrics: evaluated.metrics
+    }
+}
+
+const SCHEDULE_RESTORE_DEFAULTS: RoomPlanScheduleSnapshot = {
+    situation: 'volny',
+    departure: null,
+    arrival: null,
+    nextArrivalPreview: null,
+    departureTime: undefined,
+    arrivalTime: undefined,
+    guestCount: undefined,
+    box: undefined,
+    notes: undefined,
+    occupiedConfirmed: false,
+    freeConfirmed: false,
+    stateSource: undefined,
+    stateImportedAt: undefined,
+    planDateIso: undefined,
+    stayoverGuestName: undefined,
+    stayoverUntil: undefined
+}
+
+function toScheduleSnapshot(room?: RoomPlan): RoomPlanScheduleSnapshot {
+    if (!room) return { ...SCHEDULE_RESTORE_DEFAULTS }
+
+    return {
+        situation: room.situation,
+        departure: room.departure || null,
+        arrival: room.arrival || null,
+        nextArrivalPreview: room.nextArrivalPreview || null,
+        departureTime: room.departureTime,
+        arrivalTime: room.arrivalTime,
+        guestCount: room.guestCount,
+        box: room.box,
+        notes: room.notes,
+        occupiedConfirmed: room.occupiedConfirmed,
+        freeConfirmed: room.freeConfirmed,
+        stateSource: room.stateSource,
+        stateImportedAt: room.stateImportedAt,
+        planDateIso: room.planDateIso,
+        stayoverGuestName: room.stayoverGuestName,
+        stayoverUntil: room.stayoverUntil
+    }
+}
+
+function applyScheduleSnapshot(room: RoomPlan, snapshot?: RoomPlanScheduleSnapshot): RoomPlan {
+    const schedule = {
+        ...SCHEDULE_RESTORE_DEFAULTS,
+        ...(snapshot || {})
+    }
+
+    return {
+        ...room,
+        situation: schedule.situation || 'volny',
+        departure: schedule.departure || undefined,
+        arrival: schedule.arrival || undefined,
+        nextArrivalPreview: schedule.nextArrivalPreview || undefined,
+        departureTime: schedule.departureTime,
+        arrivalTime: schedule.arrivalTime,
+        guestCount: schedule.guestCount,
+        box: schedule.box,
+        notes: schedule.notes,
+        occupiedConfirmed: Boolean(schedule.occupiedConfirmed),
+        freeConfirmed: Boolean(schedule.freeConfirmed),
+        stateSource: schedule.stateSource,
+        stateImportedAt: schedule.stateImportedAt,
+        planDateIso: schedule.planDateIso,
+        stayoverGuestName: schedule.stayoverGuestName,
+        stayoverUntil: schedule.stayoverUntil
+    }
+}
+
 export default function App() {
     function normalizeCatalogRoomNumber(value: string) {
         const trimmed = value.trim()
@@ -459,6 +688,7 @@ export default function App() {
         view: 'today',
         roomsByDay: roomPlansByDay,
         importJobs: [],
+        latestStateImportBackup: null,
         tasks: [],
         supplyRequests: initialSupplyRequests,
         maintenanceItems: initialMaintenanceItems,
@@ -488,6 +718,7 @@ export default function App() {
     const [importParseResult, setImportParseResult] = useState<PrevioParseResult | null>(null)
     const [stateImportPdfStatus, setStateImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
     const [stateImportPdfError, setStateImportPdfError] = useState<string | null>(null)
+    const [stateImportActionMessage, setStateImportActionMessage] = useState<string | null>(null)
     const [stateImportPreview, setStateImportPreview] = useState<PrevioStateImportPreview | null>(null)
     const [stateImportRawText, setStateImportRawText] = useState('')
     const [stateImportParseResult, setStateImportParseResult] = useState<PrevioStateParseResult | null>(null)
@@ -497,6 +728,7 @@ export default function App() {
     const [selectedImportedDateIso, setSelectedImportedDateIso] = useState<string | null>(null)
     const [selectedImportJobId, setSelectedImportJobId] = useState<string | null>(null)
     const [activeStateImportJobId, setActiveStateImportJobId] = useState<string | null>(null)
+    const [latestStateImportBackup, setLatestStateImportBackup] = useState<ImportJobBackupPayload | null>(() => saved?.latestStateImportBackup || null)
     const [generatingImportPreviewJobId, setGeneratingImportPreviewJobId] = useState<string | null>(null)
     const [openImportJobPreviewId, setOpenImportJobPreviewId] = useState<string | null>(null)
     const [expandedImportJobPreviewRows, setExpandedImportJobPreviewRows] = useState<Record<string, boolean>>({})
@@ -585,20 +817,38 @@ export default function App() {
         }))
     ), [statePreviewMissingDates])
 
-    const stateImportBlockedByMissingDays = statePreviewMissingDates.length > 0
-
     const selectedImportJob = useMemo(
         () => importJobs.find((job) => job.id === selectedImportJobId) || null,
         [importJobs, selectedImportJobId]
     )
 
-    const selectedImportJobPreview = selectedImportJob?.previewSummary?.preview || null
+    const selectedImportJobPreview = (selectedImportJob?.previewSummary?.preview || null) as PrevioStateImportPreview | null
     const selectedImportJobMissingDateLabels = selectedImportJob?.previewSummary?.missingDateLabels || []
-    const selectedImportJobBlockedByMissingDays = selectedImportJobMissingDateLabels.length > 0
+    const selectedImportJobParserVersion = selectedImportJob?.previewSummary?.parserVersion || selectedImportJob?.parserVersion
+    const selectedImportJobStoredSafety = selectedImportJob?.previewSummary?.safety
+    const selectedImportJobSafety = useMemo(() => (
+        resolveImportSafety(
+            selectedImportJobPreview,
+            selectedImportJobMissingDateLabels,
+            selectedImportJobParserVersion,
+            selectedImportJobStoredSafety
+        )
+    ), [selectedImportJobPreview, selectedImportJobMissingDateLabels, selectedImportJobParserVersion, selectedImportJobStoredSafety])
+
     const stateImportPreviewForUi = selectedImportJobPreview || stateImportPreview
     const stateImportWarningsForUi = stateImportPreviewForUi?.warnings || []
-    const stateImportMissingDateLabelsForUi = selectedImportJob ? selectedImportJobMissingDateLabels : statePreviewMissingDateLabels
-    const stateImportBlockedByMissingDaysForUi = selectedImportJob ? selectedImportJobBlockedByMissingDays : stateImportBlockedByMissingDays
+    const stateImportParserVersionForUi = selectedImportJob
+        ? selectedImportJobParserVersion
+        : PREVIO_STAV_PARSER_VERSION
+    const stateImportSafetyForUi = selectedImportJob
+        ? selectedImportJobSafety
+        : resolveImportSafety(stateImportPreview, statePreviewMissingDateLabels, PREVIO_STAV_PARSER_VERSION)
+    const stateImportBlockedForUi = Boolean(stateImportSafetyForUi?.blocked)
+
+    const latestRollbackCandidateJob = useMemo(
+        () => importJobs.find((job) => job.status === 'confirmed' && job.type === 'previo-state-pdf' && job.backupSummary),
+        [importJobs]
+    )
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -792,6 +1042,7 @@ export default function App() {
 
         setStateImportPdfStatus('loading')
         setStateImportPdfError(null)
+        setStateImportActionMessage(null)
         setStateImportPreview(null)
         setStateImportRawText('')
         setStateImportParseResult(null)
@@ -806,13 +1057,19 @@ export default function App() {
                 month: 'numeric',
                 year: 'numeric'
             }))
+            const safety = resolveImportSafety(preview, missingDateLabels, PREVIO_STAV_PARSER_VERSION)
+            const combinedWarnings = Array.from(new Set([
+                ...preview.warnings,
+                ...(safety?.warnings || []),
+                ...(safety?.blocks || [])
+            ]))
             const importedAt = formatImportTimestamp(new Date())
             const { byDate } = buildMergedPlansFromStateImport(preview, importedAt)
 
             const createdJob = activeStore.createImportJob({
                 type: 'previo-state-pdf',
                 source: 'manual',
-                status: 'needs_review',
+                status: safety?.blocked ? 'parsed' : 'needs_review',
                 fileName: file.name,
                 receivedAt: new Date().toISOString(),
                 parsedAt: new Date().toISOString(),
@@ -820,12 +1077,14 @@ export default function App() {
                 turnoverCount: preview.turnoverCount,
                 stayoverCount: preview.stayoverCount,
                 freeCount: preview.derivedFreeCount,
-                warnings: preview.warnings,
-                parserVersion: 'previo-state-pdf-v1',
+                warnings: combinedWarnings,
+                parserVersion: PREVIO_STAV_PARSER_VERSION,
                 previewSummary: {
                     parsedTabDates: preview.parsedTabDates,
                     byDate,
                     missingDateLabels,
+                    parserVersion: PREVIO_STAV_PARSER_VERSION,
+                    safety: safety || undefined,
                     preview
                 }
             })
@@ -940,6 +1199,208 @@ export default function App() {
             if (!exists) return sortImportJobs([job, ...prev])
             return sortImportJobs(prev.map((item) => (item.id === job.id ? { ...item, ...job } : item)))
         })
+    }
+
+    function findTabForDate(dateIso: string, parsedTabDates?: Partial<Record<OpsTab, string>>) {
+        const tabs = ['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]
+        return tabs.find((day) => importedTabDates[day] === dateIso || parsedTabDates?.[day] === dateIso)
+    }
+
+    function getCurrentRoomsForDate(dateIso: string, parsedTabDates?: Partial<Record<OpsTab, string>>) {
+        if (importedRoomsByDate[dateIso]) return importedRoomsByDate[dateIso]
+        const mappedTab = findTabForDate(dateIso, parsedTabDates)
+        if (mappedTab) return roomsByDay[mappedTab]
+        return []
+    }
+
+    function buildImportBackupPayload(
+        jobId: string,
+        byDate: Record<string, RoomPlan[]>,
+        parsedTabDates: Partial<Record<OpsTab, string>>,
+        createdBy: string
+    ): ImportJobBackupPayload {
+        const snapshotByDate: ImportJobBackupPayload['snapshotByDate'] = {}
+
+        Object.entries(byDate).forEach(([dateIso, incomingRooms]) => {
+            const currentRooms = getCurrentRoomsForDate(dateIso, parsedTabDates)
+            const currentById = new Map(currentRooms.map((room) => [room.id, room]))
+            const currentByNumber = new Map(currentRooms.map((room) => [normalizeCatalogRoomNumber(room.number), room]))
+
+            snapshotByDate[dateIso] = incomingRooms.map((incomingRoom) => {
+                const fallbackNumber = normalizeCatalogRoomNumber(incomingRoom.number)
+                const previousRoom = currentById.get(incomingRoom.id) || currentByNumber.get(fallbackNumber)
+                return {
+                    roomId: incomingRoom.id,
+                    roomNumber: fallbackNumber,
+                    schedule: toScheduleSnapshot(previousRoom)
+                }
+            })
+        })
+
+        const affectedDates = Object.keys(snapshotByDate).sort()
+        const affectedRoomCount = Object.values(snapshotByDate).reduce((sum, rows) => sum + rows.length, 0)
+
+        return {
+            jobId,
+            createdAt: new Date().toISOString(),
+            createdBy,
+            affectedDates,
+            affectedRoomCount,
+            snapshotByDate
+        }
+    }
+
+    async function persistImportBackup(job: ImportJob, backupPayload: ImportJobBackupPayload, createdBy: string) {
+        const backupSummary = {
+            backupId: backupPayload.jobId,
+            createdAt: backupPayload.createdAt,
+            createdBy,
+            affectedDates: backupPayload.affectedDates,
+            affectedRoomCount: backupPayload.affectedRoomCount
+        }
+
+        setLatestStateImportBackup(backupPayload)
+
+        if (runtimeMode === 'online' && firestoreDb) {
+            await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importBackups', backupPayload.jobId), backupPayload)
+            activeStore.updateImportJob(job.id, {
+                backupSummary
+            })
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === job.id
+                    ? { ...item, backupSummary }
+                    : item
+            ))))
+            return
+        }
+
+        activeStore.updateImportJob(job.id, {
+            backupSummary,
+            backupPayload
+        })
+        setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+            item.id === job.id
+                ? { ...item, backupSummary, backupPayload }
+                : item
+        ))))
+    }
+
+    async function loadBackupPayloadForJob(job: ImportJob) {
+        if (runtimeMode === 'online' && firestoreDb) {
+            const backupSnap = await getDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importBackups', job.id))
+            if (backupSnap.exists()) {
+                return backupSnap.data() as ImportJobBackupPayload
+            }
+            return null
+        }
+
+        if (job.backupPayload?.jobId === job.id) return job.backupPayload
+        if (latestStateImportBackup?.jobId === job.id) return latestStateImportBackup
+        return null
+    }
+
+    async function handleRollbackLastImport() {
+        if (!latestRollbackCandidateJob) {
+            setStateImportPdfError('Pro rollback není dostupný žádný potvrzený import se snapshotem.')
+            return
+        }
+
+        const job = latestRollbackCandidateJob
+        setStateImportPdfError(null)
+        setStateImportActionMessage(null)
+
+        try {
+            const backupPayload = await loadBackupPayloadForJob(job)
+            if (!backupPayload || !backupPayload.snapshotByDate) {
+                setStateImportPdfError('Snapshot pro rollback nebyl nalezen.')
+                return
+            }
+
+            const parsedTabDates = getImportJobParsedTabDates(job.previewSummary) || {}
+            const nextRoomsByDay: Record<OpsTab, RoomPlan[]> = {
+                Dnes: roomsByDay.Dnes,
+                Zitra: roomsByDay.Zitra,
+                Pozitri: roomsByDay.Pozitri
+            }
+            const nextImportedRoomsByDate = { ...importedRoomsByDate }
+
+            Object.entries(backupPayload.snapshotByDate).forEach(([dateIso, snapshots]) => {
+                const currentRooms = getCurrentRoomsForDate(dateIso, parsedTabDates)
+                if (!currentRooms || currentRooms.length === 0) return
+
+                const snapshotsById = new Map(snapshots.map((entry) => [entry.roomId, entry]))
+                const snapshotsByNumber = new Map(snapshots.map((entry) => [normalizeCatalogRoomNumber(entry.roomNumber), entry]))
+
+                const restoredRooms = currentRooms.map((room) => {
+                    const byId = snapshotsById.get(room.id)
+                    const byNumber = snapshotsByNumber.get(normalizeCatalogRoomNumber(room.number))
+                    const snapshot = byId || byNumber
+                    if (!snapshot) return room
+                    return applyScheduleSnapshot(room, snapshot.schedule)
+                })
+
+                nextImportedRoomsByDate[dateIso] = restoredRooms
+
+                const mappedTab = findTabForDate(dateIso, parsedTabDates)
+                if (mappedTab) {
+                    nextRoomsByDay[mappedTab] = restoredRooms
+                }
+            })
+
+            setImportedRoomsByDate(nextImportedRoomsByDate)
+            setRoomsByDay(nextRoomsByDay)
+
+            if (runtimeMode === 'online') {
+                Object.entries(backupPayload.snapshotByDate).forEach(([dateIso]) => {
+                    const restoredRooms = nextImportedRoomsByDate[dateIso]
+                    if (!restoredRooms) return
+                    const mappedTab = findTabForDate(dateIso, parsedTabDates)
+                    if (mappedTab) {
+                        restoredRooms.forEach((room) => activeStore.replaceRoomPlan(mappedTab, room))
+                        return
+                    }
+                    restoredRooms.forEach((room) => activeStore.replaceRoomPlan(dateIso, room))
+                })
+            }
+
+            const rollbackAt = new Date().toISOString()
+            const rollbackBy = currentUser?.name || currentUser?.id || 'admin'
+            activeStore.updateImportJob(job.id, {
+                backupSummary: {
+                    ...(job.backupSummary || {
+                        backupId: job.id,
+                        createdAt: backupPayload.createdAt,
+                        createdBy: backupPayload.createdBy,
+                        affectedDates: backupPayload.affectedDates,
+                        affectedRoomCount: backupPayload.affectedRoomCount
+                    }),
+                    rolledBackAt: rollbackAt,
+                    rolledBackBy: rollbackBy
+                }
+            })
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === job.id
+                    ? {
+                        ...item,
+                        backupSummary: {
+                            ...(item.backupSummary || {
+                                backupId: item.id,
+                                createdAt: backupPayload.createdAt,
+                                createdBy: backupPayload.createdBy,
+                                affectedDates: backupPayload.affectedDates,
+                                affectedRoomCount: backupPayload.affectedRoomCount
+                            }),
+                            rolledBackAt: rollbackAt,
+                            rolledBackBy: rollbackBy
+                        }
+                    }
+                    : item
+            ))))
+
+            setStateImportActionMessage(`Rollback dokončen pro import ${job.fileName}.`)
+        } catch (error: any) {
+            setStateImportPdfError(error?.message || 'Rollback posledního importu selhal.')
+        }
     }
 
     function roomIdForNumber(roomNumber: string) {
@@ -1265,52 +1726,75 @@ export default function App() {
     }
 
     async function handleConfirmPrevioStateImport() {
-        if (!stateImportPreview || stateImportPreview.confidenceLow || stateImportBlockedByMissingDays) return
-        const importedAt = formatImportTimestamp(new Date())
-        const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview, importedAt)
-        setImportedTabDates(stateImportPreview.parsedTabDates)
-        setImportedRoomsByDate(byDate)
-        setSelectedImportedDateIso(null)
-        setRoomsByDay(next)
+        if (!stateImportPreview) return
 
-        if (runtimeMode === 'online') {
-            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-                next[day].forEach((room) => {
-                    activeStore.replaceRoomPlan(day, room)
-                })
-            })
+        const targetJob = activeStateImportJobId
+            ? importJobs.find((job) => job.id === activeStateImportJobId) || null
+            : null
+        const parserVersion = targetJob?.previewSummary?.parserVersion || targetJob?.parserVersion || PREVIO_STAV_PARSER_VERSION
+        const safety = resolveImportSafety(stateImportPreview, statePreviewMissingDateLabels, parserVersion, targetJob?.previewSummary?.safety)
 
-            const primaryDateSet = new Set(
-                Object.values(stateImportPreview.parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso))
-            )
-            Object.entries(byDate).forEach(([dateIso, rooms]) => {
-                if (primaryDateSet.has(dateIso)) return
-                rooms.forEach((room) => {
-                    activeStore.replaceRoomPlan(dateIso, room)
-                })
-            })
+        if (!safety || safety.blocked) {
+            setStateImportPdfError(IMPORT_CONFIRM_BLOCKED_MESSAGE)
+            return
         }
 
-        if (activeStateImportJobId) {
-            const confirmedAt = new Date().toISOString()
+        try {
+            const importedAt = formatImportTimestamp(new Date())
+            const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview, importedAt)
+
             const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
-            activeStore.updateImportJob(activeStateImportJobId, {
-                status: 'confirmed',
-                confirmedAt,
-                confirmedBy,
-                error: undefined
-            })
-            setImportJobs((prev) => sortImportJobs(prev.map((job) => (
-                job.id === activeStateImportJobId
-                    ? { ...job, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
-                    : job
-            ))))
-        }
+            if (targetJob) {
+                const backupPayload = buildImportBackupPayload(targetJob.id, byDate, stateImportPreview.parsedTabDates, confirmedBy)
+                await persistImportBackup(targetJob, backupPayload, confirmedBy)
+            }
 
-        setStateImportPreview(null)
-        setStateImportPdfStatus('idle')
-        setStateImportPdfError(null)
-        setActiveStateImportJobId(null)
+            setImportedTabDates(stateImportPreview.parsedTabDates)
+            setImportedRoomsByDate(byDate)
+            setSelectedImportedDateIso(null)
+            setRoomsByDay(next)
+
+            if (runtimeMode === 'online') {
+                ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                    next[day].forEach((room) => {
+                        activeStore.replaceRoomPlan(day, room)
+                    })
+                })
+
+                const primaryDateSet = new Set(
+                    Object.values(stateImportPreview.parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso))
+                )
+                Object.entries(byDate).forEach(([dateIso, rooms]) => {
+                    if (primaryDateSet.has(dateIso)) return
+                    rooms.forEach((room) => {
+                        activeStore.replaceRoomPlan(dateIso, room)
+                    })
+                })
+            }
+
+            if (activeStateImportJobId) {
+                const confirmedAt = new Date().toISOString()
+                activeStore.updateImportJob(activeStateImportJobId, {
+                    status: 'confirmed',
+                    confirmedAt,
+                    confirmedBy,
+                    error: undefined
+                })
+                setImportJobs((prev) => sortImportJobs(prev.map((job) => (
+                    job.id === activeStateImportJobId
+                        ? { ...job, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
+                        : job
+                ))))
+            }
+
+            setStateImportPreview(null)
+            setStateImportPdfStatus('idle')
+            setStateImportPdfError(null)
+            setStateImportActionMessage('Import Stav byl potvrzen a snapshot pro rollback je uložen.')
+            setActiveStateImportJobId(null)
+        } catch (error: any) {
+            setStateImportPdfError(error?.message || 'Potvrzení importu Stav selhalo při ukládání snapshotu.')
+        }
     }
 
     function handleCancelPrevioImport() {
@@ -1325,6 +1809,7 @@ export default function App() {
         setStateImportPreview(null)
         setStateImportPdfStatus('idle')
         setStateImportPdfError(null)
+        setStateImportActionMessage(null)
         setStateImportRawText('')
         setStateImportParseResult(null)
         setSelectedImportJobId(null)
@@ -1336,8 +1821,12 @@ export default function App() {
         const previewModel = job ? buildImportJobInlinePreviewModel(job) : null
         const byDate = job ? getImportJobByDate(job.previewSummary) : null
         const parsedTabDates = job ? getImportJobParsedTabDates(job.previewSummary) : null
+        const preview = (job?.previewSummary?.preview || null) as PrevioStateImportPreview | null
+        const missingDateLabels = job?.previewSummary?.missingDateLabels || []
+        const parserVersion = job?.previewSummary?.parserVersion || job?.parserVersion || PREVIO_STAV_PARSER_VERSION
+        const safety = resolveImportSafety(preview, missingDateLabels, parserVersion, job?.previewSummary?.safety || previewModel?.safety)
 
-        if (!job || !previewModel || !byDate || !parsedTabDates) {
+        if (!job || !previewModel || !byDate || !parsedTabDates || !preview || !safety) {
             const message = 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'
             if (job) {
                 setImportJobs((prev) => sortImportJobs(prev.map((item) => (
@@ -1358,11 +1847,26 @@ export default function App() {
             return
         }
 
-        const next: Record<OpsTab, RoomPlan[]> = {
-            Dnes: roomsByDay.Dnes,
-            Zitra: roomsByDay.Zitra,
-            Pozitri: roomsByDay.Pozitri
+        if (safety.blocked) {
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === jobId
+                    ? { ...item, error: IMPORT_CONFIRM_BLOCKED_MESSAGE }
+                    : item
+            ))))
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: IMPORT_CONFIRM_BLOCKED_MESSAGE
+            }))
+            setOpenImportJobPreviewId(jobId)
+            return
         }
+
+        try {
+            const next: Record<OpsTab, RoomPlan[]> = {
+                Dnes: roomsByDay.Dnes,
+                Zitra: roomsByDay.Zitra,
+                Pozitri: roomsByDay.Pozitri
+            }
 
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                 const dateIso = parsedTabDates[day]
@@ -1370,38 +1874,54 @@ export default function App() {
                 next[day] = byDate[dateIso]
             })
 
-        setImportedTabDates(parsedTabDates)
-        setImportedRoomsByDate(byDate)
-        setSelectedImportedDateIso(null)
-        setRoomsByDay(next)
+            const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
+            const backupPayload = buildImportBackupPayload(job.id, byDate, parsedTabDates, confirmedBy)
+            await persistImportBackup(job, backupPayload, confirmedBy)
 
-        if (runtimeMode === 'online') {
-            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-                next[day].forEach((room) => activeStore.replaceRoomPlan(day, room))
-            })
+            setImportedTabDates(parsedTabDates)
+            setImportedRoomsByDate(byDate)
+            setSelectedImportedDateIso(null)
+            setRoomsByDay(next)
 
-            const primaryDateSet = new Set(Object.values(parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso)))
-            Object.entries(byDate).forEach(([dateIso, rooms]) => {
-                if (primaryDateSet.has(dateIso)) return
-                rooms.forEach((room) => activeStore.replaceRoomPlan(dateIso, room))
+            if (runtimeMode === 'online') {
+                ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                    next[day].forEach((room) => activeStore.replaceRoomPlan(day, room))
+                })
+
+                const primaryDateSet = new Set(Object.values(parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso)))
+                Object.entries(byDate).forEach(([dateIso, rooms]) => {
+                    if (primaryDateSet.has(dateIso)) return
+                    rooms.forEach((room) => activeStore.replaceRoomPlan(dateIso, room))
+                })
+            }
+
+            const confirmedAt = new Date().toISOString()
+            activeStore.updateImportJob(jobId, {
+                status: 'confirmed',
+                confirmedAt,
+                confirmedBy,
+                error: undefined
             })
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === jobId
+                    ? { ...item, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
+                    : item
+            ))))
+            setStateImportPreview(null)
+            setActiveStateImportJobId(null)
+            setStateImportActionMessage('Import Stav byl potvrzen a snapshot pro rollback je uložen.')
+        } catch (error: any) {
+            const message = error?.message || 'Potvrzení importu selhalo při ukládání snapshotu.'
+            setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                item.id === jobId
+                    ? { ...item, error: message }
+                    : item
+            ))))
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: message
+            }))
         }
-
-        const confirmedAt = new Date().toISOString()
-        const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
-        activeStore.updateImportJob(jobId, {
-            status: 'confirmed',
-            confirmedAt,
-            confirmedBy,
-            error: undefined
-        })
-        setImportJobs((prev) => sortImportJobs(prev.map((item) => (
-            item.id === jobId
-                ? { ...item, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
-                : item
-        ))))
-        setStateImportPreview(null)
-        setActiveStateImportJobId(null)
     }
 
     function handleCancelImportJob(jobId: string) {
@@ -1417,6 +1937,9 @@ export default function App() {
     function handleDeleteImportJob(jobId: string) {
         activeStore.deleteImportJob(jobId)
         setImportJobs((prev) => prev.filter((item) => item.id !== jobId))
+        if (latestStateImportBackup?.jobId === jobId) {
+            setLatestStateImportBackup(null)
+        }
         if (openImportJobPreviewId === jobId) setOpenImportJobPreviewId(null)
         setExpandedImportJobPreviewRows((prev) => {
             if (!(jobId in prev)) return prev
@@ -1946,6 +2469,7 @@ export default function App() {
             importedTabDates,
             importedRoomsByDate,
             importJobs,
+            latestStateImportBackup,
             tasks,
             supplyRequests,
             maintenanceItems,
@@ -1953,7 +2477,7 @@ export default function App() {
             staff
         }
         activeStore.saveState(toSave)
-    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, importJobs, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
+    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, importJobs, latestStateImportBackup, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
 
     useEffect(() => {
         if (!firebaseEnvDiagnostics.firebaseConfigured) {
@@ -2165,6 +2689,7 @@ export default function App() {
         setImportedTabDates({})
         setImportedRoomsByDate({})
         setImportJobs([])
+        setLatestStateImportBackup(null)
         setTasks([])
         setSupplyRequests(initialSupplyRequests)
         setMaintenanceItems(initialMaintenanceItems)
@@ -2366,11 +2891,31 @@ export default function App() {
                                             <h3>Import z Previa</h3>
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginBottom: 8 }}>
                                                 <div style={{ fontSize: 14, fontWeight: 800 }}>Importy z Previa</div>
+                                                {latestRollbackCandidateJob && (
+                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                        <button className="btn" onClick={() => void handleRollbackLastImport()}>
+                                                            Vrátit poslední import
+                                                        </button>
+                                                        <div className="room-meta">
+                                                            Poslední potvrzený import: {latestRollbackCandidateJob.fileName}
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 {importJobs.length === 0 && <div className="room-meta">Zatím nejsou žádné import joby.</div>}
                                                 {importJobs.map((job) => {
                                                     const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
+                                                    const jobPreview = (job.previewSummary?.preview || null) as PrevioStateImportPreview | null
+                                                    const jobMissingDateLabels = job.previewSummary?.missingDateLabels || []
+                                                    const jobParserVersion = job.previewSummary?.parserVersion || job.parserVersion
+                                                    const jobSafety = resolveImportSafety(jobPreview, jobMissingDateLabels, jobParserVersion, inlinePreviewModel?.safety)
                                                     const hasPreviewSummary = Boolean(asRecord(job.previewSummary))
-                                                    const canConfirm = Boolean(job.status === 'needs_review' && inlinePreviewModel?.byDate && inlinePreviewModel?.parsedTabDates)
+                                                    const hasParserVersionWarning = hasPreviewSummary && (!jobParserVersion || jobParserVersion !== PREVIO_STAV_PARSER_VERSION)
+                                                    const canConfirm = Boolean(
+                                                        job.status === 'needs_review'
+                                                        && inlinePreviewModel?.byDate
+                                                        && inlinePreviewModel?.parsedTabDates
+                                                        && !jobSafety?.blocked
+                                                    )
                                                     const isInlinePreviewOpen = openImportJobPreviewId === job.id
                                                     const inlinePreviewError = importJobPreviewInlineErrors[job.id]
                                                     const rowsExpanded = Boolean(expandedImportJobPreviewRows[job.id])
@@ -2395,6 +2940,20 @@ export default function App() {
                                                             <div className="room-meta" style={{ marginTop: 2 }}>
                                                                 Typ obsahu: {job.contentType || '—'} • Velikost: {formatBytes(job.sizeBytes)} • Storage: {job.storagePath || 'není k dispozici'}
                                                             </div>
+                                                            <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                Parser: {jobParserVersion || 'neznámá verze'}
+                                                            </div>
+                                                            {job.backupSummary && (
+                                                                <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                    Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
+                                                                    {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                </div>
+                                                            )}
+                                                            {hasParserVersionWarning && (
+                                                                <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                    Náhled byl vytvořen starší verzí parseru. Doporučujeme přegenerovat.
+                                                                </div>
+                                                            )}
                                                             {job.source === 'email' && !job.previewSummary?.byDate && (
                                                                 <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
                                                                     PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
@@ -2447,6 +3006,18 @@ export default function App() {
                                                                         <>
                                                                             <div style={{ fontWeight: 800, color: '#0c4a6e' }}>Náhled importu Stav</div>
                                                                             <div className="room-meta" style={{ color: '#0c4a6e' }}>Detekované dny: {inlinePreviewModel.detectedDaysCount} • Turnover pokoje: {inlinePreviewModel.turnoverCount} • Probíhající pobyty: {inlinePreviewModel.stayoverCount} • Odvozené volné pokoje: {inlinePreviewModel.freeCount}</div>
+                                                                            {jobSafety && (
+                                                                                <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: jobSafety.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: jobSafety.blocked ? '#fef2f2' : '#ecfdf3', color: jobSafety.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
+                                                                                    {jobSafety.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
+                                                                                    {(jobSafety.blocks.length > 0 || jobSafety.warnings.length > 0) && (
+                                                                                        <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                                            {Array.from(new Set([...jobSafety.blocks, ...jobSafety.warnings])).map((warning) => (
+                                                                                                <li key={`${job.id}-safety-${warning}`}>{warning}</li>
+                                                                                            ))}
+                                                                                        </ul>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
                                                                             {inlinePreviewModel.warnings.length > 0 && (
                                                                                 <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
                                                                                     {inlinePreviewModel.warnings.slice(0, 8).map((warning, index) => (
@@ -2545,19 +3116,27 @@ export default function App() {
                                             {stateImportPreviewForUi && (
                                                 <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
                                                     <div style={{ fontWeight: 800 }}>Náhled importu Stav</div>
+                                                    <div className="room-meta">Parser: {stateImportParserVersionForUi || 'neznámá verze'}</div>
                                                     <div className="room-meta">Detekované dny: {stateImportPreviewForUi.days.length}</div>
                                                     <div className="room-meta">Turnover pokoje: {stateImportPreviewForUi.turnoverCount}</div>
                                                     <div className="room-meta">Probíhající pobyty: {stateImportPreviewForUi.stayoverCount}</div>
                                                     <div className="room-meta">Odvozené potvrzeně volné pokoje: {stateImportPreviewForUi.derivedFreeCount}</div>
                                                     <div className="room-meta">Mimo seznam pokojů: {stateImportPreviewForUi.unknownRooms.length ? stateImportPreviewForUi.unknownRooms.join(', ') : 'žádné'}</div>
-                                                    {stateImportPreviewForUi.confidenceLow && (
-                                                        <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
-                                                            Import Stav není bezpečný – parser nenašel dost dat. Import nepotvrzovat.
+                                                    {stateImportSafetyForUi && (
+                                                        <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: stateImportSafetyForUi.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: stateImportSafetyForUi.blocked ? '#fef2f2' : '#ecfdf3', color: stateImportSafetyForUi.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
+                                                            {stateImportSafetyForUi.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
+                                                            {(stateImportSafetyForUi.blocks.length > 0 || stateImportSafetyForUi.warnings.length > 0) && (
+                                                                <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                    {Array.from(new Set([...stateImportSafetyForUi.blocks, ...stateImportSafetyForUi.warnings])).map((warning) => (
+                                                                        <li key={`state-safety-${warning}`}>{warning}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            )}
                                                         </div>
                                                     )}
-                                                    {stateImportBlockedByMissingDaysForUi && (
-                                                        <div style={{ fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8, fontWeight: 700 }}>
-                                                            Import Stav je zablokován: v náhledu chybí dny uprostřed rozsahu ({stateImportMissingDateLabelsForUi.join(', ')}). Nahrajte PDF znovu a potvrďte až po detekci všech dní.
+                                                    {stateImportActionMessage && (
+                                                        <div style={{ fontSize: 12, color: '#166534', background: '#ecfdf3', border: '1px solid #86efac', borderRadius: 8, padding: 8 }}>
+                                                            {stateImportActionMessage}
                                                         </div>
                                                     )}
                                                     {stateImportWarningsForUi.length > 0 && (
@@ -2651,7 +3230,7 @@ export default function App() {
                                                     <div style={{ display: 'flex', gap: 8 }}>
                                                         <button
                                                             className="btn"
-                                                            disabled={stateImportPreviewForUi.confidenceLow || stateImportBlockedByMissingDaysForUi}
+                                                            disabled={stateImportBlockedForUi}
                                                             onClick={() => {
                                                                 if (selectedImportJob?.id) {
                                                                     void handleConfirmImportJob(selectedImportJob.id)
