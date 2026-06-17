@@ -459,8 +459,8 @@ body {
 }
 
 .sheet-cell-arrival {
-    border-color: #bde8ce;
-    background: linear-gradient(180deg, #f4fff8 0%, #e2f7ea 100%);
+    border-color: #f8bccb;
+    background: linear-gradient(180deg, #fff4f7 0%, #ffe9ef 100%);
 }
 
 .sheet-cell-turnover-incomplete,
