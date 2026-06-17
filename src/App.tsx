@@ -129,6 +129,7 @@ type MaintenanceFocusRequest = {
 
 function isRoomLikelyAlreadyTouched(room: RoomPlan) {
     if (room.status === 'prevzato' || room.status === 'probihá' || room.status === 'odhad' || room.status === 'hotovo' || room.status === 'problem') return true
+    if (room.occupiedConfirmed || room.freeConfirmed) return true
     if (Boolean(room.assigned)) return true
     if (Boolean(room.estimatedReady || room.estimateSetAt)) return true
     if (Boolean(room.checkoutException || room.statusNote)) return true

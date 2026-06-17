@@ -521,6 +521,8 @@ export default function DashboardToday({
                     const isExpanded = expandedRoom === room.id
                     const isProblemPanelOpen = problemPanelRoom === room.id
                     const stateOnlyRoom = isStateOnlyRoom(room)
+                    const workflowDisabled = readOnly || stateOnlyRoom
+                    const taskAndProblemDisabled = readOnly
                     const stateRowClass = room.occupiedConfirmed
                         ? 'status-row-stayover'
                         : room.freeConfirmed
@@ -698,17 +700,17 @@ export default function DashboardToday({
                                             </button>
                                         </div>
                                     )}
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly || stateOnlyRoom} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={workflowDisabled} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
-                                        disabled={readOnly || stateOnlyRoom}
+                                        disabled={workflowDisabled}
                                         onClick={() => setEstimatingRoom(estimatingRoom === room.id ? null : room.id)}
                                     >
                                         Odhad
                                     </button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
-                                        disabled={readOnly || stateOnlyRoom}
+                                        disabled={workflowDisabled}
                                         onClick={() => {
                                             onAction(room.id, 'hotovo')
                                             setExpandedRoom(null)
@@ -717,14 +719,14 @@ export default function DashboardToday({
                                     >
                                         Hotovo
                                     </button>
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly || stateOnlyRoom} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => openProblemPanel(room.id)}>Problém</button>
-                                    {canCreateTask && <button className="chip" disabled={readOnly || stateOnlyRoom} onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={taskAndProblemDisabled} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => openProblemPanel(room.id)}>Problém</button>
+                                    {canCreateTask && <button className="chip" disabled={taskAndProblemDisabled} onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
 
                                     <div style={{ width: '100%', marginTop: 8, paddingTop: 8, borderTop: '1px dashed rgba(148,163,184,0.6)' }}>
                                         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Výjimky</div>
                                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                                            <button className="action-secondary" disabled={readOnly || stateOnlyRoom} onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
-                                            {room.checkoutException && <button className="chip" disabled={readOnly || stateOnlyRoom} onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
+                                            <button className="action-secondary" disabled={workflowDisabled} onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
+                                            {room.checkoutException && <button className="chip" disabled={workflowDisabled} onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
                                             <div style={{ fontSize: 12, color: '#64748b' }}>Push notifikace pro admin zde doplníme po backend integraci.</div>
                                         </div>
                                     </div>
@@ -735,7 +737,7 @@ export default function DashboardToday({
                                                 <button
                                                     key={time}
                                                     className="chip"
-                                                    disabled={readOnly || stateOnlyRoom}
+                                                    disabled={workflowDisabled}
                                                     onClick={() => {
                                                         onAction(room.id, 'odhad', { estimateTime: time })
                                                         setEstimatingRoom(null)
@@ -748,7 +750,7 @@ export default function DashboardToday({
                                                 <button
                                                     key={mins}
                                                     className="chip"
-                                                    disabled={readOnly || stateOnlyRoom}
+                                                    disabled={workflowDisabled}
                                                     onClick={() => {
                                                         onAction(room.id, 'odhad', { relativeMinutes: mins })
                                                         setEstimatingRoom(null)
