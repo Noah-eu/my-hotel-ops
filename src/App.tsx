@@ -10,6 +10,7 @@ import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import {
     ImportJob,
+    ImportJobAutoConfirmMode,
     ImportJobBackupPayload,
     ImportJobBackupSummary,
     ImportJobSafetySummary,
@@ -193,13 +194,135 @@ type ImportCleanupFeedback = {
 
 type AdminImportGroup = 'current' | 'pending'
 
+type ImportAutoConfirmEvaluation = {
+    mode: ImportJobAutoConfirmMode
+    eligible: boolean
+    wouldConfirm: boolean
+    blockedReasons: string[]
+}
+
+type ImportAutoPreviewStatusInfo = {
+    status: 'pending' | 'done' | 'error'
+    checkedAt?: string
+    error?: string
+}
+
 const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce…'
 
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
+const AUTO_CONFIRM_STAV_IMPORTS_ENABLED = import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS === 'true'
+const AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN = import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN !== 'false'
+const AUTO_CONFIRM_STAV_IMPORTS_MODE: ImportJobAutoConfirmMode = AUTO_CONFIRM_STAV_IMPORTS_ENABLED
+    ? (AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN ? 'dry-run' : 'enabled')
+    : 'off'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CONFIRM_SUPERSEDED_MESSAGE = 'Tento import je starší než novější Stav PDF. Nepotvrzujte ho.'
 const IMPORT_CLEANUP_OLD_DAYS = 30
+
+function importAutoConfirmModeLabel(mode: ImportJobAutoConfirmMode) {
+    if (mode === 'enabled') return 'Zapnuto'
+    if (mode === 'dry-run') return 'Dry-run'
+    return 'Vypnuto'
+}
+
+function importAutoPreviewStatusLabel(status: ImportAutoPreviewStatusInfo['status']) {
+    if (status === 'done') return 'hotovo'
+    if (status === 'error') return 'chyba'
+    return 'čeká'
+}
+
+function resolveImportJobAutoPreviewStatus(job: ImportJob): ImportAutoPreviewStatusInfo | null {
+    const fromAutomation = job.automation?.autoPreview
+    if (fromAutomation) {
+        return {
+            status: fromAutomation.status,
+            checkedAt: fromAutomation.checkedAt,
+            error: fromAutomation.error
+        }
+    }
+
+    if (job.source !== 'email') return null
+
+    if (job.status === 'failed') {
+        return {
+            status: 'error',
+            error: job.error
+        }
+    }
+
+    if (job.previewSummary?.byDate) {
+        return {
+            status: 'done',
+            checkedAt: job.parsedAt
+        }
+    }
+
+    return {
+        status: 'pending'
+    }
+}
+
+function evaluateImportJobAutoConfirm(params: {
+    job: ImportJob
+    mode: ImportJobAutoConfirmMode
+    isNewestPrevioStateJob: boolean
+    isSupersededPrevioStateJob: boolean
+    hasByDate: boolean
+    hasParsedTabDates: boolean
+    safety: ImportJobSafetySummary | null
+}) {
+    const {
+        job,
+        mode,
+        isNewestPrevioStateJob,
+        isSupersededPrevioStateJob,
+        hasByDate,
+        hasParsedTabDates,
+        safety
+    } = params
+
+    const dynamicBlockedReasons: string[] = []
+
+    if (job.type !== 'previo-state-pdf') {
+        dynamicBlockedReasons.push('Podporován je jen Stav PDF import.')
+    }
+    if (job.status === 'confirmed') {
+        dynamicBlockedReasons.push('Import je už potvrzen.')
+    }
+    if (job.status === 'cancelled') {
+        dynamicBlockedReasons.push('Import je zrušený.')
+    }
+    if (job.status !== 'needs_review') {
+        dynamicBlockedReasons.push('Import není ve stavu čeká na kontrolu.')
+    }
+    if (isSupersededPrevioStateJob || !isNewestPrevioStateJob) {
+        dynamicBlockedReasons.push('Import není nejnovější.')
+    }
+    if (!hasByDate) {
+        dynamicBlockedReasons.push('Není dostupné byDate pro potvrzení.')
+    }
+    if (!hasParsedTabDates) {
+        dynamicBlockedReasons.push('Není dostupné parsedTabDates pro potvrzení.')
+    }
+    if (!safety) {
+        dynamicBlockedReasons.push('Chybí bezpečnostní kontrola importu.')
+    } else if (safety.blocked) {
+        dynamicBlockedReasons.push('Bezpečnostní kontrola import blokuje.')
+    }
+
+    const storedBlockedReasons = (job.automation?.autoConfirm?.blockedReasons || []).filter((reason) => !dynamicBlockedReasons.includes(reason))
+    const blockedReasons = [...dynamicBlockedReasons, ...storedBlockedReasons]
+    const eligible = dynamicBlockedReasons.length === 0
+    const wouldConfirm = mode !== 'off' && eligible
+
+    return {
+        mode,
+        eligible,
+        wouldConfirm,
+        blockedReasons
+    } satisfies ImportAutoConfirmEvaluation
+}
 
 if (import.meta.env.DEV) {
     runRollbackBackupSanitizerSelfCheck()
@@ -487,14 +610,6 @@ function getSupersededPrevioStateJobIds(jobs: ImportJob[]) {
 function getSupersededUnconfirmedPrevioJobs(jobs: ImportJob[]) {
     const supersededIds = getSupersededPrevioStateJobIds(jobs)
     return jobs.filter((job) => supersededIds.has(job.id))
-}
-
-// Future-ready helper for possible auto-confirm mode. Do not call automatically yet.
-function getFutureAutoConfirmCandidate(jobs: ImportJob[]) {
-    const newest = getLatestPrevioStateJob(jobs)
-    if (!newest) return null
-    if (newest.status !== 'needs_review') return null
-    return newest
 }
 
 function formatBytes(bytes?: number) {
@@ -895,6 +1010,7 @@ export default function App() {
         return window.localStorage.getItem('chill_ops_install_hint_dismissed') === '1'
     })
     const importJobPreviewPanelRefs = useRef<Record<string, HTMLDivElement | null>>({})
+    const autoConfirmInFlightJobIdRef = useRef<string | null>(null)
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
 
@@ -2317,12 +2433,47 @@ export default function App() {
         setActiveStateImportJobId(null)
     }
 
-    async function handleConfirmImportJob(jobId: string) {
+    async function handleConfirmImportJob(jobId: string, options?: { autoConfirmReason?: string }) {
         const job = importJobs.find((item) => item.id === jobId)
+        const isAutoConfirm = Boolean(options?.autoConfirmReason)
         if (job && supersededPrevioStateJobIds.has(job.id)) {
+            if (isAutoConfirm) {
+                const autoBlocked = sanitizeForFirestore({
+                    ...(job.automation || {}),
+                    autoConfirm: {
+                        mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                        dryRun: AUTO_CONFIRM_STAV_IMPORTS_MODE !== 'enabled',
+                        evaluatedAt: new Date().toISOString(),
+                        eligible: false,
+                        wouldConfirm: false,
+                        blockedReasons: [IMPORT_CONFIRM_SUPERSEDED_MESSAGE],
+                        parserVersion: PREVIO_STAV_PARSER_VERSION,
+                        decision: 'blocked'
+                    }
+                })
+                activeStore.updateImportJob(jobId, { automation: autoBlocked })
+            }
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
                 item.id === jobId
-                    ? { ...item, error: IMPORT_CONFIRM_SUPERSEDED_MESSAGE }
+                    ? {
+                        ...item,
+                        error: IMPORT_CONFIRM_SUPERSEDED_MESSAGE,
+                        automation: isAutoConfirm
+                            ? sanitizeForFirestore({
+                                ...(item.automation || {}),
+                                autoConfirm: {
+                                    mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                                    dryRun: AUTO_CONFIRM_STAV_IMPORTS_MODE !== 'enabled',
+                                    evaluatedAt: new Date().toISOString(),
+                                    eligible: false,
+                                    wouldConfirm: false,
+                                    blockedReasons: [IMPORT_CONFIRM_SUPERSEDED_MESSAGE],
+                                    parserVersion: PREVIO_STAV_PARSER_VERSION,
+                                    decision: 'blocked'
+                                }
+                            })
+                            : item.automation
+                    }
                     : item
             ))))
             setImportJobPreviewInlineErrors((prev) => ({
@@ -2410,25 +2561,89 @@ export default function App() {
             }
 
             const confirmedAt = new Date().toISOString()
+            const automationPatch = isAutoConfirm
+                ? sanitizeForFirestore({
+                    ...(job.automation || {}),
+                    autoConfirm: {
+                        mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                        dryRun: AUTO_CONFIRM_STAV_IMPORTS_MODE !== 'enabled',
+                        evaluatedAt: confirmedAt,
+                        eligible: true,
+                        wouldConfirm: true,
+                        blockedReasons: [],
+                        parserVersion,
+                        safetyStatus: safety.status,
+                        decision: 'confirmed'
+                    },
+                    autoConfirmedAt: confirmedAt,
+                    autoConfirmedBy: confirmedBy,
+                    autoConfirmReason: options?.autoConfirmReason
+                })
+                : undefined
+
             activeStore.updateImportJob(jobId, {
                 status: 'confirmed',
                 confirmedAt,
                 confirmedBy,
-                error: undefined
+                error: undefined,
+                ...(automationPatch ? { automation: automationPatch } : {})
             })
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
                 item.id === jobId
-                    ? { ...item, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
+                    ? {
+                        ...item,
+                        status: 'confirmed',
+                        confirmedAt,
+                        confirmedBy,
+                        error: undefined,
+                        ...(automationPatch ? { automation: automationPatch } : {})
+                    }
                     : item
             ))))
             setStateImportPreview(null)
             setActiveStateImportJobId(null)
-            setStateImportActionMessage('Import Stav byl potvrzen a snapshot pro rollback je uložen.')
+            setStateImportActionMessage(isAutoConfirm
+                ? 'Import Stav byl automaticky potvrzen a snapshot pro rollback je uložen.'
+                : 'Import Stav byl potvrzen a snapshot pro rollback je uložen.')
         } catch (error: any) {
             const message = error?.message || 'Potvrzení importu selhalo při ukládání snapshotu.'
+            if (job && isAutoConfirm) {
+                const automationPatch = sanitizeForFirestore({
+                    ...(job.automation || {}),
+                    autoConfirm: {
+                        mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                        dryRun: AUTO_CONFIRM_STAV_IMPORTS_MODE !== 'enabled',
+                        evaluatedAt: new Date().toISOString(),
+                        eligible: false,
+                        wouldConfirm: false,
+                        blockedReasons: [message],
+                        parserVersion: PREVIO_STAV_PARSER_VERSION,
+                        decision: 'blocked'
+                    }
+                })
+                activeStore.updateImportJob(job.id, { automation: automationPatch })
+            }
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
                 item.id === jobId
-                    ? { ...item, error: message }
+                    ? {
+                        ...item,
+                        error: message,
+                        automation: (isAutoConfirm && job)
+                            ? sanitizeForFirestore({
+                                ...(item.automation || {}),
+                                autoConfirm: {
+                                    mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                                    dryRun: AUTO_CONFIRM_STAV_IMPORTS_MODE !== 'enabled',
+                                    evaluatedAt: new Date().toISOString(),
+                                    eligible: false,
+                                    wouldConfirm: false,
+                                    blockedReasons: [message],
+                                    parserVersion: PREVIO_STAV_PARSER_VERSION,
+                                    decision: 'blocked'
+                                }
+                            })
+                            : item.automation
+                    }
                     : item
             ))))
             setImportJobPreviewInlineErrors((prev) => ({
@@ -3900,6 +4115,54 @@ export default function App() {
     }, [importJobs, latestStateImportBackup, runtimeMode, firestoreDb])
 
     useEffect(() => {
+        if (AUTO_CONFIRM_STAV_IMPORTS_MODE !== 'enabled') return
+        if (!isAdminUser) return
+        if (generatingImportPreviewJobId || rollingBackJobId) return
+
+        const candidate = newestPrevioStateJob
+        if (!candidate || candidate.type !== 'previo-state-pdf') return
+        if (candidate.status === 'confirmed' || candidate.status === 'cancelled') return
+        if (autoConfirmInFlightJobIdRef.current === candidate.id) return
+
+        const autoDecision = candidate.automation?.autoConfirm?.decision
+        if (autoDecision === 'blocked' && candidate.automation?.autoConfirm?.mode === 'enabled') return
+
+        const byDate = getImportJobByDate(candidate.previewSummary)
+        const parsedTabDates = getImportJobParsedTabDates(candidate.previewSummary)
+        const preview = (candidate.previewSummary?.preview || null) as PrevioStateImportPreview | null
+        const missingDateLabels = candidate.previewSummary?.missingDateLabels || []
+        const parserVersion = candidate.previewSummary?.parserVersion || candidate.parserVersion || PREVIO_STAV_PARSER_VERSION
+        const safety = resolveImportSafety(preview, missingDateLabels, parserVersion, candidate.previewSummary?.safety)
+        const evaluation = evaluateImportJobAutoConfirm({
+            job: candidate,
+            mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+            isNewestPrevioStateJob: newestPrevioStateJob?.id === candidate.id,
+            isSupersededPrevioStateJob: supersededPrevioStateJobIds.has(candidate.id),
+            hasByDate: Boolean(byDate),
+            hasParsedTabDates: Boolean(parsedTabDates),
+            safety
+        })
+
+        if (!evaluation.eligible) return
+
+        autoConfirmInFlightJobIdRef.current = candidate.id
+        void (async () => {
+            try {
+                await handleConfirmImportJob(candidate.id, { autoConfirmReason: 'newest-safe-import' })
+            } finally {
+                autoConfirmInFlightJobIdRef.current = null
+            }
+        })()
+    }, [
+        isAdminUser,
+        newestPrevioStateJob,
+        supersededPrevioStateJobIds,
+        generatingImportPreviewJobId,
+        rollingBackJobId,
+        importJobs
+    ])
+
+    useEffect(() => {
         void loadRoomCatalogForCurrentMode().catch((error: any) => {
             if (import.meta.env.DEV) {
                 console.warn('[RoomCatalog] failed to load, using defaults', error?.message || error)
@@ -4253,6 +4516,8 @@ export default function App() {
                                                     const isNewestPrevioStateJob = newestPrevioStateJob?.id === job.id
                                                     const isSupersededPrevioStateJob = supersededPrevioStateJobIds.has(job.id)
                                                     const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
+                                                    const jobByDate = getImportJobByDate(job.previewSummary)
+                                                    const jobParsedTabDates = getImportJobParsedTabDates(job.previewSummary)
                                                     const jobPreview = (job.previewSummary?.preview || null) as PrevioStateImportPreview | null
                                                     const jobMissingDateLabels = job.previewSummary?.missingDateLabels || []
                                                     const jobParserVersion = job.previewSummary?.parserVersion || job.parserVersion
@@ -4265,6 +4530,27 @@ export default function App() {
                                                         && job.type === 'previo-state-pdf'
                                                         && rollbackAvailability === 'checking'
                                                     const jobSafety = resolveImportSafety(jobPreview, jobMissingDateLabels, jobParserVersion, inlinePreviewModel?.safety)
+                                                    const autoPreviewStatus = resolveImportJobAutoPreviewStatus(job)
+                                                    const autoConfirmEvaluation = evaluateImportJobAutoConfirm({
+                                                        job,
+                                                        mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                                                        isNewestPrevioStateJob,
+                                                        isSupersededPrevioStateJob,
+                                                        hasByDate: Boolean(jobByDate),
+                                                        hasParsedTabDates: Boolean(jobParsedTabDates),
+                                                        safety: jobSafety
+                                                    })
+                                                    const autoConfirmInfoStyle = autoConfirmEvaluation.wouldConfirm
+                                                        ? {
+                                                            color: '#166534',
+                                                            background: '#ecfdf3',
+                                                            border: '1px solid #86efac'
+                                                        }
+                                                        : {
+                                                            color: '#9a3412',
+                                                            background: '#fff7ed',
+                                                            border: '1px solid #fdba74'
+                                                        }
                                                     const hasPreviewSummary = Boolean(asRecord(job.previewSummary))
                                                     const hasParserVersionWarning = hasPreviewSummary && (!jobParserVersion || jobParserVersion !== PREVIO_STAV_PARSER_VERSION)
                                                     const canConfirm = Boolean(
@@ -4322,6 +4608,37 @@ export default function App() {
                                                                 <div className="room-meta" style={{ marginTop: 2 }}>
                                                                     Parser: {jobParserVersion || 'neznámá verze'}
                                                                 </div>
+                                                                {autoPreviewStatus && (
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Automatický náhled: {importAutoPreviewStatusLabel(autoPreviewStatus.status)}
+                                                                        {autoPreviewStatus.checkedAt ? ` • ${new Date(autoPreviewStatus.checkedAt).toLocaleString('cs-CZ')}` : ''}
+                                                                    </div>
+                                                                )}
+                                                                <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                    Auto-confirm režim: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
+                                                                </div>
+                                                                {job.automation?.autoConfirmedAt && (
+                                                                    <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
+                                                                        Auto-potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
+                                                                        {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
+                                                                    </div>
+                                                                )}
+                                                                {(autoConfirmEvaluation.mode === 'dry-run' || autoConfirmEvaluation.mode === 'enabled') && job.status !== 'confirmed' && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, ...autoConfirmInfoStyle }}>
+                                                                        {autoConfirmEvaluation.wouldConfirm
+                                                                            ? (autoConfirmEvaluation.mode === 'dry-run'
+                                                                                ? 'Automatická kontrola: OK. Tento import by byl automaticky potvrzen.'
+                                                                                : 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.')
+                                                                            : 'Automatická kontrola: blokováno.'}
+                                                                        {!autoConfirmEvaluation.wouldConfirm && autoConfirmEvaluation.blockedReasons.length > 0 && (
+                                                                            <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                                {Array.from(new Set(autoConfirmEvaluation.blockedReasons)).slice(0, 6).map((reason) => (
+                                                                                    <li key={`${job.id}-auto-block-${reason}`}>{reason}</li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        )}
+                                                                    </div>
+                                                                )}
                                                                 {job.backupSummary && (
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
                                                                         Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
@@ -4523,6 +4840,8 @@ export default function App() {
                                                             const isNewestPrevioStateJob = newestPrevioStateJob?.id === job.id
                                                             const isSupersededPrevioStateJob = supersededPrevioStateJobIds.has(job.id)
                                                             const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
+                                                            const jobByDate = getImportJobByDate(job.previewSummary)
+                                                            const jobParsedTabDates = getImportJobParsedTabDates(job.previewSummary)
                                                             const jobPreview = (job.previewSummary?.preview || null) as PrevioStateImportPreview | null
                                                             const jobMissingDateLabels = job.previewSummary?.missingDateLabels || []
                                                             const jobParserVersion = job.previewSummary?.parserVersion || job.parserVersion
@@ -4535,6 +4854,27 @@ export default function App() {
                                                                 && job.type === 'previo-state-pdf'
                                                                 && rollbackAvailability === 'checking'
                                                             const jobSafety = resolveImportSafety(jobPreview, jobMissingDateLabels, jobParserVersion, inlinePreviewModel?.safety)
+                                                            const autoPreviewStatus = resolveImportJobAutoPreviewStatus(job)
+                                                            const autoConfirmEvaluation = evaluateImportJobAutoConfirm({
+                                                                job,
+                                                                mode: AUTO_CONFIRM_STAV_IMPORTS_MODE,
+                                                                isNewestPrevioStateJob,
+                                                                isSupersededPrevioStateJob,
+                                                                hasByDate: Boolean(jobByDate),
+                                                                hasParsedTabDates: Boolean(jobParsedTabDates),
+                                                                safety: jobSafety
+                                                            })
+                                                            const autoConfirmInfoStyle = autoConfirmEvaluation.wouldConfirm
+                                                                ? {
+                                                                    color: '#166534',
+                                                                    background: '#ecfdf3',
+                                                                    border: '1px solid #86efac'
+                                                                }
+                                                                : {
+                                                                    color: '#9a3412',
+                                                                    background: '#fff7ed',
+                                                                    border: '1px solid #fdba74'
+                                                                }
                                                             const hasPreviewSummary = Boolean(asRecord(job.previewSummary))
                                                             const hasParserVersionWarning = hasPreviewSummary && (!jobParserVersion || jobParserVersion !== PREVIO_STAV_PARSER_VERSION)
                                                             const canConfirm = Boolean(
@@ -4586,6 +4926,37 @@ export default function App() {
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
                                                                         Parser: {jobParserVersion || 'neznámá verze'}
                                                                     </div>
+                                                                    {autoPreviewStatus && (
+                                                                        <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                            Automatický náhled: {importAutoPreviewStatusLabel(autoPreviewStatus.status)}
+                                                                            {autoPreviewStatus.checkedAt ? ` • ${new Date(autoPreviewStatus.checkedAt).toLocaleString('cs-CZ')}` : ''}
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Auto-confirm režim: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
+                                                                    </div>
+                                                                    {job.automation?.autoConfirmedAt && (
+                                                                        <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
+                                                                            Auto-potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
+                                                                            {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
+                                                                        </div>
+                                                                    )}
+                                                                    {(autoConfirmEvaluation.mode === 'dry-run' || autoConfirmEvaluation.mode === 'enabled') && job.status !== 'confirmed' && (
+                                                                        <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, ...autoConfirmInfoStyle }}>
+                                                                            {autoConfirmEvaluation.wouldConfirm
+                                                                                ? (autoConfirmEvaluation.mode === 'dry-run'
+                                                                                    ? 'Automatická kontrola: OK. Tento import by byl automaticky potvrzen.'
+                                                                                    : 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.')
+                                                                                : 'Automatická kontrola: blokováno.'}
+                                                                            {!autoConfirmEvaluation.wouldConfirm && autoConfirmEvaluation.blockedReasons.length > 0 && (
+                                                                                <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                                    {Array.from(new Set(autoConfirmEvaluation.blockedReasons)).slice(0, 6).map((reason) => (
+                                                                                        <li key={`${job.id}-auto-block-${reason}`}>{reason}</li>
+                                                                                    ))}
+                                                                                </ul>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
                                                                     {job.backupSummary && (
                                                                         <div className="room-meta" style={{ marginTop: 2 }}>
                                                                             Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}

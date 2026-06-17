@@ -107,6 +107,62 @@ function sanitizePatchForWrite(payload, rootPath) {
     return cleaned
 }
 
+function readBooleanEnv(name, fallback) {
+    const value = process.env[name]
+    if (typeof value !== 'string' || !value.trim()) return fallback
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false
+    return fallback
+}
+
+function resolveAutoConfirmMode() {
+    const enabled = readBooleanEnv('AUTO_CONFIRM_STAV_IMPORTS', false)
+    const dryRun = readBooleanEnv('AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN', true)
+    if (!enabled) return 'off'
+    return dryRun ? 'dry-run' : 'enabled'
+}
+
+function buildAutoConfirmSummary({ mode, nextStatus, byDate, parsedTabDates, safety }) {
+    const blockedReasons = []
+
+    if (nextStatus !== 'needs_review') {
+        blockedReasons.push('Import není ve stavu čeká na kontrolu.')
+    }
+    if (!byDate || Object.keys(byDate).length === 0) {
+        blockedReasons.push('Chybí byDate data v náhledu.')
+    }
+    if (!parsedTabDates || Object.keys(parsedTabDates).length === 0) {
+        blockedReasons.push('Chybí parsedTabDates v náhledu.')
+    }
+    if (!safety) {
+        blockedReasons.push('Chybí safety summary importu.')
+    } else if (safety.blocked) {
+        blockedReasons.push('Safety kontrola import blokuje.')
+    }
+
+    const eligible = blockedReasons.length === 0
+    const dryRun = mode !== 'enabled'
+    const wouldConfirm = mode !== 'off' && eligible
+    const decision = mode === 'off'
+        ? 'blocked'
+        : wouldConfirm
+            ? (mode === 'dry-run' ? 'would_confirm' : 'pending')
+            : 'blocked'
+
+    return {
+        mode,
+        dryRun,
+        evaluatedAt: new Date().toISOString(),
+        eligible,
+        wouldConfirm,
+        blockedReasons,
+        parserVersion: PREVIO_STAV_PARSER_VERSION,
+        safetyStatus: safety?.status,
+        decision
+    }
+}
+
 function formatDateLabel(dateIso) {
     return new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
         day: 'numeric',
@@ -219,6 +275,14 @@ exports.handler = async (event) => {
         const nextStatus = preview.confidenceLow || missingDateLabels.length > 0 || safety.blocked
             ? 'parsed'
             : 'needs_review'
+        const autoConfirmMode = resolveAutoConfirmMode()
+        const autoConfirmSummary = buildAutoConfirmSummary({
+            mode: autoConfirmMode,
+            nextStatus,
+            byDate,
+            parsedTabDates: preview.parsedTabDates,
+            safety
+        })
 
         const patch = {
             status: nextStatus,
@@ -237,6 +301,14 @@ exports.handler = async (event) => {
                 preview
             },
             parserVersion: PREVIO_STAV_PARSER_VERSION,
+            automation: {
+                autoPreview: {
+                    status: 'done',
+                    checkedAt: new Date().toISOString(),
+                    error: null
+                },
+                autoConfirm: autoConfirmSummary
+            },
             error: null
         }
 
@@ -257,7 +329,14 @@ exports.handler = async (event) => {
                 const failedPatch = sanitizePatchForWrite({
                     status: 'failed',
                     parsedAt: new Date().toISOString(),
-                    error: safeMessage
+                    error: safeMessage,
+                    automation: {
+                        autoPreview: {
+                            status: 'error',
+                            checkedAt: new Date().toISOString(),
+                            error: safeMessage
+                        }
+                    }
                 }, 'importJob.exceptionPatch')
                 await jobRef.set(failedPatch, { merge: true })
             } catch {

@@ -91,7 +91,8 @@ export function createLocalOpsStore(): OpsStore {
                 error: input.error,
                 storagePath: input.storagePath,
                 previewSummary: input.previewSummary,
-                parserVersion: input.parserVersion
+                parserVersion: input.parserVersion,
+                automation: input.automation
             }
             withState((state) => ({
                 ...state,

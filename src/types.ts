@@ -59,6 +59,34 @@ export type ImportJobStatus = 'received' | 'parsed' | 'needs_review' | 'confirme
 
 export type ImportSafetyStatus = 'ok' | 'blocked'
 
+export type ImportJobAutoConfirmMode = 'off' | 'dry-run' | 'enabled'
+
+export interface ImportJobAutoPreviewSummary {
+    status: 'pending' | 'done' | 'error'
+    checkedAt?: string
+    error?: string
+}
+
+export interface ImportJobAutoConfirmSummary {
+    mode: ImportJobAutoConfirmMode
+    dryRun: boolean
+    evaluatedAt?: string
+    eligible: boolean
+    wouldConfirm: boolean
+    blockedReasons: string[]
+    parserVersion?: string
+    safetyStatus?: ImportSafetyStatus
+    decision?: 'pending' | 'would_confirm' | 'blocked' | 'confirmed'
+}
+
+export interface ImportJobAutomationSummary {
+    autoPreview?: ImportJobAutoPreviewSummary
+    autoConfirm?: ImportJobAutoConfirmSummary
+    autoConfirmedAt?: string
+    autoConfirmedBy?: string
+    autoConfirmReason?: string
+}
+
 export interface ImportJobSafetySummary {
     status: ImportSafetyStatus
     blocked: boolean
@@ -198,6 +226,7 @@ export interface ImportJob {
     parserVersion?: string
     backupSummary?: ImportJobBackupSummary
     backupPayload?: ImportJobBackupPayload
+    automation?: ImportJobAutomationSummary
 }
 
 export interface Task {

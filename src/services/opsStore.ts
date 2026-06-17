@@ -91,6 +91,7 @@ export interface CreateImportJobInput {
     storagePath?: string
     previewSummary?: ImportJob['previewSummary']
     parserVersion?: string
+    automation?: ImportJob['automation']
 }
 
 export interface OpsStore {
