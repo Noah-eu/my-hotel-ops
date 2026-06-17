@@ -174,8 +174,8 @@ exports.handler = async (event) => {
         }
 
         const [pdfBuffer] = await bucket.file(storagePath).download()
-        const rawText = await extractStateTextFromPdfBuffer(pdfBuffer)
-        const parsed = parsePrevioStatePdfText(rawText, new Date())
+        const extracted = await extractStateTextFromPdfBuffer(pdfBuffer)
+        const parsed = parsePrevioStatePdfText(extracted, new Date())
 
         const roomsSnap = await db.collection('hotels').doc(hotelId).collection('rooms').get()
         const roomCatalog = roomsSnap.docs

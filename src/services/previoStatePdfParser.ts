@@ -1,5 +1,5 @@
 import type { OpsTab } from './opsStore'
-import type { RoomCatalogItem } from './previoPdfParser'
+import type { PrevioPdfExtract, RoomCatalogItem } from './previoPdfParser'
 import { extractTextFromPdfFile } from './previoPdfParser'
 
 const PDF_PAGE_BREAK = '[[[PREVIO_PAGE_BREAK]]]'
@@ -61,6 +61,8 @@ export type PrevioStateImportPreview = {
     parsedTabDates: Partial<Record<OpsTab, string>>
 }
 
+type PrevioStatePdfSource = string | PrevioPdfExtract
+
 function normalizeForMatch(value: string) {
     return value
         .normalize('NFD')
@@ -89,6 +91,20 @@ function normalizeTime(raw: string) {
     const [h, m] = normalized.split(':')
     if (!h || !m) return raw
     return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`
+}
+
+function normalizeTimeWithMeridiem(hourRaw: string, minuteRaw: string, meridiemRaw?: string) {
+    let hour = Number(hourRaw)
+    const minute = Number(minuteRaw)
+    const meridiem = String(meridiemRaw || '').toUpperCase()
+
+    if (meridiem === 'AM') {
+        if (hour === 12) hour = 0
+    } else if (meridiem === 'PM') {
+        if (hour >= 1 && hour <= 11) hour += 12
+    }
+
+    return `${`${hour}`.padStart(2, '0')}:${`${minute}`.padStart(2, '0')}`
 }
 
 function toMinutes(hhmm: string) {
@@ -184,12 +200,13 @@ function isCapacityLine(line: string) {
 }
 
 function isAlfredWindow(line: string) {
-    return /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/i.test(line) && /alfred/i.test(line)
+    return /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\b/i.test(line) && /alfred/i.test(line)
 }
 
 function stripAlfredWindowSegments(line: string) {
     return line
-        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*\(alfred\)/gi, ' ')
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?(?:\s*\(?alfred\)?)?/gi, ' ')
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim()
 }
@@ -214,19 +231,193 @@ function extractDateTokens(text: string) {
     return Array.from(tokens)
 }
 
+type StateColumnBlock = {
+    room: string
+    departureText: string
+    arrivalText: string
+    rawText: string
+}
+
+function buildMergedRowText(items: Array<{ text: string; x: number }>) {
+    return items
+        .sort((a, b) => a.x - b.x)
+        .map((item) => item.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function collectColumnText(
+    rows: Array<{ items: Array<{ text: string; x: number }> }>,
+    minX: number,
+    maxX = Number.POSITIVE_INFINITY
+) {
+    return rows
+        .map((row) => {
+            const line = row.items
+                .filter((item) => item.x >= minX && item.x < maxX)
+                .sort((a, b) => a.x - b.x)
+                .map((item) => item.text)
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+            return line
+        })
+        .filter(Boolean)
+        .join('\n')
+}
+
+function detectSplitX(items: PrevioPdfExtract['pages'][number]['items']) {
+    const byLabel = (label: string) => items
+        .filter((item) => normalizeForMatch(item.text) === label)
+        .map((item) => item.x)
+        .sort((a, b) => a - b)
+
+    const datum = byLabel('datum')
+    if (datum.length >= 2) return (datum[0] + datum[1]) / 2
+
+    const odjezd = byLabel('odjezd')
+    if (odjezd.length >= 2) return (odjezd[0] + odjezd[1]) / 2
+
+    const prijezd = byLabel('prijezd')
+    if (prijezd.length >= 2) return (prijezd[0] + prijezd[1]) / 2
+
+    const xs = items.map((item) => item.x).sort((a, b) => a - b)
+    if (xs.length === 0) return 250
+    return xs[Math.floor(xs.length / 2)]
+}
+
+function detectRoomColumnMaxX(items: PrevioPdfExtract['pages'][number]['items'], splitX: number) {
+    const pokojHeader = items
+        .filter((item) => normalizeForMatch(item.text) === 'pokoj')
+        .map((item) => item.x)
+        .sort((a, b) => a - b)[0]
+
+    if (typeof pokojHeader === 'number') {
+        return Math.min(splitX - 20, pokojHeader + 65)
+    }
+
+    const minX = items.reduce((min, item) => Math.min(min, item.x), Number.POSITIVE_INFINITY)
+    if (!Number.isFinite(minX)) return splitX - 60
+    return Math.min(splitX - 20, minX + 75)
+}
+
+function findRoomInRow(items: Array<{ text: string; x: number }>, roomColumnMaxX: number) {
+    const roomItems = items.filter((item) => item.x <= roomColumnMaxX)
+    for (const item of roomItems) {
+        const tokenMatch = item.text.match(/\b(\d{3})\b/)
+        if (!tokenMatch) continue
+        const normalized = normalizeRoomNumber(tokenMatch[1])
+        if (MASTER_ROOM_SET.has(normalized)) return normalized
+    }
+
+    const joined = buildMergedRowText(roomItems)
+    return detectRoomToken(joined)
+}
+
+function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): StateColumnBlock[] {
+    if (!page?.items?.length) return []
+
+    const splitX = detectSplitX(page.items)
+    const roomColumnMaxX = detectRoomColumnMaxX(page.items, splitX)
+
+    const rowMap = new Map<number, Array<{ text: string; x: number }>>()
+    page.items.forEach((item) => {
+        const bucket = Math.round(item.y)
+        if (!rowMap.has(bucket)) rowMap.set(bucket, [])
+        rowMap.get(bucket)?.push({ text: item.text, x: item.x })
+    })
+
+    const rows = Array.from(rowMap.entries())
+        .sort((a, b) => b[0] - a[0])
+        .map(([, items]) => ({
+            items: items.sort((x, y) => x.x - y.x),
+            text: buildMergedRowText(items)
+        }))
+        .filter((row) => row.text)
+        .filter((row) => !shouldIgnoreLine(row.text) && parsePageDateHeader(row.text) === null)
+
+    const starts: Array<{ index: number; room: string }> = []
+    rows.forEach((row, index) => {
+        const room = findRoomInRow(row.items, roomColumnMaxX)
+        if (room) starts.push({ index, room })
+    })
+
+    const uniqueStarts = starts.filter((entry, index) => index === 0 || entry.index !== starts[index - 1].index)
+    if (uniqueStarts.length === 0) return []
+
+    return uniqueStarts.map((start, index) => {
+        const endIndex = index + 1 < uniqueStarts.length ? uniqueStarts[index + 1].index - 1 : rows.length - 1
+        const blockRows = rows.slice(start.index, endIndex + 1)
+        const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX)
+        const arrivalText = collectColumnText(blockRows, splitX)
+        const rawText = blockRows.map((row) => row.text).join('\n')
+
+        return {
+            room: start.room,
+            departureText,
+            arrivalText,
+            rawText
+        }
+    })
+}
+
+function extractSideNotes(sideText: string) {
+    const noteSource = sideText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => isNoteLine(line))
+        .join(' ')
+
+    return splitNoteGroups(noteSource)
+}
+
+function extractSideTimeAndCount(sideText: string, side: 'departure' | 'arrival') {
+    const entries = detectTimedEntries(sideText)
+    if (entries.length === 0) {
+        return {
+            time: undefined,
+            guestCount: undefined,
+            hadAmPm: /\b(?:AM|PM)\b/i.test(sideText)
+        }
+    }
+
+    const ordered = [...entries].sort((a, b) => {
+        const minuteDiff = toMinutes(a.time) - toMinutes(b.time)
+        if (minuteDiff !== 0) return minuteDiff
+        return a.index - b.index
+    })
+
+    const selected = side === 'departure' ? ordered[0] : ordered[ordered.length - 1]
+    return {
+        time: selected?.time,
+        guestCount: selected?.guestCount,
+        hadAmPm: /\b(?:AM|PM)\b/i.test(sideText)
+    }
+}
+
+function isSuspiciousNightTurnover(time?: string) {
+    if (!time) return false
+    const [hoursRaw] = time.split(':')
+    const hours = Number(hoursRaw)
+    if (!Number.isFinite(hours)) return false
+    return hours >= 1 && hours <= 7
+}
+
 function detectTimes(blockText: string) {
     const detected: string[] = []
-    const matches = blockText.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
+    const source = stripAlfredWindowSegments(blockText)
+    const matches = source.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\b/gi)
     for (const match of matches) {
-        detected.push(normalizeTime(`${match[1]}:${match[2]}`))
+        detected.push(normalizeTimeWithMeridiem(match[1], match[2], match[3]))
     }
     return detected
 }
 
 function detectTimedEntries(blockText: string) {
     const entries: Array<{ time: string; guestCount?: number; index: number }> = []
-    const source = String(blockText || '')
-    const matches = source.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)
+    const source = stripAlfredWindowSegments(String(blockText || ''))
+    const matches = source.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\b/gi)
 
     for (const match of matches) {
         const index = typeof match.index === 'number' ? match.index : 0
@@ -234,7 +425,7 @@ function detectTimedEntries(blockText: string) {
         const countMatch = prefix.match(/\((\d{1,2})\)\s*$/)
 
         entries.push({
-            time: normalizeTime(`${match[1]}:${match[2]}`),
+            time: normalizeTimeWithMeridiem(match[1], match[2], match[3]),
             guestCount: countMatch ? Number(countMatch[1]) : undefined,
             index
         })
@@ -439,7 +630,12 @@ function parseTotalsLine(line: string) {
     }
 }
 
-export function parsePrevioStatePdfText(rawText: string, referenceDate = new Date()): PrevioStateParseResult {
+export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceDate = new Date()): PrevioStateParseResult {
+    const parsedSource = typeof source === 'string'
+        ? { rawText: source, pages: [] as PrevioPdfExtract['pages'] }
+        : source
+
+    const rawText = parsedSource.rawText
     const allLines = rawText
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -479,6 +675,77 @@ export function parsePrevioStatePdfText(rawText: string, referenceDate = new Dat
                 dayTotals[pageDateIso] = totals
                 completeDates.add(pageDateIso)
             }
+        }
+
+        const geometryPage = parsedSource.pages?.[pageIndex]
+        const columnBlocks = geometryPage ? extractStateColumnBlocks(geometryPage) : []
+        if (columnBlocks.length > 0) {
+            columnBlocks.forEach((block) => {
+                const departureInfo = extractSideTimeAndCount(block.departureText, 'departure')
+                const arrivalInfo = extractSideTimeAndCount(block.arrivalText, 'arrival')
+
+                const departureTime = departureInfo.time
+                const arrivalTime = arrivalInfo.time
+                const departureGuestCount = departureInfo.guestCount
+                const arrivalGuestCount = arrivalInfo.guestCount
+
+                const departureNotes = extractSideNotes(block.departureText)
+                const arrivalNotes = extractSideNotes(block.arrivalText)
+
+                const departureGuestName = extractNameCandidates([block.departureText])[0]
+                const arrivalGuestName = extractNameCandidates([block.arrivalText])[0]
+                const stayoverGuestName = !departureTime && !arrivalTime
+                    ? (departureGuestName || arrivalGuestName || extractNameCandidates([block.rawText])[0])
+                    : undefined
+
+                const dateTokens = extractDateTokens(block.rawText)
+                const stayoverUntil = (() => {
+                    if (dateTokens.length === 0) return undefined
+                    const parsed = dateTokens
+                        .map((token) => parseDateToken(token, pageDate.getFullYear()))
+                        .filter((dt): dt is Date => dt !== null)
+                        .sort((a, b) => a.getTime() - b.getTime())
+                    const last = parsed[parsed.length - 1]
+                    if (!last) return undefined
+                    return formatLocalDate(last)
+                })()
+
+                const blockWarnings: string[] = []
+                if (!departureTime && !arrivalTime) {
+                    blockWarnings.push('Bez času odjezdu/příjezdu - označeno jako probíhající pobyt')
+                }
+                if (!MASTER_ROOM_SET.has(block.room)) {
+                    blockWarnings.push('Pokoj není v master seznamu')
+                }
+
+                const hadAmPm = departureInfo.hadAmPm || arrivalInfo.hadAmPm
+                if (hadAmPm && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
+                    blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
+                }
+
+                rows.push({
+                    dateIso: pageDateIso,
+                    roomNumber: block.room,
+                    departureTime,
+                    arrivalTime,
+                    departureGuestCount,
+                    arrivalGuestCount,
+                    departureGuestName,
+                    arrivalGuestName,
+                    stayoverGuestName,
+                    stayoverUntil,
+                    departureNotes,
+                    arrivalNotes,
+                    isStayover: !departureTime && !arrivalTime,
+                    warnings: blockWarnings
+                })
+
+                if (blockWarnings.length > 0) {
+                    warnings.push(`Den ${pageDateIso}, pokoj ${block.room}: ${blockWarnings.join(', ')}`)
+                }
+            })
+
+            return
         }
 
         const contentLines = pageLines.filter((line) => !shouldIgnoreLine(line) && parsePageDateHeader(line) === null)
@@ -559,6 +826,10 @@ export function parsePrevioStatePdfText(rawText: string, referenceDate = new Dat
             if (!MASTER_ROOM_SET.has(roomInfo.room)) {
                 blockWarnings.push('Pokoj není v master seznamu')
             }
+
+                if (/\b(?:AM|PM)\b/i.test(timeSource) && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
+                    blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
+                }
 
             rows.push({
                 dateIso: pageDateIso,
@@ -717,7 +988,16 @@ export function buildPrevioStateImportPreview(
         if (offset === 2) parsedTabDates.Pozitri = day.dateIso
     })
 
-    const confidenceLow = days.length === 0 || days.every((day) => day.turnoverCount === 0 && day.stayoverCount === 0)
+    const suspiciousAmPmRows = days.flatMap((day) => day.rows)
+        .filter((row) => row.warnings.some((warning) => warning.includes('AM/PM: podezřelý noční čas')))
+
+    if (suspiciousAmPmRows.length > 0) {
+        warnings.push('Import není bezpečný - parser našel podezřelé noční časy v AM/PM režimu.')
+    }
+
+    const confidenceLow = days.length === 0
+        || days.every((day) => day.turnoverCount === 0 && day.stayoverCount === 0)
+        || suspiciousAmPmRows.length > 0
 
     return {
         days,

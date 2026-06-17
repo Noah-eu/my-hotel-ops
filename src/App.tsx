@@ -798,7 +798,7 @@ export default function App() {
 
         try {
             const extracted = await extractStateTextFromPdfFile(file)
-            const parsed = parsePrevioStatePdfText(extracted.rawText, new Date())
+            const parsed = parsePrevioStatePdfText(extracted, new Date())
             const preview = buildPrevioStateImportPreview(parsed, activeRooms, new Date())
             const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
             const missingDateLabels = missingDateIsos.map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
