@@ -98,6 +98,45 @@ body {
     padding: 12px 0;
 }
 
+.main-nav {
+    margin-top: 12px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+}
+
+.main-nav-track {
+    display: flex;
+    flex-wrap: nowrap;
+    width: max-content;
+    min-width: 100%;
+    gap: 8px;
+}
+
+.nav-tab {
+    flex: 0 0 auto;
+    border: 1px solid #d3dfec;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 10px 14px;
+    min-height: 40px;
+    font-size: 14px;
+    line-height: 1;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.nav-tab.active {
+    background: linear-gradient(180deg, #eef6ff 0%, #dfeeff 100%);
+    border-color: #7fb0e6;
+    color: #1e3a8a;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.22);
+}
+
 .date-selector {
     margin-top: 12px;
     overflow-x: auto;
@@ -135,6 +174,29 @@ body {
     border-color: #60a5fa;
     color: #1e3a8a;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.install-hint {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid #dbe7f3;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.install-hint-dismiss {
+    border: 0;
+    background: transparent;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 2px 4px;
 }
 
 .tab {
@@ -255,6 +317,124 @@ body {
     border: 1px solid var(--line);
     overflow: visible;
     padding: 12px;
+}
+
+.selected-date-block {
+    margin-bottom: 10px;
+    text-align: center;
+    padding: 8px 6px;
+}
+
+.selected-date-main {
+    font-size: 22px;
+    line-height: 1.2;
+    font-weight: 900;
+    color: #0f172a;
+}
+
+.team-summary-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.team-summary-chip {
+    min-width: 0;
+    border: 1px solid #dbe7f3;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.team-summary-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    font-weight: 700;
+}
+
+.team-summary-value {
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 900;
+}
+
+.team-summary-working {
+    background: linear-gradient(180deg, #f4fff8 0%, #e8faef 100%);
+    border-color: #bde9cc;
+    color: #166534;
+}
+
+.team-summary-urgent {
+    background: linear-gradient(180deg, #fffaf1 0%, #fff1dc 100%);
+    border-color: #f2d7ab;
+    color: #9a3412;
+}
+
+.team-summary-off {
+    background: linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%);
+    border-color: #d8e0ea;
+    color: #475569;
+}
+
+.team-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.team-card {
+    border: 1px solid #dbe7f3;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 10px;
+    box-shadow: 0 1px 0 rgba(2, 6, 23, 0.04);
+}
+
+.team-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.team-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    flex: 0 0 auto;
+}
+
+.team-name {
+    font-weight: 800;
+    color: #0f172a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.team-role {
+    font-size: 12px;
+    color: #64748b;
+}
+
+.team-status {
+    font-size: 12px;
+    color: #475569;
+    font-weight: 700;
+}
+
+.team-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
 }
 
 .daily-summary {

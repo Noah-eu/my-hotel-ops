@@ -4,6 +4,7 @@ import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import RoomSheetView from './pages/RoomSheetView'
+import TeamOverview from './pages/TeamOverview'
 import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
@@ -719,7 +720,7 @@ export default function App() {
 
     const [userId, setUserId] = useState<string>(saved?.userId ?? 'david')
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>(saved?.tab ?? 'Dnes')
-    const [view, setView] = useState<'today' | 'sheet' | 'admin' | 'maintenance' | 'supplies'>(saved?.view ?? 'today')
+    const [view, setView] = useState<'today' | 'sheet' | 'team' | 'admin' | 'maintenance' | 'supplies'>(saved?.view ?? 'today')
     const [roomsByDay, setRoomsByDay] = useState(() => saved?.roomsByDay ?? roomPlansByDay)
     const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
@@ -758,6 +759,10 @@ export default function App() {
     const [importCleanupResult, setImportCleanupResult] = useState<string | null>(null)
     const [rollingBackJobId, setRollingBackJobId] = useState<string | null>(null)
     const [rollbackAvailabilityByJobId, setRollbackAvailabilityByJobId] = useState<Record<string, RollbackAvailability>>({})
+    const [installHintDismissed, setInstallHintDismissed] = useState(() => {
+        if (typeof window === 'undefined') return false
+        return window.localStorage.getItem('chill_ops_install_hint_dismissed') === '1'
+    })
     const importJobPreviewPanelRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
@@ -778,7 +783,7 @@ export default function App() {
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
     const isAdminUser = currentUser?.role === 'admin'
-    const showInstallHint = isAdminUser && !isStandalone
+    const showInstallHint = isAdminUser && !isStandalone && !installHintDismissed
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
@@ -3041,6 +3046,13 @@ export default function App() {
         setResetConfirm(false)
     }
 
+    function dismissInstallHint() {
+        setInstallHintDismissed(true)
+        if (typeof window !== 'undefined') {
+            window.localStorage.setItem('chill_ops_install_hint_dismissed', '1')
+        }
+    }
+
     return (
         <div className="app">
             <div className="topbar">
@@ -3182,19 +3194,23 @@ export default function App() {
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                            <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Pokoje</button>
-                            <button className={`btn ${view === 'sheet' ? 'active' : ''}`} onClick={() => setView('sheet')}>Plachta</button>
-                            {isAdminUser && (
-                                <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
-                            )}
-                            <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
-                            <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
+                        <div className="main-nav" aria-label="Hlavní navigace">
+                            <div className="main-nav-track">
+                                <button className={`nav-tab ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Pokoje</button>
+                                <button className={`nav-tab ${view === 'sheet' ? 'active' : ''}`} onClick={() => setView('sheet')}>Plachta</button>
+                                <button className={`nav-tab ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}>Tým</button>
+                                {isAdminUser && (
+                                    <button className={`nav-tab ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
+                                )}
+                                <button className={`nav-tab ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
+                                <button className={`nav-tab ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
+                            </div>
                         </div>
 
                         {showInstallHint && (
-                            <div className="room-meta" style={{ marginTop: 8 }}>
-                                Pro rychlejsi pouziti si aplikaci pridejte na plochu.
+                            <div className="install-hint" style={{ marginTop: 8 }}>
+                                <span>Pro rychlejší spuštění přidejte aplikaci na plochu.</span>
+                                <button className="install-hint-dismiss" onClick={dismissInstallHint} aria-label="Skrýt nápovědu instalace">Skrýt</button>
                             </div>
                         )}
 
@@ -3225,8 +3241,6 @@ export default function App() {
                                     onUpdateTaskStatus={handleUpdateTaskStatus}
                                     role={(currentUser?.role || 'cleaner') as UserRole}
                                     dayLabel={dayLabel}
-                                    staff={staff}
-                                    onSetAvailability={setStaffAvailability}
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
                                     readOnly={isExtraImportedDay}
@@ -3238,6 +3252,14 @@ export default function App() {
                                     importedTabDates={importedTabDates}
                                     importedRoomsByDate={importedRoomsByDate}
                                     activeRoomNumbers={activeSheetRoomNumbers}
+                                />
+                            )}
+                            {view === 'team' && (
+                                <TeamOverview
+                                    staff={staff}
+                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    currentUserId={userId}
+                                    onSetAvailability={setStaffAvailability}
                                 />
                             )}
                             {view === 'admin' && isAdminUser && (

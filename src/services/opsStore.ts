@@ -1,7 +1,7 @@
 import { ImportJob, ImportJobBackupPayload, MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../types'
 
 export type OpsTab = 'Dnes' | 'Zitra' | 'Pozitri'
-export type OpsView = 'today' | 'sheet' | 'admin' | 'maintenance' | 'supplies'
+export type OpsView = 'today' | 'sheet' | 'team' | 'admin' | 'maintenance' | 'supplies'
 
 export interface OpsStoreError {
     code?: string

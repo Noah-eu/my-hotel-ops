@@ -188,8 +188,6 @@ export default function DashboardToday({
     onUpdateTaskStatus,
     role,
     dayLabel,
-    staff,
-    onSetAvailability,
     currentUserId,
     currentUserName,
     readOnly
@@ -201,8 +199,6 @@ export default function DashboardToday({
     onUpdateTaskStatus: (taskId: string, status: Task['status']) => void
     role: UserRole
     dayLabel: string
-    staff: { id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[]
-    onSetAvailability: (id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') => void
     currentUserId: string
     currentUserName?: string
     readOnly?: boolean
@@ -216,8 +212,6 @@ export default function DashboardToday({
     const [taskAssignedRole, setTaskAssignedRole] = useState<Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>>('cleaner')
     const [taskPriority, setTaskPriority] = useState<Task['priority']>('normal')
     const [taskNote, setTaskNote] = useState<string>('')
-    const [showStaff, setShowStaff] = useState(false)
-
     const isCleaningRole = role === 'cleaner' || role === 'lead'
     const canCreateTask = role === 'admin' || role === 'lead'
     const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
@@ -331,41 +325,6 @@ export default function DashboardToday({
         return `Další příjezd: ${nextDayLabel} ${room.nextArrivalPreview.time}`
     }
 
-    function availabilityLabel(a?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
-        if (a === 'dnes_pracuji') return 'Pracuji dnes'
-        if (a === 'dnes_nepracuji') return 'Nepracuji dnes'
-        if (a === 'jen_urgentni') return 'Jen urgentní'
-        return 'Neurčeno'
-    }
-
-    function availabilityColor(a?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
-        if (a === 'dnes_pracuji') return '#10b981'
-        if (a === 'dnes_nepracuji') return '#94a3b8'
-        if (a === 'jen_urgentni') return '#f97316'
-        return '#cbd5e1'
-    }
-
-    function canEditAvailability(viewerRole: UserRole, viewerId: string, staffMember: any) {
-        if (viewerRole === 'admin') return true
-        if (viewerRole === 'lead') return staffMember.role === 'cleaner'
-        if (viewerRole === 'cleaner') return staffMember.id === viewerId
-        if (viewerRole === 'maintenance') return staffMember.id === viewerId
-        return false
-    }
-
-    function visibleStaff(viewerRole: UserRole, viewerId: string) {
-        if (viewerRole === 'admin') return staff
-        if (viewerRole === 'lead') return staff.filter(s => s.role === 'cleaner')
-        if (viewerRole === 'cleaner') return staff.filter(s => s.id === viewerId)
-        if (viewerRole === 'maintenance') return staff.filter(s => s.id === viewerId)
-        return []
-    }
-
-    function shortNames(names: string[]) {
-        if (names.length <= 2) return names.join(', ')
-        return `${names.slice(0, 2).join(', ')}…`
-    }
-
     function taskAssigneeHint(roleToAssign: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>) {
         const candidates = staff.filter(s => s.role === roleToAssign)
         if (candidates.length === 0) return ''
@@ -411,81 +370,14 @@ export default function DashboardToday({
         })
     }, [rooms])
 
+    const dayLabelDisplay = dayLabel.replace(' • ', ' · ')
+
     return (
         <div className="section">
-            <h3>Denní plán pokojů</h3>
-            <div className="room-meta" style={{ marginBottom: 8, fontSize: 13 }}>{dayLabel}</div>
-            {readOnly && <div className="room-meta" style={{ marginBottom: 8, color: '#0c4a6e', fontWeight: 700 }}>Náhled importovaného dne mimo Dnes/Zítra/Pozítří je pouze pro čtení.</div>}
-
-            <div className="section" style={{ marginBottom: 10 }}>
-                <h3 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>Moje dostupnost dnes</div>
-                    <div style={{ fontSize: 12, color: '#475569' }}>{/* placeholder for alignment */}</div>
-                </h3>
-                {/* Personal availability card */}
-                {(() => {
-                    const me = staff.find(s => s.id === currentUserId)
-                    return (
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-                            <div style={{ flex: 1, minWidth: 160 }}>
-                                <div style={{ fontWeight: 800 }}>{me?.name || 'Uživatel'}</div>
-                                <div style={{ color: '#475569', fontSize: 13 }}>{me ? (me.availability === 'dnes_pracuji' ? 'Jsem: Pracuji dnes' : me.availability === 'jen_urgentni' ? 'Jsem: Jen urgentní' : 'Jsem: Nepracuji dnes') : ''}</div>
-                            </div>
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                <button className="action-large" style={{ minWidth: 120 }} onClick={() => onSetAvailability(currentUserId, 'dnes_pracuji')}>Pracuji dnes</button>
-                                <button className="btn" style={{ minWidth: 120 }} onClick={() => onSetAvailability(currentUserId, 'dnes_nepracuji')}>Nepracuji dnes</button>
-                                <button className="btn" style={{ minWidth: 120 }} onClick={() => onSetAvailability(currentUserId, 'jen_urgentni')}>Jen urgentní</button>
-                            </div>
-                        </div>
-                    )
-                })()}
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button className="btn" style={{ padding: '6px 8px' }} onClick={() => setShowStaff(s => !s)}>{showStaff ? 'Skrýt přehled' : 'Zobrazit přehled'}</button>
-                </div>
-                {showStaff ? (
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        {visibleStaff(role, currentUserId).map((s) => (
-                            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, border: '1px solid #e6edf3', borderRadius: 8, minWidth: 140 }}>
-                                <div style={{ width: 10, height: 10, borderRadius: 10, background: availabilityColor(s.availability) }} />
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontWeight: 700 }}>{s.name}</div>
-                                    <div style={{ fontSize: 12, color: '#475569' }}>{roleLabel(s.role)}</div>
-                                </div>
-                                <div style={{ fontSize: 12, color: '#475569' }}>{availabilityLabel(s.availability)}</div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div style={{ fontSize: 13, color: '#475569', marginTop: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {(() => {
-                            const visible = visibleStaff(role, currentUserId)
-                            const working = visible.filter(s => s.availability === 'dnes_pracuji').map(s => s.name)
-                            const notWorking = visible.filter(s => s.availability === 'dnes_nepracuji' || s.availability === undefined).map(s => s.name)
-                            const urgent = visible.filter(s => s.availability === 'jen_urgentni').map(s => s.name)
-                            const parts: string[] = []
-                            if (working.length) parts.push(`V práci: ${shortNames(working)}`)
-                            if (urgent.length) parts.push(`Urgentní: ${shortNames(urgent)}`)
-                            if (notWorking.length) parts.push(`Nepracují: ${shortNames(notWorking)}`)
-                            return parts.join(' • ')
-                        })()}
-                    </div>
-                )}
-                {showStaff && (
-                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexDirection: 'column' }}>
-                        {staff.map((s) => (
-                            <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                <div style={{ flex: 1 }}>{s.name} • {roleLabel(s.role)}</div>
-                                <div style={{ display: 'flex', gap: 6 }}>
-                                    <button className="chip" onClick={() => onSetAvailability(s.id, 'dnes_pracuji')} disabled={!canEditAvailability(role, currentUserId, s)}>Pracuji</button>
-                                    <button className="chip" onClick={() => onSetAvailability(s.id, 'dnes_nepracuji')} disabled={!canEditAvailability(role, currentUserId, s)}>Nepracuji</button>
-                                    <button className="chip" onClick={() => onSetAvailability(s.id, 'jen_urgentni')} disabled={!canEditAvailability(role, currentUserId, s)}>Jen urgentní</button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
+            <div className="selected-date-block">
+                <div className="selected-date-main">{dayLabelDisplay}</div>
             </div>
+            {readOnly && <div className="room-meta" style={{ marginBottom: 8, color: '#0c4a6e', fontWeight: 700 }}>Náhled importovaného dne mimo Dnes/Zítra/Pozítří je pouze pro čtení.</div>}
 
             <div className="daily-table">
                 <div className="daily-summary" aria-label="Denní souhrn pokojů">
