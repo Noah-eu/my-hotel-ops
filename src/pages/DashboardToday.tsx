@@ -507,16 +507,9 @@ export default function DashboardToday({
                                     {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted mini-muted-stayover">{room.stayoverGuestName}</div>}
                                     {room.freeConfirmed && <div className="mini-muted mini-muted-free">Pokoj je dostupný při volné kapacitě.</div>}
                                     {hasLateTaskAlert && (
-                                        <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fb923c', background: '#fff7ed' }}>
-                                            <div style={{ fontSize: 12, fontWeight: 800, color: '#9a3412' }}>! Nový úkol po kontrole</div>
-                                            <button
-                                                className="chip"
-                                                style={{ marginTop: 4, fontSize: 11, padding: '4px 8px', borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }}
-                                                onClick={() => !readOnly && onAcknowledgeLateTasks(room.number)}
-                                                disabled={readOnly}
-                                            >
-                                                Přečteno
-                                            </button>
+                                        <div style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 999, padding: '2px 8px' }}>
+                                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f97316', display: 'inline-block' }} />
+                                            Nový úkol{lateAttentionTasks.length > 1 ? ` (${lateAttentionTasks.length})` : ''}
                                         </div>
                                     )}
                                     {room.checkoutException && (
@@ -604,22 +597,6 @@ export default function DashboardToday({
                                 </div>
                             </div>
 
-                            {hasLateTaskAlert && (
-                                <div style={{ margin: '8px 10px 0', border: '1px solid #fb923c', background: '#fff7ed', borderRadius: 8, padding: '6px 8px', display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                    <div style={{ fontSize: 12, fontWeight: 800, color: '#9a3412' }}>
-                                        Nový úkol po kontrole ({lateAttentionTasks.length})
-                                    </div>
-                                    <button
-                                        className="chip"
-                                        style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }}
-                                        onClick={() => !readOnly && onAcknowledgeLateTasks(room.number)}
-                                        disabled={readOnly}
-                                    >
-                                        Přečteno
-                                    </button>
-                                </div>
-                            )}
-
                             {otherRoomTasks.length > 0 && (
                                 <div style={{ padding: '8px 10px', borderTop: '1px solid rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                     {otherRoomTasks.map((task) => (
@@ -635,11 +612,6 @@ export default function DashboardToday({
                                         >
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                                 <div style={{ fontWeight: 700 }}>{task.title || 'Bez názvu úkolu'}</div>
-                                                {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
-                                                    <span style={{ fontSize: 11, fontWeight: 800, color: '#9a3412', border: '1px solid #fdba74', background: '#ffedd5', borderRadius: 999, padding: '2px 8px' }}>
-                                                        Přidáno během dne
-                                                    </span>
-                                                )}
                                             </div>
                                             <div style={{ color: '#475569' }}>
                                                 {roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
@@ -654,7 +626,7 @@ export default function DashboardToday({
                                     {hasLateTaskAlert && (
                                         <div style={{ width: '100%', border: '1px solid #fb923c', background: '#fff7ed', borderRadius: 10, padding: 8, marginBottom: 4, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                                             <div style={{ fontSize: 13, fontWeight: 800, color: '#9a3412' }}>
-                                                Nový úkol po kontrole
+                                                Nový úkol po kontrole{lateAttentionTasks.length > 1 ? ` (${lateAttentionTasks.length})` : ''}
                                             </div>
                                             <button
                                                 className="chip"
@@ -860,7 +832,7 @@ export default function DashboardToday({
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                                                     <div style={{ fontWeight: 700 }}>{task.title || 'Bez názvu úkolu'}</div>
                                                                     {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
-                                                                        <span style={{ fontSize: 11, fontWeight: 800, color: '#9a3412', border: '1px solid #fdba74', background: '#ffedd5', borderRadius: 999, padding: '2px 8px' }}>
+                                                                        <span style={{ fontSize: 10, fontWeight: 700, color: '#7c2d12', border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: 999, padding: '1px 6px' }}>
                                                                             Nové
                                                                         </span>
                                                                     )}
