@@ -320,6 +320,7 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
 
     const splitX = detectSplitX(page.items)
     const roomColumnMaxX = detectRoomColumnMaxX(page.items, splitX)
+    const sideSplitPadding = 12
 
     const rowMap = new Map<number, Array<{ text: string; x: number }>>()
     page.items.forEach((item) => {
@@ -330,27 +331,52 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
 
     const rows = Array.from(rowMap.entries())
         .sort((a, b) => b[0] - a[0])
-        .map(([, items]) => ({
+        .map(([y, items]) => ({
+            y,
             items: items.sort((x, y) => x.x - y.x),
             text: buildMergedRowText(items)
         }))
         .filter((row) => row.text)
         .filter((row) => !shouldIgnoreLine(row.text) && parsePageDateHeader(row.text) === null)
 
-    const starts: Array<{ index: number; room: string }> = []
+    const starts: Array<{ index: number; room: string; y: number }> = []
     rows.forEach((row, index) => {
         const room = findRoomInRow(row.items, roomColumnMaxX)
-        if (room) starts.push({ index, room })
+        if (room) starts.push({ index, room, y: row.y })
     })
 
-    const uniqueStarts = starts.filter((entry, index) => index === 0 || entry.index !== starts[index - 1].index)
-    if (uniqueStarts.length === 0) return []
+    if (starts.length === 0) return []
 
-    return uniqueStarts.map((start, index) => {
-        const endIndex = index + 1 < uniqueStarts.length ? uniqueStarts[index + 1].index - 1 : rows.length - 1
-        const blockRows = rows.slice(start.index, endIndex + 1)
-        const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX)
-        const arrivalText = collectColumnText(blockRows, splitX)
+    const rowsByStartIndex = new Map<number, typeof rows>()
+    starts.forEach((start) => rowsByStartIndex.set(start.index, []))
+
+    rows.forEach((row) => {
+        let nearest = starts[0]
+        let nearestDistance = Math.abs(row.y - nearest.y)
+
+        for (let i = 1; i < starts.length; i++) {
+            const candidate = starts[i]
+            const candidateDistance = Math.abs(row.y - candidate.y)
+            if (candidateDistance < nearestDistance) {
+                nearest = candidate
+                nearestDistance = candidateDistance
+                continue
+            }
+
+            // In tie distance, prefer the lower marker (next room in visual flow)
+            // to avoid bleeding a boundary row into the previous room block.
+            if (candidateDistance === nearestDistance && candidate.y < nearest.y) {
+                nearest = candidate
+            }
+        }
+
+        rowsByStartIndex.get(nearest.index)?.push(row)
+    })
+
+    return starts.map((start) => {
+        const blockRows = [...(rowsByStartIndex.get(start.index) || [])].sort((a, b) => b.y - a.y)
+        const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX + sideSplitPadding)
+        const arrivalText = collectColumnText(blockRows, splitX + sideSplitPadding)
         const rawText = blockRows.map((row) => row.text).join('\n')
 
         return {
@@ -584,7 +610,8 @@ function extractNameCandidates(blockLines: string[]) {
 
         const cleaned = trimmed
             .replace(/\b\d{1,2}\.\s*\d{1,2}\.?\b/g, ' ')
-            .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g, ' ')
+            .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\b/gi, ' ')
+            .replace(/\b(?:AM|PM)\b/gi, ' ')
             .replace(/\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/g, ' ')
             .replace(/[()]/g, ' ')
             .replace(/\b(?:recepce|box|alfred|studio)\b/gi, ' ')
@@ -593,7 +620,7 @@ function extractNameCandidates(blockLines: string[]) {
 
         if (!cleaned || !/[A-Za-zÀ-ž]/.test(cleaned)) return
 
-        const pairMatches = [...cleaned.matchAll(/\b([A-ZÀ-Ž][A-Za-zÀ-ž'’-]+\s+[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+)\b/g)]
+        const pairMatches = [...cleaned.matchAll(/(\p{Lu}[\p{L}'’-]+\s+\p{Lu}[\p{L}'’-]+)/gu)]
             .map((match) => match[1].trim())
         if (pairMatches.length > 0) {
             pairMatches.forEach(pushCandidate)
@@ -604,7 +631,7 @@ function extractNameCandidates(blockLines: string[]) {
         for (let i = 0; i + 1 < tokens.length; i++) {
             const first = tokens[i]
             const second = tokens[i + 1]
-            if (/^[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+$/.test(first) && /^[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+$/.test(second)) {
+            if (/^\p{Lu}[\p{L}'’-]+$/u.test(first) && /^\p{Lu}[\p{L}'’-]+$/u.test(second)) {
                 pushCandidate(`${first} ${second}`)
             }
         }
@@ -689,13 +716,18 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 const departureGuestCount = departureInfo.guestCount
                 const arrivalGuestCount = arrivalInfo.guestCount
 
-                const departureNotes = extractSideNotes(block.departureText)
-                const arrivalNotes = extractSideNotes(block.arrivalText)
+                let departureNotes = extractSideNotes(block.departureText)
+                let arrivalNotes = extractSideNotes(block.arrivalText)
 
-                const departureGuestName = extractNameCandidates([block.departureText])[0]
-                const arrivalGuestName = extractNameCandidates([block.arrivalText])[0]
+                if (departureNotes.length === 0 && arrivalNotes.length >= 2 && departureTime && arrivalTime) {
+                    departureNotes = [arrivalNotes[0]]
+                    arrivalNotes = [arrivalNotes[1], ...arrivalNotes.slice(2)]
+                }
+
+                const departureGuestName = extractNameCandidates(block.departureText.split(/\r?\n/))[0]
+                const arrivalGuestName = extractNameCandidates(block.arrivalText.split(/\r?\n/))[0]
                 const stayoverGuestName = !departureTime && !arrivalTime
-                    ? (departureGuestName || arrivalGuestName || extractNameCandidates([block.rawText])[0])
+                    ? (departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
                     : undefined
 
                 const dateTokens = extractDateTokens(block.rawText)
@@ -827,9 +859,9 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 blockWarnings.push('Pokoj není v master seznamu')
             }
 
-                if (/\b(?:AM|PM)\b/i.test(timeSource) && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
-                    blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
-                }
+            if (/\b(?:AM|PM)\b/i.test(timeSource) && (isSuspiciousNightTurnover(departureTime) || isSuspiciousNightTurnover(arrivalTime))) {
+                blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
+            }
 
             rows.push({
                 dateIso: pageDateIso,
