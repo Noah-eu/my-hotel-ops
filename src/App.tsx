@@ -156,6 +156,8 @@ type ImportCleanupFeedback = {
     notFound: number
 }
 
+type AdminImportGroup = 'current' | 'pending'
+
 const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce…'
 
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
@@ -814,6 +816,7 @@ export default function App() {
     const [openImportJobPreviewId, setOpenImportJobPreviewId] = useState<string | null>(null)
     const [expandedImportJobPreviewRows, setExpandedImportJobPreviewRows] = useState<Record<string, boolean>>({})
     const [importJobPreviewInlineErrors, setImportJobPreviewInlineErrors] = useState<Record<string, string>>({})
+    const [showConfirmedImportHistory, setShowConfirmedImportHistory] = useState(false)
     const [cleanupConfirm, setCleanupConfirm] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
@@ -970,6 +973,35 @@ export default function App() {
     )
 
     const selectedImportJobIsSuperseded = Boolean(selectedImportJob && supersededPrevioStateJobIds.has(selectedImportJob.id))
+
+    const importCurrentJobIds = useMemo(() => {
+        const ids = new Set<string>()
+        if (newestPrevioStateJob?.id) ids.add(newestPrevioStateJob.id)
+        if (latestRollbackCandidateJob?.id) ids.add(latestRollbackCandidateJob.id)
+        return ids
+    }, [newestPrevioStateJob?.id, latestRollbackCandidateJob?.id])
+
+    const currentImportJobs = useMemo(
+        () => importJobs.filter((job) => importCurrentJobIds.has(job.id)),
+        [importJobs, importCurrentJobIds]
+    )
+
+    const pendingImportJobs = useMemo(
+        () => importJobs.filter((job) => !importCurrentJobIds.has(job.id) && job.status !== 'confirmed'),
+        [importJobs, importCurrentJobIds]
+    )
+
+    const confirmedHistoryImportJobs = useMemo(
+        () => importJobs.filter((job) => !importCurrentJobIds.has(job.id) && job.status === 'confirmed'),
+        [importJobs, importCurrentJobIds]
+    )
+
+    const adminVisibleImportJobs = useMemo(() => {
+        const grouped: Array<{ job: ImportJob; group: AdminImportGroup }> = []
+        currentImportJobs.forEach((job) => grouped.push({ job, group: 'current' }))
+        pendingImportJobs.forEach((job) => grouped.push({ job, group: 'pending' }))
+        return grouped
+    }, [currentImportJobs, pendingImportJobs])
 
     const visibleTodayTasks = useMemo(
         () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
@@ -2456,14 +2488,14 @@ export default function App() {
         if (targets.length === 0) {
             setImportCleanupFeedback(createCleanupFeedback({
                 tone: 'info',
-                message: 'Nebyly nalezeny žádné importy ke smazání.',
+                message: 'Žádné nahrazené nepotvrzené importy ke smazání. Potvrzené importy zůstávají kvůli historii a rollbacku.',
                 candidates: allCandidates.length,
                 skippedProtected
             }))
             return
         }
 
-        const confirmed = window.confirm('Opravdu smazat nahrazené importy? Odstraní se i uložená PDF, pokud existují.')
+        const confirmed = window.confirm('Opravdu smazat nahrazené nepotvrzené importy? Odstraní se i uložená PDF, pokud existují.')
         if (!confirmed) return
 
         setImportCleanupInProgress(true)
@@ -2475,7 +2507,7 @@ export default function App() {
             if (summary.deletedJobIds.length === 0) {
                 setImportCleanupFeedback(createCleanupFeedback({
                     tone: 'info',
-                    message: 'Nebyly nalezeny žádné importy ke smazání.',
+                    message: 'Žádné nahrazené nepotvrzené importy ke smazání. Potvrzené importy zůstávají kvůli historii a rollbacku.',
                     candidates: allCandidates.length,
                     summary,
                     skippedProtected
@@ -3564,7 +3596,7 @@ export default function App() {
                                                             disabled={importCleanupInProgress}
                                                             onClick={() => void handleCleanupSupersededImports()}
                                                         >
-                                                            {importCleanupAction === 'superseded' ? 'Mažu…' : 'Smazat nahrazené importy'}
+                                                            {importCleanupAction === 'superseded' ? 'Mažu…' : 'Smazat nahrazené nepotvrzené importy'}
                                                         </button>
                                                         <button
                                                             type="button"
@@ -3576,7 +3608,7 @@ export default function App() {
                                                         </button>
                                                         <button
                                                             type="button"
-                                                            className="btn danger"
+                                                            className="btn"
                                                             disabled={importCleanupInProgress}
                                                             onClick={() => void handleBulkImportCleanup('old')}
                                                         >
@@ -3585,6 +3617,9 @@ export default function App() {
                                                     </div>
                                                     <div className="room-meta" style={{ color: '#475569' }}>
                                                         Staré importy mažou záznam i uložené PDF. Poslední potvrzený import se kvůli rollbacku ponechává.
+                                                    </div>
+                                                    <div className="room-meta" style={{ color: '#475569' }}>
+                                                        Potvrzené importy se standardně jen skrývají v historii. Mazání používejte jen při úklidu.
                                                     </div>
                                                     {newestPrevioStateJob && (
                                                         <div className="room-meta" style={{ color: '#0c4a6e' }}>
@@ -3616,7 +3651,9 @@ export default function App() {
                                                     )}
                                                 </div>
                                                 {importJobs.length === 0 && <div className="room-meta">Zatím nejsou žádné import joby.</div>}
-                                                {importJobs.map((job) => {
+                                                {adminVisibleImportJobs.map(({ job, group }, index) => {
+                                                    const previousGroup = index > 0 ? adminVisibleImportJobs[index - 1].group : null
+                                                    const showGroupHeading = index === 0 || previousGroup !== group
                                                     const isNewestPrevioStateJob = newestPrevioStateJob?.id === job.id
                                                     const isSupersededPrevioStateJob = supersededPrevioStateJobIds.has(job.id)
                                                     const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
@@ -3649,216 +3686,488 @@ export default function App() {
                                                         : []
 
                                                     return (
-                                                        <div key={job.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                                                                <div style={{ fontWeight: 700 }}>{job.fileName}</div>
-                                                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                                                    {isNewestPrevioStateJob && (
-                                                                        <div style={{ background: '#dbeafe', color: '#1e3a8a', border: '1px solid #93c5fd', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
-                                                                            Nejnovější import
+                                                        <React.Fragment key={job.id}>
+                                                            {showGroupHeading && (
+                                                                <div style={{ marginTop: 10, fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+                                                                    {group === 'current' ? 'Aktuální import' : 'Čeká na kontrolu / chyby'}
+                                                                </div>
+                                                            )}
+                                                            <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                                                    <div style={{ fontWeight: 700 }}>{job.fileName}</div>
+                                                                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                                        {isNewestPrevioStateJob && (
+                                                                            <div style={{ background: '#dbeafe', color: '#1e3a8a', border: '1px solid #93c5fd', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                                Nejnovější import
+                                                                            </div>
+                                                                        )}
+                                                                        {isSupersededPrevioStateJob && (
+                                                                            <div style={{ background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                                Nahrazeno novějším importem
+                                                                            </div>
+                                                                        )}
+                                                                        <div style={{ ...importJobStatusStyle(job.status), padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                            {importJobStatusLabel(job.status)}
                                                                         </div>
-                                                                    )}
-                                                                    {isSupersededPrevioStateJob && (
-                                                                        <div style={{ background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
-                                                                            Nahrazeno novějším importem
-                                                                        </div>
-                                                                    )}
-                                                                    <div style={{ ...importJobStatusStyle(job.status), padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
-                                                                        {importJobStatusLabel(job.status)}
                                                                     </div>
                                                                 </div>
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 4 }}>
-                                                                Zdroj: {job.source === 'email' ? 'E-mail' : 'Manuální'} • Přijato: {job.receivedAt ? new Date(job.receivedAt).toLocaleString('cs-CZ') : '—'}
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Potvrzeno: {job.confirmedAt ? new Date(job.confirmedAt).toLocaleString('cs-CZ') : '—'}
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                Typ obsahu: {job.contentType || '—'} • Velikost: {formatBytes(job.sizeBytes)} • Storage: {job.storagePath || 'není k dispozici'}
-                                                            </div>
-                                                            <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                Parser: {jobParserVersion || 'neznámá verze'}
-                                                            </div>
-                                                            {job.backupSummary && (
+                                                                <div className="room-meta" style={{ marginTop: 4 }}>
+                                                                    Zdroj: {job.source === 'email' ? 'E-mail' : 'Manuální'} • Přijato: {job.receivedAt ? new Date(job.receivedAt).toLocaleString('cs-CZ') : '—'}
+                                                                </div>
                                                                 <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                    Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
-                                                                    {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                    Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Potvrzeno: {job.confirmedAt ? new Date(job.confirmedAt).toLocaleString('cs-CZ') : '—'}
                                                                 </div>
-                                                            )}
-                                                            {showLegacyRollbackHint && (
-                                                                <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
-                                                                    Rollback není dostupný pro importy potvrzené starší verzí.
+                                                                <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                    Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
                                                                 </div>
-                                                            )}
-                                                            {showRollbackChecking && (
-                                                                <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
-                                                                    Ověřuji dostupnost rollback snapshotu...
+                                                                <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                    Typ obsahu: {job.contentType || '—'} • Velikost: {formatBytes(job.sizeBytes)} • Storage: {job.storagePath || 'není k dispozici'}
                                                                 </div>
-                                                            )}
-                                                            {hasParserVersionWarning && (
-                                                                <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
-                                                                    Náhled byl vytvořen starší verzí parseru. Doporučujeme přegenerovat.
+                                                                <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                    Parser: {jobParserVersion || 'neznámá verze'}
                                                                 </div>
-                                                            )}
-                                                            {job.source === 'email' && !job.previewSummary?.byDate && (
-                                                                <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
-                                                                    PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
-                                                                </div>
-                                                            )}
-                                                            {job.warnings.length > 0 && (
-                                                                <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
-                                                                    {job.warnings.slice(0, 4).map((warning) => (
-                                                                        <div key={`${job.id}-${warning}`}>{warning}</div>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                            {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
-                                                            {isSupersededPrevioStateJob && (
-                                                                <div style={{ marginTop: 6, fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
-                                                                    {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
-                                                                </div>
-                                                            )}
-                                                            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                                {hasPreviewSummary && (
-                                                                    <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>
-                                                                        {isInlinePreviewOpen ? 'Skrýt náhled' : 'Zobrazit náhled'}
-                                                                    </button>
+                                                                {job.backupSummary && (
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
+                                                                        {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                    </div>
                                                                 )}
-                                                                {job.source === 'email' && job.storagePath && (
+                                                                {showLegacyRollbackHint && (
+                                                                    <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                        Rollback není dostupný pro importy potvrzené starší verzí.
+                                                                    </div>
+                                                                )}
+                                                                {showRollbackChecking && (
+                                                                    <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                        Ověřuji dostupnost rollback snapshotu...
+                                                                    </div>
+                                                                )}
+                                                                {hasParserVersionWarning && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                        Náhled byl vytvořen starší verzí parseru. Doporučujeme přegenerovat.
+                                                                    </div>
+                                                                )}
+                                                                {job.source === 'email' && !job.previewSummary?.byDate && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                        PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
+                                                                    </div>
+                                                                )}
+                                                                {job.warnings.length > 0 && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                        {job.warnings.slice(0, 4).map((warning) => (
+                                                                            <div key={`${job.id}-${warning}`}>{warning}</div>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                                {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
+                                                                {isSupersededPrevioStateJob && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                        {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
+                                                                    </div>
+                                                                )}
+                                                                <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                                    {hasPreviewSummary && (
+                                                                        <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>
+                                                                            {isInlinePreviewOpen ? 'Skrýt náhled' : 'Zobrazit náhled'}
+                                                                        </button>
+                                                                    )}
+                                                                    {job.source === 'email' && job.storagePath && (
+                                                                        <button
+                                                                            className="btn"
+                                                                            disabled={generatingImportPreviewJobId === job.id}
+                                                                            onClick={() => void handleGenerateImportJobPreview(job.id)}
+                                                                        >
+                                                                            {generatingImportPreviewJobId === job.id
+                                                                                ? 'Vytvářím náhled...'
+                                                                                : (hasPreviewSummary ? 'Přegenerovat náhled' : 'Vytvořit náhled')}
+                                                                        </button>
+                                                                    )}
                                                                     <button
                                                                         className="btn"
-                                                                        disabled={generatingImportPreviewJobId === job.id}
-                                                                        onClick={() => void handleGenerateImportJobPreview(job.id)}
+                                                                        disabled={!canConfirm}
+                                                                        onClick={() => void handleConfirmImportJob(job.id)}
                                                                     >
-                                                                        {generatingImportPreviewJobId === job.id
-                                                                            ? 'Vytvářím náhled...'
-                                                                            : (hasPreviewSummary ? 'Přegenerovat náhled' : 'Vytvořit náhled')}
+                                                                        Potvrdit import
                                                                     </button>
-                                                                )}
-                                                                <button
-                                                                    className="btn"
-                                                                    disabled={!canConfirm}
-                                                                    onClick={() => void handleConfirmImportJob(job.id)}
-                                                                >
-                                                                    Potvrdit import
-                                                                </button>
-                                                                <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
-                                                                <button className="btn danger" disabled={importCleanupInProgress} onClick={() => void handleDeleteImportJob(job.id)}>Smazat import job</button>
-                                                                {isRollbackAvailable && (
-                                                                    <button
-                                                                        className="btn"
-                                                                        disabled={rollingBackJobId === job.id}
-                                                                        onClick={() => void handleRollbackImport(job.id)}
+                                                                    <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
+                                                                    <button className="btn danger" disabled={importCleanupInProgress} onClick={() => void handleDeleteImportJob(job.id)}>Smazat import job</button>
+                                                                    {isRollbackAvailable && (
+                                                                        <button
+                                                                            className="btn"
+                                                                            disabled={rollingBackJobId === job.id}
+                                                                            onClick={() => void handleRollbackImport(job.id)}
+                                                                        >
+                                                                            {rollingBackJobId === job.id ? 'Provádím rollback...' : 'Vrátit tento import'}
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+
+                                                                {isInlinePreviewOpen && (
+                                                                    <div
+                                                                        ref={(node) => {
+                                                                            importJobPreviewPanelRefs.current[job.id] = node
+                                                                        }}
+                                                                        style={{ marginTop: 10, border: '1px solid #bae6fd', background: '#f0f9ff', borderRadius: 8, padding: 8, display: 'grid', gap: 8 }}
                                                                     >
-                                                                        {rollingBackJobId === job.id ? 'Provádím rollback...' : 'Vrátit tento import'}
-                                                                    </button>
+                                                                        {inlinePreviewModel ? (
+                                                                            <>
+                                                                                <div style={{ fontWeight: 800, color: '#0c4a6e' }}>Náhled importu Stav</div>
+                                                                                <div className="room-meta" style={{ color: '#0c4a6e' }}>Detekované dny: {inlinePreviewModel.detectedDaysCount} • Turnover pokoje: {inlinePreviewModel.turnoverCount} • Probíhající pobyty: {inlinePreviewModel.stayoverCount} • Odvozené volné pokoje: {inlinePreviewModel.freeCount}</div>
+                                                                                {jobSafety && (
+                                                                                    <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: jobSafety.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: jobSafety.blocked ? '#fef2f2' : '#ecfdf3', color: jobSafety.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
+                                                                                        {jobSafety.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
+                                                                                        {(jobSafety.blocks.length > 0 || jobSafety.warnings.length > 0) && (
+                                                                                            <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                                                {Array.from(new Set([...jobSafety.blocks, ...jobSafety.warnings])).map((warning) => (
+                                                                                                    <li key={`${job.id}-safety-${warning}`}>{warning}</li>
+                                                                                                ))}
+                                                                                            </ul>
+                                                                                        )}
+                                                                                    </div>
+                                                                                )}
+                                                                                {inlinePreviewModel.warnings.length > 0 && (
+                                                                                    <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                                                        {inlinePreviewModel.warnings.slice(0, 8).map((warning, innerIndex) => (
+                                                                                            <div key={`${job.id}-inline-warning-${innerIndex}`}>{warning}</div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                                {inlinePreviewError && (
+                                                                                    <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
+                                                                                        {inlinePreviewError}
+                                                                                    </div>
+                                                                                )}
+                                                                                <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
+                                                                                    <div style={{ maxHeight: 280, overflow: 'auto' }}>
+                                                                                        <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
+                                                                                            <thead>
+                                                                                                <tr style={{ background: '#f8fafc' }}>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. počet</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. počet</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Odj. pozn.</th>
+                                                                                                    <th style={{ textAlign: 'left', padding: 6 }}>Příj. pozn.</th>
+                                                                                                </tr>
+                                                                                            </thead>
+                                                                                            <tbody>
+                                                                                                {visibleRows.length > 0 ? visibleRows.map((row, rowIndex) => (
+                                                                                                    <tr key={`${job.id}-inline-row-${row.dateIso}-${row.roomNumber}-${rowIndex}`}>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{formatPreviewRowDate(row.dateIso)}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber || '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.departureGuestCount === 'number' ? `${row.departureGuestCount}p` : '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.arrivalGuestCount === 'number' ? `${row.arrivalGuestCount}p` : '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotes.length ? row.departureNotes.join('; ') : '—'}</td>
+                                                                                                        <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotes.length ? row.arrivalNotes.join('; ') : '—'}</td>
+                                                                                                    </tr>
+                                                                                                )) : (
+                                                                                                    <tr>
+                                                                                                        <td colSpan={10} style={{ padding: 8, borderTop: '1px solid #e2e8f0', color: '#475569' }}>
+                                                                                                            Náhled je dostupný, ale neobsahuje tabulkové řádky.
+                                                                                                        </td>
+                                                                                                    </tr>
+                                                                                                )}
+                                                                                            </tbody>
+                                                                                        </table>
+                                                                                    </div>
+                                                                                </div>
+                                                                                {inlinePreviewModel.rows.length > 20 && (
+                                                                                    <button
+                                                                                        className="btn"
+                                                                                        style={{ width: 'fit-content' }}
+                                                                                        onClick={() => setExpandedImportJobPreviewRows((prev) => ({
+                                                                                            ...prev,
+                                                                                            [job.id]: !rowsExpanded
+                                                                                        }))}
+                                                                                    >
+                                                                                        {rowsExpanded ? 'Zobrazit méně' : `Zobrazit vše (${inlinePreviewModel.rows.length})`}
+                                                                                    </button>
+                                                                                )}
+                                                                            </>
+                                                                        ) : (
+                                                                            <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
+                                                                                {inlinePreviewError || 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 )}
                                                             </div>
+                                                        </React.Fragment>
+                                                    )
+                                                })}
+                                                {adminVisibleImportJobs.length === 0 && importJobs.length > 0 && (
+                                                    <div className="room-meta">Žádné importy nevyžadují akci.</div>
+                                                )}
+                                                {confirmedHistoryImportJobs.length > 0 && (
+                                                    <div style={{ marginTop: 10, borderTop: '1px solid #e2e8f0', paddingTop: 10, display: 'grid', gap: 8 }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                                            <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>Historie potvrzených importů</div>
+                                                            <button
+                                                                type="button"
+                                                                className="btn"
+                                                                onClick={() => setShowConfirmedImportHistory((prev) => !prev)}
+                                                            >
+                                                                {showConfirmedImportHistory ? 'Skrýt historii importů' : 'Zobrazit historii importů'}
+                                                            </button>
+                                                        </div>
+                                                        {!showConfirmedImportHistory && (
+                                                            <div className="room-meta" style={{ color: '#64748b' }}>
+                                                                Skryto {confirmedHistoryImportJobs.length} starších potvrzených importů.
+                                                            </div>
+                                                        )}
+                                                        {showConfirmedImportHistory && confirmedHistoryImportJobs.map((job) => {
+                                                            const isNewestPrevioStateJob = newestPrevioStateJob?.id === job.id
+                                                            const isSupersededPrevioStateJob = supersededPrevioStateJobIds.has(job.id)
+                                                            const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
+                                                            const jobPreview = (job.previewSummary?.preview || null) as PrevioStateImportPreview | null
+                                                            const jobMissingDateLabels = job.previewSummary?.missingDateLabels || []
+                                                            const jobParserVersion = job.previewSummary?.parserVersion || job.parserVersion
+                                                            const rollbackAvailability = rollbackAvailabilityByJobId[job.id]
+                                                            const isRollbackAvailable = rollbackAvailability === 'available'
+                                                            const showLegacyRollbackHint = job.status === 'confirmed'
+                                                                && job.type === 'previo-state-pdf'
+                                                                && rollbackAvailability === 'legacy'
+                                                            const showRollbackChecking = job.status === 'confirmed'
+                                                                && job.type === 'previo-state-pdf'
+                                                                && rollbackAvailability === 'checking'
+                                                            const jobSafety = resolveImportSafety(jobPreview, jobMissingDateLabels, jobParserVersion, inlinePreviewModel?.safety)
+                                                            const hasPreviewSummary = Boolean(asRecord(job.previewSummary))
+                                                            const hasParserVersionWarning = hasPreviewSummary && (!jobParserVersion || jobParserVersion !== PREVIO_STAV_PARSER_VERSION)
+                                                            const canConfirm = Boolean(
+                                                                job.status === 'needs_review'
+                                                                && inlinePreviewModel?.byDate
+                                                                && inlinePreviewModel?.parsedTabDates
+                                                                && !jobSafety?.blocked
+                                                                && !isSupersededPrevioStateJob
+                                                            )
+                                                            const isInlinePreviewOpen = openImportJobPreviewId === job.id
+                                                            const inlinePreviewError = importJobPreviewInlineErrors[job.id]
+                                                            const rowsExpanded = Boolean(expandedImportJobPreviewRows[job.id])
+                                                            const visibleRows = inlinePreviewModel
+                                                                ? (rowsExpanded ? inlinePreviewModel.rows : inlinePreviewModel.rows.slice(0, 20))
+                                                                : []
 
-                                                            {isInlinePreviewOpen && (
-                                                                <div
-                                                                    ref={(node) => {
-                                                                        importJobPreviewPanelRefs.current[job.id] = node
-                                                                    }}
-                                                                    style={{ marginTop: 10, border: '1px solid #bae6fd', background: '#f0f9ff', borderRadius: 8, padding: 8, display: 'grid', gap: 8 }}
-                                                                >
-                                                                    {inlinePreviewModel ? (
-                                                                        <>
-                                                                            <div style={{ fontWeight: 800, color: '#0c4a6e' }}>Náhled importu Stav</div>
-                                                                            <div className="room-meta" style={{ color: '#0c4a6e' }}>Detekované dny: {inlinePreviewModel.detectedDaysCount} • Turnover pokoje: {inlinePreviewModel.turnoverCount} • Probíhající pobyty: {inlinePreviewModel.stayoverCount} • Odvozené volné pokoje: {inlinePreviewModel.freeCount}</div>
-                                                                            {jobSafety && (
-                                                                                <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: jobSafety.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: jobSafety.blocked ? '#fef2f2' : '#ecfdf3', color: jobSafety.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
-                                                                                    {jobSafety.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
-                                                                                    {(jobSafety.blocks.length > 0 || jobSafety.warnings.length > 0) && (
-                                                                                        <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
-                                                                                            {Array.from(new Set([...jobSafety.blocks, ...jobSafety.warnings])).map((warning) => (
-                                                                                                <li key={`${job.id}-safety-${warning}`}>{warning}</li>
-                                                                                            ))}
-                                                                                        </ul>
-                                                                                    )}
+                                                            return (
+                                                                <div key={job.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                                                        <div style={{ fontWeight: 700 }}>{job.fileName}</div>
+                                                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                                            {isNewestPrevioStateJob && (
+                                                                                <div style={{ background: '#dbeafe', color: '#1e3a8a', border: '1px solid #93c5fd', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                                    Nejnovější import
                                                                                 </div>
                                                                             )}
-                                                                            {inlinePreviewModel.warnings.length > 0 && (
-                                                                                <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
-                                                                                    {inlinePreviewModel.warnings.slice(0, 8).map((warning, index) => (
-                                                                                        <div key={`${job.id}-inline-warning-${index}`}>{warning}</div>
-                                                                                    ))}
+                                                                            {isSupersededPrevioStateJob && (
+                                                                                <div style={{ background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74', padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                                    Nahrazeno novějším importem
                                                                                 </div>
                                                                             )}
-                                                                            {inlinePreviewError && (
-                                                                                <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
-                                                                                    {inlinePreviewError}
-                                                                                </div>
-                                                                            )}
-                                                                            <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
-                                                                                <div style={{ maxHeight: 280, overflow: 'auto' }}>
-                                                                                    <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
-                                                                                        <thead>
-                                                                                            <tr style={{ background: '#f8fafc' }}>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odj. počet</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příj. počet</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Odj. pozn.</th>
-                                                                                                <th style={{ textAlign: 'left', padding: 6 }}>Příj. pozn.</th>
-                                                                                            </tr>
-                                                                                        </thead>
-                                                                                        <tbody>
-                                                                                            {visibleRows.length > 0 ? visibleRows.map((row, index) => (
-                                                                                                <tr key={`${job.id}-inline-row-${row.dateIso}-${row.roomNumber}-${index}`}>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{formatPreviewRowDate(row.dateIso)}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber || '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.departureGuestCount === 'number' ? `${row.departureGuestCount}p` : '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.arrivalGuestCount === 'number' ? `${row.arrivalGuestCount}p` : '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotes.length ? row.departureNotes.join('; ') : '—'}</td>
-                                                                                                    <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotes.length ? row.arrivalNotes.join('; ') : '—'}</td>
-                                                                                                </tr>
-                                                                                            )) : (
-                                                                                                <tr>
-                                                                                                    <td colSpan={10} style={{ padding: 8, borderTop: '1px solid #e2e8f0', color: '#475569' }}>
-                                                                                                        Náhled je dostupný, ale neobsahuje tabulkové řádky.
-                                                                                                    </td>
-                                                                                                </tr>
-                                                                                            )}
-                                                                                        </tbody>
-                                                                                    </table>
-                                                                                </div>
+                                                                            <div style={{ ...importJobStatusStyle(job.status), padding: '4px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                                                                                {importJobStatusLabel(job.status)}
                                                                             </div>
-                                                                            {inlinePreviewModel.rows.length > 20 && (
-                                                                                <button
-                                                                                    className="btn"
-                                                                                    style={{ width: 'fit-content' }}
-                                                                                    onClick={() => setExpandedImportJobPreviewRows((prev) => ({
-                                                                                        ...prev,
-                                                                                        [job.id]: !rowsExpanded
-                                                                                    }))}
-                                                                                >
-                                                                                    {rowsExpanded ? 'Zobrazit méně' : `Zobrazit vše (${inlinePreviewModel.rows.length})`}
-                                                                                </button>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="room-meta" style={{ marginTop: 4 }}>
+                                                                        Zdroj: {job.source === 'email' ? 'E-mail' : 'Manuální'} • Přijato: {job.receivedAt ? new Date(job.receivedAt).toLocaleString('cs-CZ') : '—'}
+                                                                    </div>
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Parsováno: {job.parsedAt ? new Date(job.parsedAt).toLocaleString('cs-CZ') : '—'} • Potvrzeno: {job.confirmedAt ? new Date(job.confirmedAt).toLocaleString('cs-CZ') : '—'}
+                                                                    </div>
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Dní: {job.detectedDaysCount ?? '—'} • Turnover: {job.turnoverCount ?? '—'} • Pobyty: {job.stayoverCount ?? '—'} • Volné: {job.freeCount ?? '—'}
+                                                                    </div>
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Typ obsahu: {job.contentType || '—'} • Velikost: {formatBytes(job.sizeBytes)} • Storage: {job.storagePath || 'není k dispozici'}
+                                                                    </div>
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Parser: {jobParserVersion || 'neznámá verze'}
+                                                                    </div>
+                                                                    {job.backupSummary && (
+                                                                        <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                            Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
+                                                                            {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                        </div>
+                                                                    )}
+                                                                    {showLegacyRollbackHint && (
+                                                                        <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                            Rollback není dostupný pro importy potvrzené starší verzí.
+                                                                        </div>
+                                                                    )}
+                                                                    {showRollbackChecking && (
+                                                                        <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                            Ověřuji dostupnost rollback snapshotu...
+                                                                        </div>
+                                                                    )}
+                                                                    {hasParserVersionWarning && (
+                                                                        <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                            Náhled byl vytvořen starší verzí parseru. Doporučujeme přegenerovat.
+                                                                        </div>
+                                                                    )}
+                                                                    {job.source === 'email' && !job.previewSummary?.byDate && (
+                                                                        <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                            PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
+                                                                        </div>
+                                                                    )}
+                                                                    {job.warnings.length > 0 && (
+                                                                        <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                            {job.warnings.slice(0, 4).map((warning) => (
+                                                                                <div key={`${job.id}-${warning}`}>{warning}</div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                    {job.error && <div style={{ marginTop: 6, fontSize: 12, color: '#991b1b' }}>{job.error}</div>}
+                                                                    {isSupersededPrevioStateJob && (
+                                                                        <div style={{ marginTop: 6, fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
+                                                                            {IMPORT_CONFIRM_SUPERSEDED_MESSAGE}
+                                                                        </div>
+                                                                    )}
+                                                                    <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                                        {hasPreviewSummary && (
+                                                                            <button className="btn" onClick={() => handleShowImportJobPreview(job.id)}>
+                                                                                {isInlinePreviewOpen ? 'Skrýt náhled' : 'Zobrazit náhled'}
+                                                                            </button>
+                                                                        )}
+                                                                        {job.source === 'email' && job.storagePath && (
+                                                                            <button
+                                                                                className="btn"
+                                                                                disabled={generatingImportPreviewJobId === job.id}
+                                                                                onClick={() => void handleGenerateImportJobPreview(job.id)}
+                                                                            >
+                                                                                {generatingImportPreviewJobId === job.id
+                                                                                    ? 'Vytvářím náhled...'
+                                                                                    : (hasPreviewSummary ? 'Přegenerovat náhled' : 'Vytvořit náhled')}
+                                                                            </button>
+                                                                        )}
+                                                                        <button
+                                                                            className="btn"
+                                                                            disabled={!canConfirm}
+                                                                            onClick={() => void handleConfirmImportJob(job.id)}
+                                                                        >
+                                                                            Potvrdit import
+                                                                        </button>
+                                                                        <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
+                                                                        <button className="btn danger" disabled={importCleanupInProgress} onClick={() => void handleDeleteImportJob(job.id)}>Smazat import job</button>
+                                                                        {isRollbackAvailable && (
+                                                                            <button
+                                                                                className="btn"
+                                                                                disabled={rollingBackJobId === job.id}
+                                                                                onClick={() => void handleRollbackImport(job.id)}
+                                                                            >
+                                                                                {rollingBackJobId === job.id ? 'Provádím rollback...' : 'Vrátit tento import'}
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {isInlinePreviewOpen && (
+                                                                        <div
+                                                                            ref={(node) => {
+                                                                                importJobPreviewPanelRefs.current[job.id] = node
+                                                                            }}
+                                                                            style={{ marginTop: 10, border: '1px solid #bae6fd', background: '#f0f9ff', borderRadius: 8, padding: 8, display: 'grid', gap: 8 }}
+                                                                        >
+                                                                            {inlinePreviewModel ? (
+                                                                                <>
+                                                                                    <div style={{ fontWeight: 800, color: '#0c4a6e' }}>Náhled importu Stav</div>
+                                                                                    <div className="room-meta" style={{ color: '#0c4a6e' }}>Detekované dny: {inlinePreviewModel.detectedDaysCount} • Turnover pokoje: {inlinePreviewModel.turnoverCount} • Probíhající pobyty: {inlinePreviewModel.stayoverCount} • Odvozené volné pokoje: {inlinePreviewModel.freeCount}</div>
+                                                                                    {jobSafety && (
+                                                                                        <div style={{ fontSize: 12, borderRadius: 8, padding: 8, border: jobSafety.blocked ? '1px solid #fecaca' : '1px solid #86efac', background: jobSafety.blocked ? '#fef2f2' : '#ecfdf3', color: jobSafety.blocked ? '#991b1b' : '#166534', fontWeight: 700 }}>
+                                                                                            {jobSafety.blocked ? 'Import je podezřelý – nepotvrzovat' : 'Kontrola importu: OK'}
+                                                                                            {(jobSafety.blocks.length > 0 || jobSafety.warnings.length > 0) && (
+                                                                                                <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
+                                                                                                    {Array.from(new Set([...jobSafety.blocks, ...jobSafety.warnings])).map((warning) => (
+                                                                                                        <li key={`${job.id}-safety-${warning}`}>{warning}</li>
+                                                                                                    ))}
+                                                                                                </ul>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {inlinePreviewModel.warnings.length > 0 && (
+                                                                                        <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 8 }}>
+                                                                                            {inlinePreviewModel.warnings.slice(0, 8).map((warning, innerIndex) => (
+                                                                                                <div key={`${job.id}-inline-warning-${innerIndex}`}>{warning}</div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {inlinePreviewError && (
+                                                                                        <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
+                                                                                            {inlinePreviewError}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
+                                                                                        <div style={{ maxHeight: 280, overflow: 'auto' }}>
+                                                                                            <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
+                                                                                                <thead>
+                                                                                                    <tr style={{ background: '#f8fafc' }}>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Den</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Pokoj</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odjezd</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příjezd</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odj. host</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odj. počet</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příj. host</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příj. počet</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Odj. pozn.</th>
+                                                                                                        <th style={{ textAlign: 'left', padding: 6 }}>Příj. pozn.</th>
+                                                                                                    </tr>
+                                                                                                </thead>
+                                                                                                <tbody>
+                                                                                                    {visibleRows.length > 0 ? visibleRows.map((row, rowIndex) => (
+                                                                                                        <tr key={`${job.id}-inline-row-${row.dateIso}-${row.roomNumber}-${rowIndex}`}>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{formatPreviewRowDate(row.dateIso)}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.roomNumber || '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureTime || '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalTime || '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureGuestName || '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.departureGuestCount === 'number' ? `${row.departureGuestCount}p` : '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalGuestName || '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{typeof row.arrivalGuestCount === 'number' ? `${row.arrivalGuestCount}p` : '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.departureNotes.length ? row.departureNotes.join('; ') : '—'}</td>
+                                                                                                            <td style={{ padding: 6, borderTop: '1px solid #e2e8f0' }}>{row.arrivalNotes.length ? row.arrivalNotes.join('; ') : '—'}</td>
+                                                                                                        </tr>
+                                                                                                    )) : (
+                                                                                                        <tr>
+                                                                                                            <td colSpan={10} style={{ padding: 8, borderTop: '1px solid #e2e8f0', color: '#475569' }}>
+                                                                                                                Náhled je dostupný, ale neobsahuje tabulkové řádky.
+                                                                                                            </td>
+                                                                                                        </tr>
+                                                                                                    )}
+                                                                                                </tbody>
+                                                                                            </table>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    {inlinePreviewModel.rows.length > 20 && (
+                                                                                        <button
+                                                                                            className="btn"
+                                                                                            style={{ width: 'fit-content' }}
+                                                                                            onClick={() => setExpandedImportJobPreviewRows((prev) => ({
+                                                                                                ...prev,
+                                                                                                [job.id]: !rowsExpanded
+                                                                                            }))}
+                                                                                        >
+                                                                                            {rowsExpanded ? 'Zobrazit méně' : `Zobrazit vše (${inlinePreviewModel.rows.length})`}
+                                                                                        </button>
+                                                                                    )}
+                                                                                </>
+                                                                            ) : (
+                                                                                <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
+                                                                                    {inlinePreviewError || 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'}
+                                                                                </div>
                                                                             )}
-                                                                        </>
-                                                                    ) : (
-                                                                        <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
-                                                                            {inlinePreviewError || 'Náhled importu není dostupný. Zkuste náhled přegenerovat.'}
                                                                         </div>
                                                                     )}
                                                                 </div>
-                                                            )}
-                                                        </div>
-                                                    )
-                                                })}
+                                                            )
+                                                        })}
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
