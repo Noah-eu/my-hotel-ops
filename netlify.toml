@@ -12,3 +12,8 @@
   from = "/api/previo-import-preview"
   to = "/.netlify/functions/previo-import-preview"
   status = 200
+
+[[redirects]]
+  from = "/api/previo-import-cleanup"
+  to = "/.netlify/functions/previo-import-cleanup"
+  status = 200

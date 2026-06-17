@@ -317,6 +317,12 @@ export function createFirebaseOpsStore(): OpsStore {
                     emitState()
                 },
                 (err) => {
+                    if (err.code === 'permission-denied') {
+                        importJobs = []
+                        devLog('Listener denied: importJobs (non-admin role), continuing without import jobs')
+                        emitState()
+                        return
+                    }
                     const fullError = buildListenerError(err, PATHS.importJobs)
                     devLog('Listener error: importJobs', fullError)
                     onError(fullError)

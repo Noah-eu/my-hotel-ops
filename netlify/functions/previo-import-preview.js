@@ -115,6 +115,13 @@ function formatDateLabel(dateIso) {
     })
 }
 
+async function ensureAdminUser(db, hotelId, uid) {
+    const profileSnap = await db.collection('hotels').doc(hotelId).collection('staff').doc(uid).get()
+    if (!profileSnap.exists) return false
+    const profile = profileSnap.data() || {}
+    return profile.active !== false && profile.role === 'admin'
+}
+
 exports.handler = async (event) => {
     if (event.httpMethod !== 'POST') {
         return json(405, { error: 'Method not allowed' })
@@ -154,7 +161,15 @@ exports.handler = async (event) => {
             throw new Error('PDF storage not configured')
         }
 
-        await firebase.auth.verifyIdToken(bearerToken)
+        const decoded = await firebase.auth.verifyIdToken(bearerToken)
+        const requesterUid = String(decoded?.uid || '')
+        const isAdmin = requesterUid
+            ? await ensureAdminUser(db, hotelId, requesterUid)
+            : false
+
+        if (!isAdmin) {
+            return json(403, { error: 'Admin access is required for import preview generation.' })
+        }
 
         jobRef = db.collection('hotels').doc(hotelId).collection('importJobs').doc(jobId)
         const jobSnap = await jobRef.get()

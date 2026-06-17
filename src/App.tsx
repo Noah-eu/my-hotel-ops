@@ -138,7 +138,10 @@ type ImportJobInlinePreviewModel = {
     safety?: ImportJobSafetySummary
 }
 
+type ImportCleanupMode = 'test_unconfirmed' | 'old'
+
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
+const IMPORT_CLEANUP_OLD_DAYS = 30
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -737,6 +740,8 @@ export default function App() {
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
     const [planCleanupResult, setPlanCleanupResult] = useState<string | null>(null)
+    const [importCleanupInProgress, setImportCleanupInProgress] = useState(false)
+    const [importCleanupResult, setImportCleanupResult] = useState<string | null>(null)
     const importJobPreviewPanelRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
@@ -749,6 +754,7 @@ export default function App() {
     const currentUser = runtimeMode === 'online'
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
+    const isAdminUser = currentUser?.role === 'admin'
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
@@ -1868,11 +1874,11 @@ export default function App() {
                 Pozitri: roomsByDay.Pozitri
             }
 
-            ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
-                const dateIso = parsedTabDates[day]
-                if (!dateIso || !byDate[dateIso]) return
-                next[day] = byDate[dateIso]
-            })
+                ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
+                    const dateIso = parsedTabDates[day]
+                    if (!dateIso || !byDate[dateIso]) return
+                    next[day] = byDate[dateIso]
+                })
 
             const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
             const backupPayload = buildImportBackupPayload(job.id, byDate, parsedTabDates, confirmedBy)
@@ -1934,29 +1940,221 @@ export default function App() {
         ))))
     }
 
-    function handleDeleteImportJob(jobId: string) {
-        activeStore.deleteImportJob(jobId)
-        setImportJobs((prev) => prev.filter((item) => item.id !== jobId))
-        if (latestStateImportBackup?.jobId === jobId) {
+    function likelyTestImportJob(job: ImportJob) {
+        const normalized = normalizeTaskTitleForCleanup(`${job.fileName || ''} ${job.parserVersion || ''}`)
+        return normalized.includes('test') || normalized.includes('demo') || normalized.includes('sample')
+    }
+
+    function olderThanDays(dateValue: string | undefined, days: number) {
+        if (!dateValue) return false
+        const receivedAt = new Date(dateValue)
+        if (Number.isNaN(receivedAt.getTime())) return false
+        const threshold = new Date()
+        threshold.setDate(threshold.getDate() - days)
+        return receivedAt < threshold
+    }
+
+    function getImportCleanupTargets(mode: ImportCleanupMode) {
+        if (mode === 'test_unconfirmed') {
+            return importJobs.filter((job) => job.status !== 'confirmed' || likelyTestImportJob(job))
+        }
+
+        return importJobs.filter((job) => (
+            olderThanDays(job.receivedAt, IMPORT_CLEANUP_OLD_DAYS)
+            && job.id !== latestRollbackCandidateJob?.id
+        ))
+    }
+
+    function removeImportJobsFromUi(deletedJobIds: string[]) {
+        const deletedSet = new Set(deletedJobIds)
+        if (deletedSet.size === 0) return
+
+        setImportJobs((prev) => prev.filter((item) => !deletedSet.has(item.id)))
+
+        if (latestStateImportBackup && deletedSet.has(latestStateImportBackup.jobId)) {
             setLatestStateImportBackup(null)
         }
-        if (openImportJobPreviewId === jobId) setOpenImportJobPreviewId(null)
-        setExpandedImportJobPreviewRows((prev) => {
-            if (!(jobId in prev)) return prev
-            const next = { ...prev }
-            delete next[jobId]
-            return next
-        })
-        setImportJobPreviewInlineErrors((prev) => {
-            if (!(jobId in prev)) return prev
-            const next = { ...prev }
-            delete next[jobId]
-            return next
-        })
-        if (selectedImportJobId === jobId) {
+
+        if (openImportJobPreviewId && deletedSet.has(openImportJobPreviewId)) {
+            setOpenImportJobPreviewId(null)
+        }
+
+        if ((selectedImportJobId && deletedSet.has(selectedImportJobId)) || (activeStateImportJobId && deletedSet.has(activeStateImportJobId))) {
             setSelectedImportJobId(null)
             setStateImportPreview(null)
             setActiveStateImportJobId(null)
+        }
+
+        setExpandedImportJobPreviewRows((prev) => {
+            const next = { ...prev }
+            deletedJobIds.forEach((jobId) => {
+                delete next[jobId]
+            })
+            return next
+        })
+
+        setImportJobPreviewInlineErrors((prev) => {
+            const next = { ...prev }
+            deletedJobIds.forEach((jobId) => {
+                delete next[jobId]
+            })
+            return next
+        })
+    }
+
+    async function refreshImportJobsFromServer() {
+        if (runtimeMode !== 'online' || !firestoreDb || !isAdminUser) return
+        const snap = await getDocs(collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importJobs'))
+        const refreshed = snap.docs
+            .map((item) => ({ id: item.id, ...(item.data() as Record<string, any>) } as ImportJob))
+            .sort((a, b) => (b.receivedAt || '').localeCompare(a.receivedAt || ''))
+        setImportJobs(refreshed)
+    }
+
+    async function deleteImportJobsWithStorage(jobIds: string[]) {
+        if (jobIds.length === 0) {
+            return {
+                deletedJobIds: [] as string[],
+                notFoundJobIds: [] as string[],
+                storageDeletedCount: 0,
+                storageWarnings: [] as Array<{ jobId: string; warning: string }>
+            }
+        }
+
+        if (runtimeMode !== 'online') {
+            jobIds.forEach((jobId) => activeStore.deleteImportJob(jobId))
+            removeImportJobsFromUi(jobIds)
+            return {
+                deletedJobIds: jobIds,
+                notFoundJobIds: [],
+                storageDeletedCount: 0,
+                storageWarnings: [] as Array<{ jobId: string; warning: string }>
+            }
+        }
+
+        if (!authUser || authUser.isAnonymous) {
+            throw new Error('Pro mazání importů je nutné přihlášení.')
+        }
+        if (!isAdminUser) {
+            throw new Error('Mazání importů je povoleno jen adminovi.')
+        }
+
+        const token = await authUser.getIdToken()
+        const response = await fetch('/api/previo-import-cleanup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                hotelId: ONLINE_HOTEL_ID,
+                jobIds
+            })
+        })
+
+        const responseBody = await response.json().catch(() => ({} as any))
+        if (!response.ok) {
+            const apiError = responseBody?.error || `Server vrátil chybu ${response.status}.`
+            throw new Error(apiError)
+        }
+
+        const deletedJobIds = Array.isArray(responseBody?.deletedJobIds)
+            ? responseBody.deletedJobIds.filter((value: unknown): value is string => typeof value === 'string')
+            : []
+        const notFoundJobIds = Array.isArray(responseBody?.notFoundJobIds)
+            ? responseBody.notFoundJobIds.filter((value: unknown): value is string => typeof value === 'string')
+            : []
+        const storageWarnings = Array.isArray(responseBody?.storageWarnings)
+            ? responseBody.storageWarnings.filter((item: unknown): item is { jobId: string; warning: string } => {
+                if (!item || typeof item !== 'object') return false
+                return typeof (item as any).jobId === 'string' && typeof (item as any).warning === 'string'
+            })
+            : []
+        const storageDeletedCount = typeof responseBody?.storageDeletedCount === 'number'
+            ? responseBody.storageDeletedCount
+            : 0
+
+        removeImportJobsFromUi(deletedJobIds)
+        await refreshImportJobsFromServer()
+
+        return {
+            deletedJobIds,
+            notFoundJobIds,
+            storageDeletedCount,
+            storageWarnings
+        }
+    }
+
+    async function handleDeleteImportJob(jobId: string) {
+        const job = importJobs.find((item) => item.id === jobId)
+        if (!job) return
+
+        const hasStorage = Boolean(job.storagePath)
+        const confirmed = window.confirm(
+            hasStorage
+                ? 'Opravdu smazat tento import? Tato akce odstraní i uložené PDF.'
+                : 'Opravdu smazat tento import?'
+        )
+        if (!confirmed) return
+
+        setImportCleanupInProgress(true)
+        setImportCleanupResult(null)
+
+        try {
+            const summary = await deleteImportJobsWithStorage([jobId])
+            if (summary.deletedJobIds.length === 0) {
+                setImportCleanupResult('Import nebyl smazán (záznam nebyl nalezen).')
+                return
+            }
+
+            const warningSuffix = summary.storageWarnings.length > 0
+                ? ` U ${summary.storageWarnings.length} PDF se nepodařilo potvrdit smazání.`
+                : ''
+            setImportCleanupResult(`Import ${job.fileName} byl smazán.${warningSuffix}`)
+        } catch (error: any) {
+            setImportCleanupResult(error?.message || 'Mazání importu selhalo.')
+        } finally {
+            setImportCleanupInProgress(false)
+        }
+    }
+
+    async function handleBulkImportCleanup(mode: ImportCleanupMode) {
+        const targets = getImportCleanupTargets(mode)
+        if (targets.length === 0) {
+            setImportCleanupResult(
+                mode === 'test_unconfirmed'
+                    ? 'Nenalezeny žádné testovací nebo nepotvrzené importy ke smazání.'
+                    : `Nenalezeny žádné importy starší než ${IMPORT_CLEANUP_OLD_DAYS} dní.`
+            )
+            return
+        }
+
+        const confirmed = window.confirm(
+            mode === 'old'
+                ? 'Opravdu smazat staré importy? Tato akce odstraní i uložená PDF.'
+                : `Opravdu smazat ${targets.length} testovacích/nepotvrzených importů? Tato akce odstraní i uložená PDF.`
+        )
+        if (!confirmed) return
+
+        setImportCleanupInProgress(true)
+        setImportCleanupResult(null)
+
+        try {
+            const summary = await deleteImportJobsWithStorage(targets.map((job) => job.id))
+            const warnings: string[] = []
+            if (summary.storageWarnings.length > 0) {
+                warnings.push(`PDF warning: ${summary.storageWarnings.length}`)
+            }
+            if (summary.notFoundJobIds.length > 0) {
+                warnings.push(`nenalezeno: ${summary.notFoundJobIds.length}`)
+            }
+
+            const warningSuffix = warnings.length > 0 ? ` (${warnings.join(', ')})` : ''
+            setImportCleanupResult(`Smazáno importů: ${summary.deletedJobIds.length}${warningSuffix}`)
+        } catch (error: any) {
+            setImportCleanupResult(error?.message || 'Hromadné mazání importů selhalo.')
+        } finally {
+            setImportCleanupInProgress(false)
         }
     }
 
@@ -2459,6 +2657,15 @@ export default function App() {
         })
     }
 
+    useEffect(() => {
+        if (view !== 'admin' || isAdminUser) return
+        if (currentUser?.role === 'maintenance') {
+            setView('maintenance')
+            return
+        }
+        setView('today')
+    }, [view, isAdminUser, currentUser?.role])
+
     // save to localStorage whenever key pieces of state change
     useEffect(() => {
         const toSave = {
@@ -2845,7 +3052,9 @@ export default function App() {
 
                         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                             <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Dnes</button>
-                            <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
+                            {isAdminUser && (
+                                <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
+                            )}
                             <button className={`btn ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
                             <button className={`btn ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
                         </div>
@@ -2884,7 +3093,7 @@ export default function App() {
                                     readOnly={isExtraImportedDay}
                                 />
                             )}
-                            {view === 'admin' && (
+                            {view === 'admin' && isAdminUser && (
                                 <>
                                     {currentUser?.role === 'admin' && (
                                         <div className="section">
@@ -2901,6 +3110,33 @@ export default function App() {
                                                         </div>
                                                     </div>
                                                 )}
+                                                <div style={{ display: 'grid', gap: 8, border: '1px solid #e2e8f0', background: '#f8fafc', borderRadius: 8, padding: 8 }}>
+                                                    <div style={{ fontSize: 12, color: '#334155', fontWeight: 700 }}>Post-import cleanup</div>
+                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                        <button
+                                                            className="btn danger"
+                                                            disabled={importCleanupInProgress}
+                                                            onClick={() => void handleBulkImportCleanup('test_unconfirmed')}
+                                                        >
+                                                            {importCleanupInProgress ? 'Mažu importy...' : 'Smazat testovací/nepotvrzené importy'}
+                                                        </button>
+                                                        <button
+                                                            className="btn danger"
+                                                            disabled={importCleanupInProgress}
+                                                            onClick={() => void handleBulkImportCleanup('old')}
+                                                        >
+                                                            {importCleanupInProgress ? 'Mažu importy...' : 'Archivovat/Smazat staré importy'}
+                                                        </button>
+                                                    </div>
+                                                    <div className="room-meta" style={{ color: '#475569' }}>
+                                                        Staré importy mažou záznam i uložené PDF. Poslední potvrzený import se kvůli rollbacku ponechává.
+                                                    </div>
+                                                    {importCleanupResult && (
+                                                        <div className="room-meta" style={{ color: importCleanupResult.includes('selhalo') ? '#b91c1c' : '#166534' }}>
+                                                            {importCleanupResult}
+                                                        </div>
+                                                    )}
+                                                </div>
                                                 {importJobs.length === 0 && <div className="room-meta">Zatím nejsou žádné import joby.</div>}
                                                 {importJobs.map((job) => {
                                                     const inlinePreviewModel = buildImportJobInlinePreviewModel(job)
@@ -2992,7 +3228,7 @@ export default function App() {
                                                                     Potvrdit import
                                                                 </button>
                                                                 <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
-                                                                <button className="btn danger" onClick={() => handleDeleteImportJob(job.id)}>Smazat import job</button>
+                                                                <button className="btn danger" disabled={importCleanupInProgress} onClick={() => void handleDeleteImportJob(job.id)}>Smazat import job</button>
                                                             </div>
 
                                                             {isInlinePreviewOpen && (

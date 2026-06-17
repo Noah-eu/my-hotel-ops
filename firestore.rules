@@ -1,48 +1,61 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Draft rules for My Hotel Ops. Adjust before production rollout.
-    // Next hardening step:
-    // 1) Only allow users with an existing staff profile under /hotels/{hotelId}/staff/{request.auth.uid}
-    // 2) Add role-based checks for admin/lead/cleaner/maintenance per collection and operation.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function staffDoc(hotelId) {
+      return get(/databases/$(database)/documents/hotels/$(hotelId)/staff/$(request.auth.uid));
+    }
+
+    function isHotelStaff(hotelId) {
+      return signedIn()
+        && staffDoc(hotelId).exists()
+        && staffDoc(hotelId).data.active != false;
+    }
+
+    function isHotelAdmin(hotelId) {
+      return isHotelStaff(hotelId) && staffDoc(hotelId).data.role == 'admin';
+    }
+
     match /hotels/{hotelId} {
-      allow read, write: if request.auth != null;
+      allow read: if isHotelStaff(hotelId);
+      allow write: if isHotelAdmin(hotelId);
 
       // Staff profile and role assignments.
       match /staff/{staffId} {
-        allow read: if request.auth != null;
-        // TODO: Replace with custom claims role checks (admin/lead).
-        allow write: if request.auth != null;
+        allow read: if isHotelStaff(hotelId);
+        allow write: if isHotelAdmin(hotelId);
       }
 
       match /roomPlans/{docId} {
-        allow read: if request.auth != null;
-        // TODO: Restrict updates by role (admin/lead/cleaner/maintenance).
-        allow write: if request.auth != null;
+        allow read, write: if isHotelStaff(hotelId);
       }
 
       match /tasks/{taskId} {
-        allow read: if request.auth != null;
-        // TODO: Enforce role based updates for admin, lead, cleaner, maintenance.
-        allow write: if request.auth != null;
+        allow read, write: if isHotelStaff(hotelId);
       }
 
       match /maintenanceItems/{itemId} {
-        allow read: if request.auth != null;
-        // TODO: Limit maintenance updates to maintenance/admin/lead.
-        allow write: if request.auth != null;
+        allow read, write: if isHotelStaff(hotelId);
       }
 
       match /supplyRequests/{requestId} {
-        allow read: if request.auth != null;
-        // TODO: Validate category and role-specific write permissions.
-        allow write: if request.auth != null;
+        allow read, write: if isHotelStaff(hotelId);
       }
 
       match /dailyAvailability/{availabilityId} {
-        allow read: if request.auth != null;
-        // TODO: Allow self-updates, admin overrides.
-        allow write: if request.auth != null;
+        allow read, write: if isHotelStaff(hotelId);
+      }
+
+      // Import workflows are admin-only by policy.
+      match /importJobs/{jobId} {
+        allow read, write: if isHotelAdmin(hotelId);
+      }
+
+      match /importBackups/{backupId} {
+        allow read, write: if isHotelAdmin(hotelId);
       }
     }
   }
