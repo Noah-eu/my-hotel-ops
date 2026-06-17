@@ -5,7 +5,6 @@ import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
 import RoomSheetView from './pages/RoomSheetView'
 import TeamOverview from './pages/TeamOverview'
-import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
@@ -3212,14 +3211,6 @@ export default function App() {
                                 <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
                                 <div><strong>Last error code:</strong> {diagnostics.lastErrorCode || '—'}</div>
                                 <div><strong>Last error message:</strong> {diagnostics.lastErrorMessage || '—'}</div>
-                                {enableDangerousReset && (
-                                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
-                                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Nebezpečné akce</div>
-                                        <button className="btn danger" style={{ width: '100%' }} onClick={() => void handleDangerousReset()}>
-                                            {runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}
-                                        </button>
-                                    </div>
-                                )}
                             </div>
                         )}
                     </div>
@@ -3859,33 +3850,6 @@ export default function App() {
                                                 {importPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{importPdfError || 'PDF se nepodařilo načíst.'}</div>}
                                             </div>
 
-                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
-                                                <div style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Údržba úkolů</div>
-                                                {!cleanupConfirm ? (
-                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setCleanupConfirm(true)}>Vyčistit testovací úkoly</button>
-                                                ) : (
-                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                        <button className="btn danger" onClick={handleCleanupTestTasks}>Opravdu vyčistit?</button>
-                                                        <button className="btn" onClick={() => setCleanupConfirm(false)}>Zrušit</button>
-                                                    </div>
-                                                )}
-                                                {cleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{cleanupResult}</div>}
-                                            </div>
-
-                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8, border: '1px solid #fecaca', background: '#fff7f7' }}>
-                                                <div style={{ fontSize: 13, color: '#7f1d1d', fontWeight: 700 }}>Údržba plánu pokojů</div>
-                                                <div className="room-meta" style={{ color: '#7f1d1d' }}>Vyčistí staré demo rezervace a stavy pokojů před novým importem Stav. Úkoly, nákupy a údržba zůstanou beze změny.</div>
-                                                {!planCleanupConfirm ? (
-                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setPlanCleanupConfirm(true)}>Vyčistit plán pokojů</button>
-                                                ) : (
-                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                        <button className="btn danger" onClick={handleClearDemoPlan}>Opravdu vyčistit plán?</button>
-                                                        <button className="btn" onClick={() => setPlanCleanupConfirm(false)}>Zrušit</button>
-                                                    </div>
-                                                )}
-                                                {planCleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{planCleanupResult}</div>}
-                                            </div>
-
                                             {importPreview && (
                                                 <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
                                                     <div style={{ fontWeight: 800 }}>Náhled importu</div>
@@ -3987,17 +3951,49 @@ export default function App() {
                                                     </div>
                                                 </div>
                                             )}
+
+                                            <h3 style={{ marginTop: 14 }}>Údržba dat / Nebezpečné akce</h3>
+
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8 }}>
+                                                <div style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Údržba úkolů</div>
+                                                {!cleanupConfirm ? (
+                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setCleanupConfirm(true)}>Vyčistit testovací úkoly</button>
+                                                ) : (
+                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                        <button className="btn danger" onClick={handleCleanupTestTasks}>Opravdu vyčistit?</button>
+                                                        <button className="btn" onClick={() => setCleanupConfirm(false)}>Zrušit</button>
+                                                    </div>
+                                                )}
+                                                {cleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{cleanupResult}</div>}
+                                            </div>
+
+                                            <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8, border: '1px solid #fecaca', background: '#fff7f7' }}>
+                                                <div style={{ fontSize: 13, color: '#7f1d1d', fontWeight: 700 }}>Údržba plánu pokojů</div>
+                                                <div className="room-meta" style={{ color: '#7f1d1d' }}>Vyčistí staré demo rezervace a stavy pokojů před novým importem Stav. Úkoly, nákupy a údržba zůstanou beze změny.</div>
+                                                {!planCleanupConfirm ? (
+                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => setPlanCleanupConfirm(true)}>Vyčistit plán pokojů</button>
+                                                ) : (
+                                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                        <button className="btn danger" onClick={handleClearDemoPlan}>Opravdu vyčistit plán?</button>
+                                                        <button className="btn" onClick={() => setPlanCleanupConfirm(false)}>Zrušit</button>
+                                                    </div>
+                                                )}
+                                                {planCleanupResult && <div className="room-meta" style={{ color: '#475569' }}>{planCleanupResult}</div>}
+                                            </div>
+
+                                            {enableDangerousReset && (
+                                                <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginTop: 8, border: '1px solid #fca5a5', background: '#fff1f2' }}>
+                                                    <div style={{ fontSize: 13, color: '#991b1b', fontWeight: 800 }}>Nebezpečné akce</div>
+                                                    <div className="room-meta" style={{ color: '#991b1b' }}>
+                                                        Používejte jen při podpoře nebo vývoji. Akce může změnit data ve Firebase.
+                                                    </div>
+                                                    <button className="btn danger" style={{ width: 'fit-content' }} onClick={() => void handleDangerousReset()}>
+                                                        {runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
-
-                                    <AdminDashboard
-                                        rooms={roomsByDay[tab]}
-                                        tasks={tasks}
-                                        supplyRequests={supplyRequests}
-                                        staff={staff}
-                                        canManageSupplies={currentUser?.role === 'admin'}
-                                        onSetSupplyGroupStatus={handleSetSupplyGroupStatus}
-                                    />
                                 </>
                             )}
                             {view === 'maintenance' && (
