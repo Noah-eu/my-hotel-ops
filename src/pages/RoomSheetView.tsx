@@ -27,7 +27,7 @@ const PRIMARY_TABS: Array<{ tab: OpsTab; label: string; offset: number }> = [
     { tab: 'Pozitri', label: 'Pozítří', offset: 2 }
 ]
 
-type SheetCellState = 'turnover' | 'departure' | 'arrival' | 'occupied' | 'free' | 'unknown'
+type SheetCellState = 'turnover' | 'turnover-incomplete' | 'departure' | 'departure-incomplete' | 'arrival' | 'arrival-incomplete' | 'occupied' | 'free' | 'unknown'
 
 type SheetCellModel = {
     state: SheetCellState
@@ -81,6 +81,31 @@ function normalizeGuestKey(value?: string) {
         .trim()
 }
 
+function formatGuestCount(value?: number) {
+    if (typeof value !== 'number') return ''
+    return `${value}p`
+}
+
+function extractBoxLabel(raw?: string, notes?: string[]) {
+    const direct = String(raw || '').trim()
+    if (direct) {
+        const match = direct.match(/BOX\s*([A-Z0-9-]+)/i)
+        if (match) return `BOX ${match[1].toUpperCase()}`
+        return direct
+    }
+
+    const joined = (notes || []).join(' | ')
+    const fromNotes = joined.match(/BOX\s*([A-Z0-9-]+)/i)
+    if (!fromNotes) return ''
+    return `BOX ${fromNotes[1].toUpperCase()}`
+}
+
+function joinDetailParts(parts: Array<string | undefined>) {
+    const cleaned = parts.map((part) => String(part || '').trim()).filter(Boolean)
+    if (cleaned.length === 0) return undefined
+    return cleaned.join(' • ')
+}
+
 function buildCellModel(room?: RoomPlan): SheetCellModel {
     if (!room) return { state: 'unknown', main: '—' }
 
@@ -88,34 +113,44 @@ function buildCellModel(room?: RoomPlan): SheetCellModel {
     const arrivalTime = room.arrivalTime || room.arrival?.time
     const departureGuest = shortGuestName(room.departure?.guestLabel || room.stayoverGuestName)
     const arrivalGuest = shortGuestName(room.arrival?.guestLabel)
+    const departureCount = room.departure?.guestCount
+    const arrivalCount = room.arrival?.guestCount
+    const departureBox = extractBoxLabel(undefined, room.departure?.notes)
+    const arrivalBox = extractBoxLabel(room.arrival?.box || room.box, room.arrival?.notes)
 
     const hasDeparture = Boolean(departureTime)
     const hasArrival = Boolean(arrivalTime)
+    const hasDepartureIdentity = Boolean(departureGuest || typeof departureCount === 'number')
+    const hasArrivalIdentity = Boolean(arrivalGuest || typeof arrivalCount === 'number')
 
     if (hasDeparture && hasArrival) {
-        const detail = departureGuest && arrivalGuest
-            ? `${departureGuest} -> ${arrivalGuest}`
-            : (departureGuest || arrivalGuest || undefined)
+        const departureDetail = joinDetailParts([departureGuest, formatGuestCount(departureCount), departureBox])
+        const arrivalDetail = joinDetailParts([arrivalGuest, formatGuestCount(arrivalCount), arrivalBox])
+        const detail = joinDetailParts([
+            departureDetail ? `Odj: ${departureDetail}` : undefined,
+            arrivalDetail ? `Příj: ${arrivalDetail}` : undefined
+        ])
+
         return {
-            state: 'turnover',
+            state: hasDepartureIdentity && hasArrivalIdentity ? 'turnover' : 'turnover-incomplete',
             main: `Odj ${departureTime} / Příj ${arrivalTime}`,
-            detail
+            detail: detail || (hasDepartureIdentity || hasArrivalIdentity ? detail : 'Neúplná data hosta')
         }
     }
 
     if (hasDeparture) {
         return {
-            state: 'departure',
+            state: hasDepartureIdentity ? 'departure' : 'departure-incomplete',
             main: `Odj ${departureTime}`,
-            detail: departureGuest || undefined
+            detail: joinDetailParts([departureGuest, formatGuestCount(departureCount), departureBox]) || 'Neúplná data hosta'
         }
     }
 
     if (hasArrival) {
         return {
-            state: 'arrival',
+            state: hasArrivalIdentity ? 'arrival' : 'arrival-incomplete',
             main: `Příj ${arrivalTime}`,
-            detail: arrivalGuest || undefined
+            detail: joinDetailParts([arrivalGuest, formatGuestCount(arrivalCount), arrivalBox]) || 'Neúplná data hosta'
         }
     }
 

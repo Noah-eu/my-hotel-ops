@@ -463,6 +463,19 @@ body {
     background: linear-gradient(180deg, #f4fff8 0%, #e2f7ea 100%);
 }
 
+.sheet-cell-turnover-incomplete,
+.sheet-cell-departure-incomplete,
+.sheet-cell-arrival-incomplete {
+    border-color: #f8d2a5;
+    background: linear-gradient(180deg, #fffaf3 0%, #ffefdd 100%);
+}
+
+.sheet-cell-turnover-incomplete .sheet-cell-main,
+.sheet-cell-departure-incomplete .sheet-cell-main,
+.sheet-cell-arrival-incomplete .sheet-cell-main {
+    color: #9a3412;
+}
+
 .sheet-cell-occupied {
     border-color: #cfd6ff;
     background: linear-gradient(180deg, #f5f7ff 0%, #e8edff 100%);

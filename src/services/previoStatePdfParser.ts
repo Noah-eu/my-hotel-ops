@@ -614,10 +614,21 @@ function assignNotesBySide(noteGroups: string[], departureTime?: string, arrival
 function extractNameCandidates(blockLines: string[]) {
     const candidates: string[] = []
 
+    function normalizeCandidateCase(value: string) {
+        return value
+            .split(' ')
+            .map((token) => {
+                if (!/^\p{Ll}[\p{L}'’-]+$/u.test(token)) return token
+                return `${token[0].toUpperCase()}${token.slice(1)}`
+            })
+            .join(' ')
+    }
+
     function pushCandidate(value: string) {
-        const normalized = normalizeForMatch(value)
+        const formatted = normalizeCandidateCase(value)
+        const normalized = normalizeForMatch(formatted)
         if (!normalized || candidates.some((item) => normalizeForMatch(item) === normalized)) return
-        candidates.push(value)
+        candidates.push(formatted)
     }
 
     blockLines.forEach((line) => {
@@ -647,11 +658,21 @@ function extractNameCandidates(blockLines: string[]) {
             return
         }
 
+        const mixedCasePairs = [...cleaned.matchAll(/(\p{Ll}[\p{L}'’-]+\s+\p{Lu}[\p{L}'’-]+)/gu)]
+            .map((match) => match[1].trim())
+        if (mixedCasePairs.length > 0) {
+            mixedCasePairs.forEach(pushCandidate)
+            return
+        }
+
         const tokens = cleaned.split(' ').map((token) => token.trim()).filter(Boolean)
         for (let i = 0; i + 1 < tokens.length; i++) {
             const first = tokens[i]
             const second = tokens[i + 1]
-            if (/^\p{Lu}[\p{L}'’-]+$/u.test(first) && /^\p{Lu}[\p{L}'’-]+$/u.test(second)) {
+            const firstUpper = /^\p{Lu}[\p{L}'’-]+$/u.test(first)
+            const firstLower = /^\p{Ll}[\p{L}'’-]+$/u.test(first)
+            const secondUpper = /^\p{Lu}[\p{L}'’-]+$/u.test(second)
+            if ((firstUpper && secondUpper) || (firstLower && secondUpper)) {
                 pushCandidate(`${first} ${second}`)
             }
         }
@@ -767,6 +788,12 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 if (!departureTime && !arrivalTime) {
                     blockWarnings.push('Bez času odjezdu/příjezdu - označeno jako probíhající pobyt')
                 }
+                if (departureTime && !departureGuestName && typeof departureGuestCount !== 'number') {
+                    blockWarnings.push('Odjezd má čas, ale chybí jméno hosta.')
+                }
+                if (arrivalTime && !arrivalGuestName && typeof arrivalGuestCount !== 'number') {
+                    blockWarnings.push('Příjezd má čas, ale chybí jméno hosta.')
+                }
                 if (!MASTER_ROOM_SET.has(block.room)) {
                     blockWarnings.push('Pokoj není v master seznamu')
                 }
@@ -876,6 +903,12 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             const blockWarnings: string[] = [...sideWarnings]
             if (!departureTime && !arrivalTime) {
                 blockWarnings.push('Bez času odjezdu/příjezdu - označeno jako probíhající pobyt')
+            }
+            if (departureTime && !departureGuestName && typeof departureGuestCount !== 'number') {
+                blockWarnings.push('Odjezd má čas, ale chybí jméno hosta.')
+            }
+            if (arrivalTime && !arrivalGuestName && typeof arrivalGuestCount !== 'number') {
+                blockWarnings.push('Příjezd má čas, ale chybí jméno hosta.')
             }
             if (!MASTER_ROOM_SET.has(roomInfo.room)) {
                 blockWarnings.push('Pokoj není v master seznamu')
@@ -1120,6 +1153,25 @@ export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyIn
         const missingArrivalGuest = Boolean(row.arrivalTime && !row.arrivalGuestName)
         return missingDepartureGuest || missingArrivalGuest
     }).length
+
+    const arrivalsMissingIdentity = arrivals.filter((row) => (
+        Boolean(row.arrivalTime)
+        && !row.arrivalGuestName
+        && typeof row.arrivalGuestCount !== 'number'
+    ))
+    if (arrivalsMissingIdentity.length > 0) {
+        blocks.push('Příjezd má čas, ale chybí jméno hosta.')
+    }
+
+    const departuresMissingIdentity = departures.filter((row) => (
+        Boolean(row.departureTime)
+        && !row.departureGuestName
+        && typeof row.departureGuestCount !== 'number'
+    ))
+    if (departuresMissingIdentity.length > 0) {
+        blocks.push('Odjezd má čas, ale chybí jméno hosta.')
+    }
+
     if (turnoverRows.length >= 6 && turnoverRowsMissingGuestName >= 4 && turnoverRowsMissingGuestName / turnoverRows.length >= 0.3) {
         blocks.push('U mnoha turnover řádků chybí jména hostů.')
     }
@@ -1191,6 +1243,8 @@ export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyIn
             arrivalsAtEleven,
             departuresBeforeEight,
             turnoverRowsMissingGuestName,
+            arrivalsMissingIdentity: arrivalsMissingIdentity.length,
+            departuresMissingIdentity: departuresMissingIdentity.length,
             parsedRows: preview.parsedRows,
             parsedDayCount: preview.parsedDateCount,
             previewDayCount: preview.days.length

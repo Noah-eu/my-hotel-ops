@@ -74,6 +74,8 @@ export interface ImportJobSafetySummary {
         arrivalsAtEleven?: number
         departuresBeforeEight?: number
         turnoverRowsMissingGuestName?: number
+        arrivalsMissingIdentity?: number
+        departuresMissingIdentity?: number
         parsedRows?: number
         parsedDayCount?: number
         previewDayCount?: number

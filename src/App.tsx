@@ -3160,7 +3160,7 @@ export default function App() {
                         </div>
 
                         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                            <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Dnes</button>
+                            <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Pokoje</button>
                             <button className={`btn ${view === 'sheet' ? 'active' : ''}`} onClick={() => setView('sheet')}>Plachta</button>
                             {isAdminUser && (
                                 <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>

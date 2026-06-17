@@ -81,6 +81,7 @@ function runChecks(parsed) {
     const r18001 = findRow(parsed.rows, '2026-06-18', '001')
     const r20101 = findRow(parsed.rows, '2026-06-20', '101')
     const r20301 = findRow(parsed.rows, '2026-06-20', '301')
+    const r21001 = findRow(parsed.rows, '2026-06-21', '001')
     const r21202 = findRow(parsed.rows, '2026-06-21', '202')
 
     expect(failures, Boolean(r17001), 'Missing row 2026-06-17/001')
@@ -90,6 +91,7 @@ function runChecks(parsed) {
     expect(failures, Boolean(r18001), 'Missing row 2026-06-18/001')
     expect(failures, Boolean(r20101), 'Missing row 2026-06-20/101')
     expect(failures, Boolean(r20301), 'Missing row 2026-06-20/301')
+    expect(failures, Boolean(r21001), 'Missing row 2026-06-21/001')
     expect(failures, Boolean(r21202), 'Missing row 2026-06-21/202')
 
     if (r17001) {
@@ -177,6 +179,13 @@ function runChecks(parsed) {
         )
     }
 
+    if (r21001) {
+        expectEqual(failures, '21.6/001 arrival time', r21001.arrivalTime, '14:00')
+        expectEqual(failures, '21.6/001 arrival guest', r21001.arrivalGuestName, 'Sogol Zargarcharkh')
+        expectNumber(failures, '21.6/001 arrival pax', r21001.arrivalGuestCount, 4)
+        expectTextContains(failures, '21.6/001 arrival note', notesToString(r21001.arrivalNotes), 'BOX 6')
+    }
+
     if (r21202) {
         expectEqual(failures, '21.6/202 departure time', r21202.departureTime, '11:00')
         expectEqual(failures, '21.6/202 arrival time', r21202.arrivalTime, '22:00')
@@ -242,6 +251,50 @@ function runSafetyChecks(preview) {
         failures,
         syntheticSafety.blocks.some((line) => line.includes('01:00-07:30')),
         'Synthetic bad preview should trigger suspicious night-time safety block'
+    )
+
+    const syntheticMissingGuest = {
+        ...preview,
+        days: preview.days.map((day, dayIndex) => {
+            if (dayIndex !== 0) return day
+
+            const updatedRows = day.rows.map((row, rowIndex) => {
+                if (rowIndex !== 0) return row
+                return {
+                    ...row,
+                    departureTime: '11:00',
+                    arrivalTime: '14:00',
+                    departureGuestName: undefined,
+                    departureGuestCount: undefined,
+                    arrivalGuestName: undefined,
+                    arrivalGuestCount: undefined
+                }
+            })
+
+            return {
+                ...day,
+                rows: updatedRows
+            }
+        })
+    }
+
+    const missingGuestSafety = evaluatePrevioStateImportSafety({
+        preview: syntheticMissingGuest,
+        missingDateLabels: [],
+        parserVersion: PREVIO_STAV_PARSER_VERSION,
+        checkedAt: new Date()
+    })
+
+    expect(failures, missingGuestSafety.blocked === true, 'Synthetic missing guest row should be blocked')
+    expect(
+        failures,
+        missingGuestSafety.blocks.some((line) => line.includes('Příjezd má čas, ale chybí jméno hosta.')),
+        'Synthetic missing guest row should trigger arrival missing guest block'
+    )
+    expect(
+        failures,
+        missingGuestSafety.blocks.some((line) => line.includes('Odjezd má čas, ale chybí jméno hosta.')),
+        'Synthetic missing guest row should trigger departure missing guest block'
     )
 
     return failures
