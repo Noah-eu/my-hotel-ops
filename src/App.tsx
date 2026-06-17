@@ -141,6 +141,7 @@ type ImportJobInlinePreviewModel = {
 }
 
 type ImportCleanupMode = 'test_unconfirmed' | 'old'
+type RollbackAvailability = 'checking' | 'available' | 'legacy'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CLEANUP_OLD_DAYS = 30
@@ -751,6 +752,8 @@ export default function App() {
     const [planCleanupResult, setPlanCleanupResult] = useState<string | null>(null)
     const [importCleanupInProgress, setImportCleanupInProgress] = useState(false)
     const [importCleanupResult, setImportCleanupResult] = useState<string | null>(null)
+    const [rollingBackJobId, setRollingBackJobId] = useState<string | null>(null)
+    const [rollbackAvailabilityByJobId, setRollbackAvailabilityByJobId] = useState<Record<string, RollbackAvailability>>({})
     const importJobPreviewPanelRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
     const activeStore = runtimeMode === 'online' ? onlineStore : localStore
@@ -861,8 +864,12 @@ export default function App() {
     const stateImportBlockedForUi = Boolean(stateImportSafetyForUi?.blocked)
 
     const latestRollbackCandidateJob = useMemo(
-        () => importJobs.find((job) => job.status === 'confirmed' && job.type === 'previo-state-pdf' && job.backupSummary),
-        [importJobs]
+        () => importJobs.find((job) => (
+            job.status === 'confirmed'
+            && job.type === 'previo-state-pdf'
+            && rollbackAvailabilityByJobId[job.id] === 'available'
+        )),
+        [importJobs, rollbackAvailabilityByJobId]
     )
 
     const visibleTodayTasks = useMemo(
@@ -1330,20 +1337,25 @@ export default function App() {
         return null
     }
 
-    async function handleRollbackLastImport() {
-        if (!latestRollbackCandidateJob) {
-            setStateImportPdfError('Pro rollback není dostupný žádný potvrzený import se snapshotem.')
+    async function handleRollbackImport(jobId: string, isLastImportAction = false) {
+        const job = importJobs.find((item) => item.id === jobId)
+        if (!job || job.status !== 'confirmed' || job.type !== 'previo-state-pdf') {
+            setStateImportPdfError('Rollback není dostupný pro vybraný import.')
             return
         }
 
-        const job = latestRollbackCandidateJob
+        const confirmed = window.confirm('Opravdu vrátit poslední import? Úkoly, odhady a provozní stavy zůstanou zachované.')
+        if (!confirmed) return
+
+        setRollingBackJobId(jobId)
         setStateImportPdfError(null)
         setStateImportActionMessage(null)
 
         try {
             const backupPayload = await loadBackupPayloadForJob(job)
             if (!backupPayload || !backupPayload.snapshotByDate) {
-                setStateImportPdfError('Snapshot pro rollback nebyl nalezen.')
+                setStateImportPdfError('Rollback není dostupný pro importy potvrzené starší verzí.')
+                setRollbackAvailabilityByJobId((prev) => ({ ...prev, [jobId]: 'legacy' }))
                 return
             }
 
@@ -1419,11 +1431,23 @@ export default function App() {
                     }
                     : item
             ))))
+            setRollbackAvailabilityByJobId((prev) => ({ ...prev, [job.id]: 'available' }))
 
-            setStateImportActionMessage(`Rollback dokončen pro import ${job.fileName}.`)
+            const label = isLastImportAction ? 'Rollback dokončen pro poslední import.' : `Rollback dokončen pro import ${job.fileName}.`
+            setStateImportActionMessage(label)
         } catch (error: any) {
             setStateImportPdfError(error?.message || 'Rollback posledního importu selhal.')
+        } finally {
+            setRollingBackJobId(null)
         }
+    }
+
+    async function handleRollbackLastImport() {
+        if (!latestRollbackCandidateJob) {
+            setStateImportPdfError('Rollback není dostupný pro importy potvrzené starší verzí.')
+            return
+        }
+        await handleRollbackImport(latestRollbackCandidateJob.id, true)
     }
 
     function roomIdForNumber(roomNumber: string) {
@@ -2905,6 +2929,60 @@ export default function App() {
     }, [runtimeMode, authUser, onlineStore, defaultState])
 
     useEffect(() => {
+        const confirmedStateJobs = importJobs.filter((job) => job.status === 'confirmed' && job.type === 'previo-state-pdf')
+        if (confirmedStateJobs.length === 0) {
+            setRollbackAvailabilityByJobId({})
+            return
+        }
+
+        let cancelled = false
+
+        const initialStatus: Record<string, RollbackAvailability> = {}
+        confirmedStateJobs.forEach((job) => {
+            initialStatus[job.id] = 'checking'
+        })
+        setRollbackAvailabilityByJobId(initialStatus)
+
+        async function resolveAvailability() {
+            const nextStatus: Record<string, RollbackAvailability> = {}
+
+            await Promise.all(confirmedStateJobs.map(async (job) => {
+                const hasLocalPayload = Boolean(
+                    (job.backupPayload && job.backupPayload.jobId === job.id)
+                    || (latestStateImportBackup && latestStateImportBackup.jobId === job.id)
+                )
+
+                if (job.backupSummary || hasLocalPayload) {
+                    nextStatus[job.id] = 'available'
+                    return
+                }
+
+                if (runtimeMode === 'online' && firestoreDb) {
+                    try {
+                        const backupSnap = await getDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importBackups', job.id))
+                        nextStatus[job.id] = backupSnap.exists() ? 'available' : 'legacy'
+                        return
+                    } catch {
+                        nextStatus[job.id] = 'legacy'
+                        return
+                    }
+                }
+
+                nextStatus[job.id] = 'legacy'
+            }))
+
+            if (cancelled) return
+            setRollbackAvailabilityByJobId(nextStatus)
+        }
+
+        void resolveAvailability()
+
+        return () => {
+            cancelled = true
+        }
+    }, [importJobs, latestStateImportBackup, runtimeMode, firestoreDb])
+
+    useEffect(() => {
         void loadRoomCatalogForCurrentMode().catch((error: any) => {
             if (import.meta.env.DEV) {
                 console.warn('[RoomCatalog] failed to load, using defaults', error?.message || error)
@@ -3125,8 +3203,8 @@ export default function App() {
                                                 <div style={{ fontSize: 14, fontWeight: 800 }}>Importy z Previa</div>
                                                 {latestRollbackCandidateJob && (
                                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                                        <button className="btn" onClick={() => void handleRollbackLastImport()}>
-                                                            Vrátit poslední import
+                                                        <button className="btn" disabled={Boolean(rollingBackJobId)} onClick={() => void handleRollbackLastImport()}>
+                                                            {rollingBackJobId ? 'Provádím rollback...' : 'Vrátit poslední import'}
                                                         </button>
                                                         <div className="room-meta">
                                                             Poslední potvrzený import: {latestRollbackCandidateJob.fileName}
@@ -3166,6 +3244,14 @@ export default function App() {
                                                     const jobPreview = (job.previewSummary?.preview || null) as PrevioStateImportPreview | null
                                                     const jobMissingDateLabels = job.previewSummary?.missingDateLabels || []
                                                     const jobParserVersion = job.previewSummary?.parserVersion || job.parserVersion
+                                                    const rollbackAvailability = rollbackAvailabilityByJobId[job.id]
+                                                    const isRollbackAvailable = rollbackAvailability === 'available'
+                                                    const showLegacyRollbackHint = job.status === 'confirmed'
+                                                        && job.type === 'previo-state-pdf'
+                                                        && rollbackAvailability === 'legacy'
+                                                    const showRollbackChecking = job.status === 'confirmed'
+                                                        && job.type === 'previo-state-pdf'
+                                                        && rollbackAvailability === 'checking'
                                                     const jobSafety = resolveImportSafety(jobPreview, jobMissingDateLabels, jobParserVersion, inlinePreviewModel?.safety)
                                                     const hasPreviewSummary = Boolean(asRecord(job.previewSummary))
                                                     const hasParserVersionWarning = hasPreviewSummary && (!jobParserVersion || jobParserVersion !== PREVIO_STAV_PARSER_VERSION)
@@ -3206,6 +3292,16 @@ export default function App() {
                                                                 <div className="room-meta" style={{ marginTop: 2 }}>
                                                                     Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
                                                                     {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                </div>
+                                                            )}
+                                                            {showLegacyRollbackHint && (
+                                                                <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                    Rollback není dostupný pro importy potvrzené starší verzí.
+                                                                </div>
+                                                            )}
+                                                            {showRollbackChecking && (
+                                                                <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                    Ověřuji dostupnost rollback snapshotu...
                                                                 </div>
                                                             )}
                                                             {hasParserVersionWarning && (
@@ -3252,6 +3348,15 @@ export default function App() {
                                                                 </button>
                                                                 <button className="btn" disabled={job.status === 'confirmed' || job.status === 'cancelled'} onClick={() => handleCancelImportJob(job.id)}>Zrušit</button>
                                                                 <button className="btn danger" disabled={importCleanupInProgress} onClick={() => void handleDeleteImportJob(job.id)}>Smazat import job</button>
+                                                                {isRollbackAvailable && (
+                                                                    <button
+                                                                        className="btn"
+                                                                        disabled={rollingBackJobId === job.id}
+                                                                        onClick={() => void handleRollbackImport(job.id)}
+                                                                    >
+                                                                        {rollingBackJobId === job.id ? 'Provádím rollback...' : 'Vrátit tento import'}
+                                                                    </button>
+                                                                )}
                                                             </div>
 
                                                             {isInlinePreviewOpen && (
