@@ -212,6 +212,11 @@ export interface Task {
     note?: string
     createdBy: string
     createdAt: string
+    taskDateIso?: string
+    attentionRequired?: boolean
+    attentionReason?: 'late_today_room_task'
+    acknowledgedAt?: string
+    acknowledgedBy?: string
 }
 
 export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'

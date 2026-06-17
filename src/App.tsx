@@ -102,6 +102,14 @@ type CreateTaskInput = {
     note?: string
 }
 
+function isRoomLikelyAlreadyTouched(room: RoomPlan) {
+    if (room.status === 'prevzato' || room.status === 'probihá' || room.status === 'odhad' || room.status === 'hotovo' || room.status === 'problem') return true
+    if (Boolean(room.assigned)) return true
+    if (Boolean(room.estimatedReady || room.estimateSetAt)) return true
+    if (Boolean(room.checkoutException || room.statusNote)) return true
+    return false
+}
+
 type CreateSupplyRequestInput = {
     itemName: string
     category: SupplyRequest['category']
@@ -2677,10 +2685,55 @@ export default function App() {
     }
 
     function handleUpdateTaskStatus(taskId: string, status: Task['status']) {
+        const now = new Date().toISOString()
+        const actor = currentUser?.name || currentUser?.id || 'staff'
         if (runtimeMode === 'online') {
             activeStore.updateTaskStatus(taskId, status)
         }
-        setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, status } : task)))
+        setTasks((prev) => prev.map((task) => {
+            if (task.id !== taskId) return task
+            if (status === 'read') {
+                return {
+                    ...task,
+                    status,
+                    acknowledgedAt: task.acknowledgedAt || now,
+                    acknowledgedBy: task.acknowledgedBy || actor
+                }
+            }
+            return { ...task, status }
+        }))
+    }
+
+    function handleAcknowledgeRoomLateTasks(roomNumber: string) {
+        const now = new Date().toISOString()
+        const actor = currentUser?.name || currentUser?.id || 'staff'
+        const targetIds = tasks
+            .filter((task) => (
+                task.roomNumber === roomNumber
+                && task.attentionRequired
+                && task.attentionReason === 'late_today_room_task'
+                && task.status !== 'read'
+                && task.status !== 'done'
+                && task.status !== 'cancelled'
+            ))
+            .map((task) => task.id)
+
+        if (targetIds.length === 0) return
+
+        if (runtimeMode === 'online') {
+            targetIds.forEach((taskId) => activeStore.updateTaskStatus(taskId, 'read'))
+        }
+
+        setTasks((prev) => prev.map((task) => (
+            targetIds.includes(task.id)
+                ? {
+                    ...task,
+                    status: 'read',
+                    acknowledgedAt: task.acknowledgedAt || now,
+                    acknowledgedBy: task.acknowledgedBy || actor
+                }
+                : task
+        )))
     }
 
     function handleCreateTask(roomId: string, input: CreateTaskInput) {
@@ -2688,6 +2741,11 @@ export default function App() {
         if (!room || !currentUser) return
 
         const createdAt = formatNowHHmm(new Date())
+        const todayIso = formatLocalDateIso(new Date())
+        const isTodayTask = tab === 'Dnes' && selectedTabDateIso === todayIso
+        const lateTodayRoomTask = isTodayTask && isRoomLikelyAlreadyTouched(room)
+
+        // TODO: Hook push notification trigger here when backend notification pipeline is ready.
         const newTask: Task = {
             id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             roomNumber: room.number,
@@ -2699,7 +2757,10 @@ export default function App() {
             status: 'new',
             note: input.note,
             createdBy: currentUser.name,
-            createdAt
+            createdAt,
+            taskDateIso: selectedTabDateIso,
+            attentionRequired: lateTodayRoomTask || undefined,
+            attentionReason: lateTodayRoomTask ? 'late_today_room_task' : undefined
         }
 
         if (runtimeMode === 'online') {
@@ -2712,7 +2773,10 @@ export default function App() {
                 assignedToRole: newTask.assignedToRole,
                 note: newTask.note,
                 createdBy: newTask.createdBy,
-                createdAt: newTask.createdAt
+                createdAt: newTask.createdAt,
+                taskDateIso: newTask.taskDateIso,
+                attentionRequired: newTask.attentionRequired,
+                attentionReason: newTask.attentionReason
             })
         }
 
@@ -3548,6 +3612,7 @@ export default function App() {
                                     onAction={handleAction}
                                     onCreateTask={handleCreateTask}
                                     onUpdateTaskStatus={handleUpdateTaskStatus}
+                                    onAcknowledgeLateTasks={handleAcknowledgeRoomLateTasks}
                                     role={(currentUser?.role || 'cleaner') as UserRole}
                                     dayLabel={dayLabel}
                                     currentUserId={userId}

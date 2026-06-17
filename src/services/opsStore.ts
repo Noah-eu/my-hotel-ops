@@ -34,6 +34,11 @@ export interface CreateTaskInput {
     note?: string
     createdBy: string
     createdAt: string
+    taskDateIso?: string
+    attentionRequired?: boolean
+    attentionReason?: 'late_today_room_task'
+    acknowledgedAt?: string
+    acknowledgedBy?: string
 }
 
 export interface CreateSupplyRequestInput {

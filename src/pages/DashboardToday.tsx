@@ -186,6 +186,7 @@ export default function DashboardToday({
     onAction,
     onCreateTask,
     onUpdateTaskStatus,
+    onAcknowledgeLateTasks,
     role,
     dayLabel,
     currentUserId,
@@ -197,6 +198,7 @@ export default function DashboardToday({
     onAction: (id: string, action: string, payload?: RoomActionPayload) => void
     onCreateTask: (roomId: string, input: CreateTaskInput) => void
     onUpdateTaskStatus: (taskId: string, status: Task['status']) => void
+    onAcknowledgeLateTasks: (roomNumber: string) => void
     role: UserRole
     dayLabel: string
     currentUserId: string
@@ -404,6 +406,14 @@ export default function DashboardToday({
                     const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
                     const otherRoomTasks = activeRoomTasks.filter((t) => !arrivalPreparationTitles.has(t.title))
+                    const lateAttentionTasks = activeRoomTasks.filter((task) => (
+                        task.attentionRequired
+                        && task.attentionReason === 'late_today_room_task'
+                        && task.status !== 'read'
+                        && task.status !== 'done'
+                        && task.status !== 'cancelled'
+                    ))
+                    const hasLateTaskAlert = lateAttentionTasks.length > 0
                     const arrivalPrepChips = arrivalPrepChipsFromNotes(room.arrival?.notes)
                     const arrivalDisplay = displayNotesWithoutDuplicateBox(room.arrival?.box, room.arrival?.notes)
                     const departureDisplay = displayNotesWithoutDuplicateBox(undefined, room.departure?.notes)
@@ -427,6 +437,19 @@ export default function DashboardToday({
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
                                     {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted mini-muted-stayover">{room.stayoverGuestName}</div>}
                                     {room.freeConfirmed && <div className="mini-muted mini-muted-free">Pokoj je dostupný při volné kapacitě.</div>}
+                                    {hasLateTaskAlert && (
+                                        <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fb923c', background: '#fff7ed' }}>
+                                            <div style={{ fontSize: 12, fontWeight: 800, color: '#9a3412' }}>! Nový úkol po kontrole</div>
+                                            <button
+                                                className="chip"
+                                                style={{ marginTop: 4, fontSize: 11, padding: '4px 8px', borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }}
+                                                onClick={() => !readOnly && onAcknowledgeLateTasks(room.number)}
+                                                disabled={readOnly}
+                                            >
+                                                Přečteno
+                                            </button>
+                                        </div>
+                                    )}
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
                                             <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c' }}>{room.statusNote || 'Host neodešel'}</div>
@@ -512,6 +535,22 @@ export default function DashboardToday({
                                 </div>
                             </div>
 
+                            {hasLateTaskAlert && (
+                                <div style={{ margin: '8px 10px 0', border: '1px solid #fb923c', background: '#fff7ed', borderRadius: 8, padding: '6px 8px', display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <div style={{ fontSize: 12, fontWeight: 800, color: '#9a3412' }}>
+                                        Nový úkol po kontrole ({lateAttentionTasks.length})
+                                    </div>
+                                    <button
+                                        className="chip"
+                                        style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }}
+                                        onClick={() => !readOnly && onAcknowledgeLateTasks(room.number)}
+                                        disabled={readOnly}
+                                    >
+                                        Přečteno
+                                    </button>
+                                </div>
+                            )}
+
                             {otherRoomTasks.length > 0 && (
                                 <div style={{ padding: '8px 10px', borderTop: '1px solid rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                     {otherRoomTasks.map((task) => (
@@ -525,7 +564,14 @@ export default function DashboardToday({
                                                 fontSize: 12
                                             }}
                                         >
-                                            <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                                {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
+                                                    <span style={{ fontSize: 11, fontWeight: 800, color: '#9a3412', border: '1px solid #fdba74', background: '#ffedd5', borderRadius: 999, padding: '2px 8px' }}>
+                                                        Přidáno během dne
+                                                    </span>
+                                                )}
+                                            </div>
                                             <div style={{ color: '#475569' }}>
                                                 {roleLabel(task.assignedToRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
                                             </div>
@@ -536,6 +582,21 @@ export default function DashboardToday({
 
                             {isExpanded && (
                                 <div className="expanded-actions">
+                                    {hasLateTaskAlert && (
+                                        <div style={{ width: '100%', border: '1px solid #fb923c', background: '#fff7ed', borderRadius: 10, padding: 8, marginBottom: 4, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                            <div style={{ fontSize: 13, fontWeight: 800, color: '#9a3412' }}>
+                                                Nový úkol po kontrole
+                                            </div>
+                                            <button
+                                                className="chip"
+                                                style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }}
+                                                onClick={() => !readOnly && onAcknowledgeLateTasks(room.number)}
+                                                disabled={readOnly}
+                                            >
+                                                Přečteno
+                                            </button>
+                                        </div>
+                                    )}
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={readOnly || stateOnlyRoom} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
@@ -678,7 +739,14 @@ export default function DashboardToday({
                                                     return (
                                                         <div key={`active-task-${room.id}-${task.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 8px' }}>
                                                             <div>
-                                                                <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                                    <div style={{ fontWeight: 700 }}>{task.title}</div>
+                                                                    {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
+                                                                        <span style={{ fontSize: 11, fontWeight: 800, color: '#9a3412', border: '1px solid #fdba74', background: '#ffedd5', borderRadius: 999, padding: '2px 8px' }}>
+                                                                            Nové
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                                 <div style={{ color: '#475569', fontSize: 12 }}>{roleLabel(task.assignedToRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'}</div>
                                                             </div>
                                                             {canDelete && (

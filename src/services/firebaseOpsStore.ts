@@ -498,7 +498,12 @@ export function createFirebaseOpsStore(): OpsStore {
                 status: 'new',
                 note: input.note,
                 createdBy: input.createdBy,
-                createdAt: input.createdAt
+                createdAt: input.createdAt,
+                taskDateIso: input.taskDateIso,
+                attentionRequired: input.attentionRequired,
+                attentionReason: input.attentionReason,
+                acknowledgedAt: input.acknowledgedAt,
+                acknowledgedBy: input.acknowledgedBy
             }
             const { cleaned } = sanitizeForFirestore(task, `tasks.${task.id}`)
             void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), cleaned))

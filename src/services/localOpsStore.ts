@@ -122,7 +122,12 @@ export function createLocalOpsStore(): OpsStore {
                 status: 'new',
                 note: input.note,
                 createdBy: input.createdBy,
-                createdAt: input.createdAt
+                createdAt: input.createdAt,
+                taskDateIso: input.taskDateIso,
+                attentionRequired: input.attentionRequired,
+                attentionReason: input.attentionReason,
+                acknowledgedAt: input.acknowledgedAt,
+                acknowledgedBy: input.acknowledgedBy
             }
             withState((state) => ({ ...state, tasks: [task, ...state.tasks] }))
             return task
