@@ -156,7 +156,7 @@ type ImportCleanupFeedback = {
     notFound: number
 }
 
-const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce...'
+const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce…'
 
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
 
