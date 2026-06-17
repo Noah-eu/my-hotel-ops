@@ -142,7 +142,21 @@ type ImportJobInlinePreviewModel = {
 }
 
 type ImportCleanupMode = 'test_unconfirmed' | 'old'
+type ImportCleanupAction = 'superseded' | 'test_unconfirmed' | 'old' | 'single'
 type RollbackAvailability = 'checking' | 'available' | 'legacy'
+
+type ImportCleanupFeedback = {
+    tone: 'info' | 'success' | 'warning' | 'error'
+    message: string
+    candidates: number
+    deletedJobs: number
+    deletedPdfs: number
+    skippedProtected: number
+    storageWarnings: number
+    notFound: number
+}
+
+const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce...'
 
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
 
@@ -805,7 +819,8 @@ export default function App() {
     const [planCleanupConfirm, setPlanCleanupConfirm] = useState(false)
     const [planCleanupResult, setPlanCleanupResult] = useState<string | null>(null)
     const [importCleanupInProgress, setImportCleanupInProgress] = useState(false)
-    const [importCleanupResult, setImportCleanupResult] = useState<string | null>(null)
+    const [importCleanupAction, setImportCleanupAction] = useState<ImportCleanupAction | null>(null)
+    const [importCleanupFeedback, setImportCleanupFeedback] = useState<ImportCleanupFeedback | null>(null)
     const [rollingBackJobId, setRollingBackJobId] = useState<string | null>(null)
     const [rollbackAvailabilityByJobId, setRollbackAvailabilityByJobId] = useState<Record<string, RollbackAvailability>>({})
     const [installHintDismissed, setInstallHintDismissed] = useState(() => {
@@ -2098,19 +2113,53 @@ export default function App() {
 
     function getImportCleanupTargets(mode: ImportCleanupMode) {
         const protectedJobId = latestRollbackCandidateJob?.id
+        const protectedNewestJobId = newestPrevioStateJob?.id
 
         if (mode === 'test_unconfirmed') {
             return importJobs.filter((job) => {
                 if (job.id === protectedJobId) return false
+                if (job.id === protectedNewestJobId) return false
                 return job.status !== 'confirmed' || likelyTestImportJob(job)
             })
         }
 
         return importJobs.filter((job) => (
             job.id !== protectedJobId
+            && job.id !== protectedNewestJobId
             &&
             olderThanDays(job.receivedAt, IMPORT_CLEANUP_OLD_DAYS)
         ))
+    }
+
+    function assertAdminCleanupAllowed() {
+        if (!isAdminUser) {
+            throw new Error('Mazání importů je povoleno jen adminovi.')
+        }
+    }
+
+    function createCleanupFeedback(params: {
+        tone: ImportCleanupFeedback['tone']
+        message: string
+        candidates: number
+        summary?: {
+            deletedJobIds: string[]
+            notFoundJobIds: string[]
+            storageDeletedCount: number
+            storageWarnings: Array<{ jobId: string; warning: string }>
+        }
+        skippedProtected?: number
+    }): ImportCleanupFeedback {
+        const summary = params.summary
+        return {
+            tone: params.tone,
+            message: params.message,
+            candidates: params.candidates,
+            deletedJobs: summary?.deletedJobIds.length || 0,
+            deletedPdfs: summary?.storageDeletedCount || 0,
+            skippedProtected: params.skippedProtected || 0,
+            storageWarnings: summary?.storageWarnings.length || 0,
+            notFound: summary?.notFoundJobIds.length || 0
+        }
     }
 
     function removeImportJobsFromUi(deletedJobIds: string[]) {
@@ -2237,6 +2286,17 @@ export default function App() {
         const job = importJobs.find((item) => item.id === jobId)
         if (!job) return
 
+        try {
+            assertAdminCleanupAllowed()
+        } catch (error: any) {
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'error',
+                message: error?.message || 'Mazání importů je povoleno jen adminovi.',
+                candidates: 0
+            }))
+            return
+        }
+
         const hasStorage = Boolean(job.storagePath)
         const confirmed = window.confirm(
             hasStorage
@@ -2246,34 +2306,80 @@ export default function App() {
         if (!confirmed) return
 
         setImportCleanupInProgress(true)
-        setImportCleanupResult(null)
+        setImportCleanupAction('single')
+        setImportCleanupFeedback(null)
 
         try {
             const summary = await deleteImportJobsWithStorage([jobId])
             if (summary.deletedJobIds.length === 0) {
-                setImportCleanupResult('Import nebyl smazán (záznam nebyl nalezen).')
+                setImportCleanupFeedback(createCleanupFeedback({
+                    tone: 'warning',
+                    message: 'Import nebyl smazán (záznam nebyl nalezen).',
+                    candidates: 1,
+                    summary
+                }))
                 return
             }
 
-            const warningSuffix = summary.storageWarnings.length > 0
-                ? ` U ${summary.storageWarnings.length} PDF se nepodařilo potvrdit smazání.`
-                : ''
-            setImportCleanupResult(`Import ${job.fileName} byl smazán.${warningSuffix}`)
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: summary.storageWarnings.length > 0 ? 'warning' : 'success',
+                message: `Import ${job.fileName} byl smazán.`,
+                candidates: 1,
+                summary
+            }))
         } catch (error: any) {
-            setImportCleanupResult(error?.message || 'Mazání importu selhalo.')
+            console.warn('[import-cleanup] delete single failed', { jobId, message: error?.message })
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'error',
+                message: error?.message || 'Mazání importu selhalo.',
+                candidates: 1
+            }))
         } finally {
             setImportCleanupInProgress(false)
+            setImportCleanupAction(null)
         }
     }
 
     async function handleBulkImportCleanup(mode: ImportCleanupMode) {
+        setImportCleanupFeedback(createCleanupFeedback({
+            tone: 'info',
+            message: IMPORT_CLEANUP_PRECHECK_MESSAGE,
+            candidates: 0
+        }))
+
+        try {
+            assertAdminCleanupAllowed()
+        } catch (error: any) {
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'error',
+                message: error?.message || 'Mazání importů je povoleno jen adminovi.',
+                candidates: 0
+            }))
+            return
+        }
+
+        const allCandidates = importJobs.filter((job) => {
+            if (mode === 'test_unconfirmed') {
+                return job.status !== 'confirmed' || likelyTestImportJob(job)
+            }
+            return olderThanDays(job.receivedAt, IMPORT_CLEANUP_OLD_DAYS)
+        })
+
         const targets = getImportCleanupTargets(mode)
+        const skippedProtected = Math.max(0, allCandidates.length - targets.length)
+        console.log('[import-cleanup] action clicked', {
+            action: mode,
+            candidates: allCandidates.length,
+            targets: targets.length,
+            protectedCount: skippedProtected
+        })
         if (targets.length === 0) {
-            setImportCleanupResult(
-                mode === 'test_unconfirmed'
-                    ? 'Nenalezeny žádné testovací nebo nepotvrzené importy ke smazání.'
-                    : `Nenalezeny žádné importy starší než ${IMPORT_CLEANUP_OLD_DAYS} dní.`
-            )
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'info',
+                message: 'Nebyly nalezeny žádné importy ke smazání.',
+                candidates: allCandidates.length,
+                skippedProtected
+            }))
             return
         }
 
@@ -2285,61 +2391,115 @@ export default function App() {
         if (!confirmed) return
 
         setImportCleanupInProgress(true)
-        setImportCleanupResult(null)
+        setImportCleanupAction(mode)
+        setImportCleanupFeedback(null)
 
         try {
             const summary = await deleteImportJobsWithStorage(targets.map((job) => job.id))
-            const warnings: string[] = []
-            if (summary.storageWarnings.length > 0) {
-                warnings.push(`PDF warning: ${summary.storageWarnings.length}`)
-            }
-            if (summary.notFoundJobIds.length > 0) {
-                warnings.push(`nenalezeno: ${summary.notFoundJobIds.length}`)
-            }
-
-            const warningSuffix = warnings.length > 0 ? ` (${warnings.join(', ')})` : ''
-            setImportCleanupResult(`Smazáno importů: ${summary.deletedJobIds.length}${warningSuffix}`)
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: summary.storageWarnings.length > 0 || summary.notFoundJobIds.length > 0 ? 'warning' : 'success',
+                message: `Smazáno ${summary.deletedJobIds.length} importů.`,
+                candidates: allCandidates.length,
+                summary,
+                skippedProtected
+            }))
         } catch (error: any) {
-            setImportCleanupResult(error?.message || 'Hromadné mazání importů selhalo.')
+            console.warn('[import-cleanup] bulk failed', { mode, message: error?.message })
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'error',
+                message: error?.message || 'Hromadné mazání importů selhalo.',
+                candidates: allCandidates.length,
+                skippedProtected
+            }))
         } finally {
             setImportCleanupInProgress(false)
+            setImportCleanupAction(null)
         }
     }
 
     async function handleCleanupSupersededImports() {
+        setImportCleanupFeedback(createCleanupFeedback({
+            tone: 'info',
+            message: IMPORT_CLEANUP_PRECHECK_MESSAGE,
+            candidates: 0
+        }))
+
+        try {
+            assertAdminCleanupAllowed()
+        } catch (error: any) {
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'error',
+                message: error?.message || 'Mazání importů je povoleno jen adminovi.',
+                candidates: 0
+            }))
+            return
+        }
+
         const latestJobId = newestPrevioStateJob?.id
         const protectedRollbackJobId = latestRollbackCandidateJob?.id
-        const targets = supersededUnconfirmedPrevioJobs.filter((job) => {
+        const allCandidates = supersededUnconfirmedPrevioJobs
+        const targets = allCandidates.filter((job) => {
             if (job.id === latestJobId) return false
             if (job.id === protectedRollbackJobId) return false
             return true
         })
+        const skippedProtected = Math.max(0, allCandidates.length - targets.length)
+        console.log('[import-cleanup] action clicked', {
+            action: 'superseded',
+            candidates: allCandidates.length,
+            targets: targets.length,
+            protectedCount: skippedProtected,
+            newestProtected: Boolean(latestJobId),
+            rollbackProtected: Boolean(protectedRollbackJobId)
+        })
 
         if (targets.length === 0) {
-            setImportCleanupResult('Nenalezeny žádné nahrazené importy ke smazání.')
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'info',
+                message: 'Nebyly nalezeny žádné importy ke smazání.',
+                candidates: allCandidates.length,
+                skippedProtected
+            }))
             return
         }
 
-        const confirmed = window.confirm(`Opravdu smazat ${targets.length} nahrazených importů? Tato akce odstraní i uložená PDF.`)
+        const confirmed = window.confirm('Opravdu smazat nahrazené importy? Odstraní se i uložená PDF, pokud existují.')
         if (!confirmed) return
 
         setImportCleanupInProgress(true)
-        setImportCleanupResult(null)
+        setImportCleanupAction('superseded')
+        setImportCleanupFeedback(null)
 
         try {
             const summary = await deleteImportJobsWithStorage(targets.map((job) => job.id))
             if (summary.deletedJobIds.length === 0) {
-                setImportCleanupResult('Nenalezeny žádné nahrazené importy ke smazání.')
+                setImportCleanupFeedback(createCleanupFeedback({
+                    tone: 'info',
+                    message: 'Nebyly nalezeny žádné importy ke smazání.',
+                    candidates: allCandidates.length,
+                    summary,
+                    skippedProtected
+                }))
                 return
             }
-            const warningSuffix = summary.storageWarnings.length > 0
-                ? ` U ${summary.storageWarnings.length} PDF se nepodařilo potvrdit smazání.`
-                : ''
-            setImportCleanupResult(`Smazáno nahrazených importů: ${summary.deletedJobIds.length}.${warningSuffix}`)
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: summary.storageWarnings.length > 0 ? 'warning' : 'success',
+                message: `Smazáno ${summary.deletedJobIds.length} importů.`,
+                candidates: allCandidates.length,
+                summary,
+                skippedProtected
+            }))
         } catch (error: any) {
-            setImportCleanupResult(error?.message || 'Mazání nahrazených importů selhalo.')
+            console.warn('[import-cleanup] superseded failed', { message: error?.message })
+            setImportCleanupFeedback(createCleanupFeedback({
+                tone: 'error',
+                message: error?.message || 'Mazání nahrazených importů selhalo.',
+                candidates: allCandidates.length,
+                skippedProtected
+            }))
         } finally {
             setImportCleanupInProgress(false)
+            setImportCleanupAction(null)
         }
     }
 
@@ -3399,25 +3559,28 @@ export default function App() {
                                                     <div style={{ fontSize: 12, color: '#334155', fontWeight: 700 }}>Post-import cleanup</div>
                                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                         <button
+                                                            type="button"
                                                             className="btn danger"
-                                                            disabled={importCleanupInProgress || supersededUnconfirmedPrevioJobs.length === 0}
+                                                            disabled={importCleanupInProgress}
                                                             onClick={() => void handleCleanupSupersededImports()}
                                                         >
-                                                            {importCleanupInProgress ? 'Mažu importy...' : 'Smazat nahrazené importy'}
+                                                            {importCleanupAction === 'superseded' ? 'Mažu…' : 'Smazat nahrazené importy'}
                                                         </button>
                                                         <button
+                                                            type="button"
                                                             className="btn danger"
                                                             disabled={importCleanupInProgress}
                                                             onClick={() => void handleBulkImportCleanup('test_unconfirmed')}
                                                         >
-                                                            {importCleanupInProgress ? 'Mažu importy...' : 'Smazat testovací/nepotvrzené importy'}
+                                                            {importCleanupAction === 'test_unconfirmed' ? 'Mažu…' : 'Smazat testovací/nepotvrzené importy'}
                                                         </button>
                                                         <button
+                                                            type="button"
                                                             className="btn danger"
                                                             disabled={importCleanupInProgress}
                                                             onClick={() => void handleBulkImportCleanup('old')}
                                                         >
-                                                            {importCleanupInProgress ? 'Mažu importy...' : 'Archivovat/Smazat staré importy'}
+                                                            {importCleanupAction === 'old' ? 'Mažu…' : 'Archivovat/Smazat staré importy'}
                                                         </button>
                                                     </div>
                                                     <div className="room-meta" style={{ color: '#475569' }}>
@@ -3428,9 +3591,27 @@ export default function App() {
                                                             Nejnovější Stav import: {newestPrevioStateJob.fileName} • {new Date(newestPrevioStateJob.receivedAt).toLocaleString('cs-CZ')}
                                                         </div>
                                                     )}
-                                                    {importCleanupResult && (
-                                                        <div className="room-meta" style={{ color: importCleanupResult.includes('selhalo') ? '#b91c1c' : '#166534' }}>
-                                                            {importCleanupResult}
+                                                    {importCleanupFeedback && (
+                                                        <div
+                                                            className="room-meta"
+                                                            style={{
+                                                                color: importCleanupFeedback.tone === 'error'
+                                                                    ? '#b91c1c'
+                                                                    : importCleanupFeedback.tone === 'warning'
+                                                                        ? '#92400e'
+                                                                        : importCleanupFeedback.tone === 'info'
+                                                                            ? '#334155'
+                                                                            : '#166534'
+                                                            }}
+                                                        >
+                                                            {importCleanupFeedback.message}
+                                                            {' '}Kandidáti: {importCleanupFeedback.candidates} •
+                                                            {' '}Smazané joby: {importCleanupFeedback.deletedJobs} •
+                                                            {' '}Smazaná PDF: {importCleanupFeedback.deletedPdfs} •
+                                                            {' '}Přeskočeno (chráněné): {importCleanupFeedback.skippedProtected}
+                                                            {(importCleanupFeedback.storageWarnings > 0 || importCleanupFeedback.notFound > 0) && (
+                                                                <> • Warningy: {importCleanupFeedback.storageWarnings} • Nenalezeno: {importCleanupFeedback.notFound}</>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
