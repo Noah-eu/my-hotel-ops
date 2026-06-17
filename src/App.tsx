@@ -10,6 +10,7 @@ import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, mainten
 import {
     ImportJob,
     ImportJobBackupPayload,
+    ImportJobBackupSummary,
     ImportJobSafetySummary,
     RoomPlan,
     RoomPlanScheduleSnapshot,
@@ -26,6 +27,7 @@ import {
     signInWithEmailPassword,
     signOutFirebaseUser
 } from './lib/firebase'
+import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -142,6 +144,10 @@ type ImportCleanupMode = 'test_unconfirmed' | 'old'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CLEANUP_OLD_DAYS = 30
+
+if (import.meta.env.DEV) {
+    runRollbackBackupSanitizerSelfCheck()
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -601,24 +607,27 @@ const SCHEDULE_RESTORE_DEFAULTS: RoomPlanScheduleSnapshot = {
 function toScheduleSnapshot(room?: RoomPlan): RoomPlanScheduleSnapshot {
     if (!room) return { ...SCHEDULE_RESTORE_DEFAULTS }
 
-    return {
+    const snapshot: RoomPlanScheduleSnapshot = {
         situation: room.situation,
         departure: room.departure || null,
         arrival: room.arrival || null,
         nextArrivalPreview: room.nextArrivalPreview || null,
-        departureTime: room.departureTime,
-        arrivalTime: room.arrivalTime,
-        guestCount: room.guestCount,
-        box: room.box,
-        notes: room.notes,
-        occupiedConfirmed: room.occupiedConfirmed,
-        freeConfirmed: room.freeConfirmed,
-        stateSource: room.stateSource,
-        stateImportedAt: room.stateImportedAt,
-        planDateIso: room.planDateIso,
-        stayoverGuestName: room.stayoverGuestName,
-        stayoverUntil: room.stayoverUntil
+        occupiedConfirmed: Boolean(room.occupiedConfirmed),
+        freeConfirmed: Boolean(room.freeConfirmed)
     }
+
+    if (typeof room.departureTime === 'string') snapshot.departureTime = room.departureTime
+    if (typeof room.arrivalTime === 'string') snapshot.arrivalTime = room.arrivalTime
+    if (typeof room.guestCount === 'number') snapshot.guestCount = room.guestCount
+    if (typeof room.box === 'string') snapshot.box = room.box
+    if (Array.isArray(room.notes)) snapshot.notes = room.notes.filter((note) => typeof note === 'string')
+    if (room.stateSource) snapshot.stateSource = room.stateSource
+    if (typeof room.stateImportedAt === 'string') snapshot.stateImportedAt = room.stateImportedAt
+    if (typeof room.planDateIso === 'string') snapshot.planDateIso = room.planDateIso
+    if (typeof room.stayoverGuestName === 'string') snapshot.stayoverGuestName = room.stayoverGuestName
+    if (typeof room.stayoverUntil === 'string') snapshot.stayoverUntil = room.stayoverUntil
+
+    return snapshot
 }
 
 function applyScheduleSnapshot(room: RoomPlan, snapshot?: RoomPlanScheduleSnapshot): RoomPlan {
@@ -1235,29 +1244,30 @@ export default function App() {
             snapshotByDate[dateIso] = incomingRooms.map((incomingRoom) => {
                 const fallbackNumber = normalizeCatalogRoomNumber(incomingRoom.number)
                 const previousRoom = currentById.get(incomingRoom.id) || currentByNumber.get(fallbackNumber)
-                return {
-                    roomId: incomingRoom.id,
-                    roomNumber: fallbackNumber,
+                const snapshotEntry = {
+                    roomId: String(incomingRoom.id || roomIdForNumber(fallbackNumber)),
+                    roomNumber: String(fallbackNumber || incomingRoom.number || ''),
                     schedule: toScheduleSnapshot(previousRoom)
                 }
+                return sanitizeForFirestore(snapshotEntry)
             })
         })
 
         const affectedDates = Object.keys(snapshotByDate).sort()
         const affectedRoomCount = Object.values(snapshotByDate).reduce((sum, rows) => sum + rows.length, 0)
 
-        return {
+        return sanitizeForFirestore({
             jobId,
             createdAt: new Date().toISOString(),
             createdBy,
             affectedDates,
             affectedRoomCount,
             snapshotByDate
-        }
+        })
     }
 
     async function persistImportBackup(job: ImportJob, backupPayload: ImportJobBackupPayload, createdBy: string) {
-        const backupSummary = {
+        const backupSummary: ImportJobBackupSummary = {
             backupId: backupPayload.jobId,
             createdAt: backupPayload.createdAt,
             createdBy,
@@ -1265,30 +1275,45 @@ export default function App() {
             affectedRoomCount: backupPayload.affectedRoomCount
         }
 
-        setLatestStateImportBackup(backupPayload)
+        const sanitizedBackupPayload = sanitizeForFirestore(backupPayload)
+        const sanitizedBackupSummary = sanitizeForFirestore(backupSummary)
 
-        if (runtimeMode === 'online' && firestoreDb) {
-            await setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importBackups', backupPayload.jobId), backupPayload)
+        // Keep a sanitized copy in state so follow-up writes/rollback reads are safe.
+        setLatestStateImportBackup(sanitizedBackupPayload)
+
+        try {
+            if (runtimeMode === 'online' && firestoreDb) {
+                await setDoc(
+                    doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'importBackups', sanitizedBackupPayload.jobId),
+                    sanitizedBackupPayload
+                )
+                activeStore.updateImportJob(job.id, {
+                    backupSummary: sanitizedBackupSummary
+                })
+                setImportJobs((prev) => sortImportJobs(prev.map((item) => (
+                    item.id === job.id
+                        ? { ...item, backupSummary: sanitizedBackupSummary }
+                        : item
+                ))))
+                return
+            }
+
             activeStore.updateImportJob(job.id, {
-                backupSummary
+                backupSummary: sanitizedBackupSummary,
+                backupPayload: sanitizedBackupPayload
             })
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
                 item.id === job.id
-                    ? { ...item, backupSummary }
+                    ? { ...item, backupSummary: sanitizedBackupSummary, backupPayload: sanitizedBackupPayload }
                     : item
             ))))
-            return
+        } catch (error: any) {
+            const rawMessage = String(error?.message || '')
+            if (rawMessage.includes('Unsupported field value: undefined')) {
+                throw new Error('Nepodařilo se uložit rollback snapshot: data obsahovala neplatné hodnoty.')
+            }
+            throw new Error(`Nepodařilo se uložit rollback snapshot: ${error?.message || 'neznámá chyba'}`)
         }
-
-        activeStore.updateImportJob(job.id, {
-            backupSummary,
-            backupPayload
-        })
-        setImportJobs((prev) => sortImportJobs(prev.map((item) => (
-            item.id === job.id
-                ? { ...item, backupSummary, backupPayload }
-                : item
-        ))))
     }
 
     async function loadBackupPayloadForJob(job: ImportJob) {
@@ -1371,34 +1396,26 @@ export default function App() {
 
             const rollbackAt = new Date().toISOString()
             const rollbackBy = currentUser?.name || currentUser?.id || 'admin'
+            const rollbackSummary = sanitizeForFirestore({
+                ...(job.backupSummary || {
+                    backupId: job.id,
+                    createdAt: backupPayload.createdAt,
+                    createdBy: backupPayload.createdBy,
+                    affectedDates: backupPayload.affectedDates,
+                    affectedRoomCount: backupPayload.affectedRoomCount
+                }),
+                rolledBackAt: rollbackAt,
+                rolledBackBy: rollbackBy
+            })
+
             activeStore.updateImportJob(job.id, {
-                backupSummary: {
-                    ...(job.backupSummary || {
-                        backupId: job.id,
-                        createdAt: backupPayload.createdAt,
-                        createdBy: backupPayload.createdBy,
-                        affectedDates: backupPayload.affectedDates,
-                        affectedRoomCount: backupPayload.affectedRoomCount
-                    }),
-                    rolledBackAt: rollbackAt,
-                    rolledBackBy: rollbackBy
-                }
+                backupSummary: rollbackSummary
             })
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
                 item.id === job.id
                     ? {
                         ...item,
-                        backupSummary: {
-                            ...(item.backupSummary || {
-                                backupId: item.id,
-                                createdAt: backupPayload.createdAt,
-                                createdBy: backupPayload.createdBy,
-                                affectedDates: backupPayload.affectedDates,
-                                affectedRoomCount: backupPayload.affectedRoomCount
-                            }),
-                            rolledBackAt: rollbackAt,
-                            rolledBackBy: rollbackBy
-                        }
+                        backupSummary: rollbackSummary
                     }
                     : item
             ))))
@@ -1955,13 +1972,19 @@ export default function App() {
     }
 
     function getImportCleanupTargets(mode: ImportCleanupMode) {
+        const protectedJobId = latestRollbackCandidateJob?.id
+
         if (mode === 'test_unconfirmed') {
-            return importJobs.filter((job) => job.status !== 'confirmed' || likelyTestImportJob(job))
+            return importJobs.filter((job) => {
+                if (job.id === protectedJobId) return false
+                return job.status !== 'confirmed' || likelyTestImportJob(job)
+            })
         }
 
         return importJobs.filter((job) => (
+            job.id !== protectedJobId
+            &&
             olderThanDays(job.receivedAt, IMPORT_CLEANUP_OLD_DAYS)
-            && job.id !== latestRollbackCandidateJob?.id
         ))
     }
 
