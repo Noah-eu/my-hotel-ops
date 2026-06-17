@@ -727,7 +727,6 @@ export default function App() {
     const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>(() => saved?.maintenanceItems ?? initialMaintenanceItems)
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
     const [staff, setStaff] = useState<StaffMember[]>(() => saved?.staff ?? users)
-    const [resetConfirm, setResetConfirm] = useState(false)
     const [roomCatalog, setRoomCatalog] = useState<RoomCatalogItem[]>(() => getDefaultRoomCatalog())
     const [importPdfStatus, setImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
     const [importPdfError, setImportPdfError] = useState<string | null>(null)
@@ -783,6 +782,7 @@ export default function App() {
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
     const isAdminUser = currentUser?.role === 'admin'
+    const enableDangerousReset = isAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
     const showInstallHint = isAdminUser && !isStandalone && !installHintDismissed
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
@@ -3043,7 +3043,15 @@ export default function App() {
         setUserId('david')
         setView('today')
         await activeStore.resetDemoState(defaultState)
-        setResetConfirm(false)
+    }
+
+    async function handleDangerousReset() {
+        const message = runtimeMode === 'online'
+            ? 'Opravdu resetovat online data? Tato akce může změnit data ve Firebase.'
+            : 'Opravdu resetovat demo data?'
+        const confirmed = window.confirm(message)
+        if (!confirmed) return
+        await resetDemoData()
     }
 
     function dismissInstallHint() {
@@ -3082,6 +3090,14 @@ export default function App() {
                                 <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
                                 <div><strong>Last error code:</strong> {diagnostics.lastErrorCode || '—'}</div>
                                 <div><strong>Last error message:</strong> {diagnostics.lastErrorMessage || '—'}</div>
+                                {enableDangerousReset && (
+                                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
+                                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Nebezpečné akce</div>
+                                        <button className="btn danger" style={{ width: '100%' }} onClick={() => void handleDangerousReset()}>
+                                            {runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -3211,19 +3227,6 @@ export default function App() {
                             <div className="install-hint" style={{ marginTop: 8 }}>
                                 <span>Pro rychlejší spuštění přidejte aplikaci na plochu.</span>
                                 <button className="install-hint-dismiss" onClick={dismissInstallHint} aria-label="Skrýt nápovědu instalace">Skrýt</button>
-                            </div>
-                        )}
-
-                        {(currentUser?.id === 'david' || currentUser?.role === 'admin') && (
-                            <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                                {!resetConfirm ? (
-                                    <button className="btn danger" onClick={() => setResetConfirm(true)}>{runtimeMode === 'online' ? 'Reset online dat' : 'Reset demo dat'}</button>
-                                ) : (
-                                    <>
-                                        <button className="btn danger" onClick={() => resetDemoData()}>Opravdu resetovat?</button>
-                                        <button className="btn" onClick={() => setResetConfirm(false)}>Zrušit</button>
-                                    </>
-                                )}
                             </div>
                         )}
 
