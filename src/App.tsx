@@ -3,6 +3,7 @@ import type { User } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore'
 import { RoleSwitch } from './components/RoleSwitch'
 import DashboardToday from './pages/DashboardToday'
+import RoomSheetView from './pages/RoomSheetView'
 import AdminDashboard from './pages/AdminDashboard'
 import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
@@ -715,7 +716,7 @@ export default function App() {
 
     const [userId, setUserId] = useState<string>(saved?.userId ?? 'david')
     const [tab, setTab] = useState<'Dnes' | 'Zitra' | 'Pozitri'>(saved?.tab ?? 'Dnes')
-    const [view, setView] = useState<'today' | 'admin' | 'maintenance' | 'supplies'>(saved?.view ?? 'today')
+    const [view, setView] = useState<'today' | 'sheet' | 'admin' | 'maintenance' | 'supplies'>(saved?.view ?? 'today')
     const [roomsByDay, setRoomsByDay] = useState(() => saved?.roomsByDay ?? roomPlansByDay)
     const [tasks, setTasks] = useState<Task[]>(() => saved?.tasks ?? [])
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
@@ -762,6 +763,13 @@ export default function App() {
         () => roomCatalog.filter((room) => room.active).sort((a, b) => a.sortOrder - b.sortOrder),
         [roomCatalog]
     )
+
+    const activeSheetRoomNumbers = useMemo(() => (
+        activeRooms
+            .map((room) => normalizeCatalogRoomNumber(room.roomNumber))
+            .filter((roomNumber, index, all) => Boolean(roomNumber) && all.indexOf(roomNumber) === index)
+            .sort((a, b) => Number(a) - Number(b))
+    ), [activeRooms])
 
     const currentUser = runtimeMode === 'online'
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
@@ -3153,6 +3161,7 @@ export default function App() {
 
                         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                             <button className={`btn ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Dnes</button>
+                            <button className={`btn ${view === 'sheet' ? 'active' : ''}`} onClick={() => setView('sheet')}>Plachta</button>
                             {isAdminUser && (
                                 <button className={`btn ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
                             )}
@@ -3192,6 +3201,14 @@ export default function App() {
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
                                     readOnly={isExtraImportedDay}
+                                />
+                            )}
+                            {view === 'sheet' && (
+                                <RoomSheetView
+                                    roomsByDay={roomsByDay}
+                                    importedTabDates={importedTabDates}
+                                    importedRoomsByDate={importedRoomsByDate}
+                                    activeRoomNumbers={activeSheetRoomNumbers}
                                 />
                             )}
                             {view === 'admin' && isAdminUser && (

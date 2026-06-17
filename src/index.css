@@ -347,6 +347,145 @@ body {
     padding: 8px 6px;
 }
 
+.sheet-note {
+    margin-bottom: 8px;
+}
+
+.sheet-wrap {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 8px;
+}
+
+.sheet-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+}
+
+.sheet-table {
+    border-collapse: separate;
+    border-spacing: 6px;
+    width: max-content;
+    min-width: 100%;
+}
+
+.sheet-head-room,
+.sheet-room-cell {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+}
+
+.sheet-head-room {
+    min-width: 70px;
+    background: #e2e8f0;
+    color: #0f172a;
+    border-radius: 10px;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.sheet-head-date {
+    min-width: 154px;
+    background: #f1f5f9;
+    color: #334155;
+    border-radius: 10px;
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.sheet-head-date-main {
+    font-size: 12px;
+    font-weight: 800;
+    color: #0f172a;
+    text-transform: capitalize;
+}
+
+.sheet-head-date-tag {
+    margin-top: 3px;
+    font-size: 11px;
+    color: #475569;
+}
+
+.sheet-room-cell {
+    background: #ffffff;
+    border: 1px solid #dbe7f3;
+    border-radius: 10px;
+    padding: 10px;
+    text-align: left;
+    vertical-align: middle;
+    font-size: 14px;
+    font-weight: 800;
+    color: #0f172a;
+}
+
+.sheet-cell {
+    min-width: 154px;
+    border-radius: 10px;
+    border: 1px solid #dbe7f3;
+    padding: 10px;
+    vertical-align: top;
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+.sheet-cell-main {
+    font-size: 12px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.25;
+}
+
+.sheet-cell-detail {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #475569;
+    line-height: 1.3;
+}
+
+.sheet-cell-turnover {
+    border-color: #f8bccb;
+    background: linear-gradient(180deg, #fff4f7 0%, #ffe9ef 100%);
+}
+
+.sheet-cell-departure {
+    border-color: #f8d2a5;
+    background: linear-gradient(180deg, #fff9f2 0%, #fff2df 100%);
+}
+
+.sheet-cell-arrival {
+    border-color: #bde8ce;
+    background: linear-gradient(180deg, #f4fff8 0%, #e2f7ea 100%);
+}
+
+.sheet-cell-occupied {
+    border-color: #cfd6ff;
+    background: linear-gradient(180deg, #f5f7ff 0%, #e8edff 100%);
+}
+
+.sheet-cell-free {
+    border-color: #d2e5d7;
+    background: linear-gradient(180deg, #f8fff9 0%, #eaf6ee 100%);
+}
+
+.sheet-cell-unknown {
+    border-color: #e2e8f0;
+    background: linear-gradient(180deg, #fbfdff 0%, #f8fafc 100%);
+}
+
+.sheet-cell-unknown .sheet-cell-main {
+    color: #94a3b8;
+}
+
+.sheet-cell-stayover-cont {
+    box-shadow: inset 0 3px 0 rgba(99, 102, 241, 0.28);
+}
+
 .daily-row-wrap {
     /* each room is a contained block with a clear status outline */
     --status-color: transparent;
