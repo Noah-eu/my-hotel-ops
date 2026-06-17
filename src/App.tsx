@@ -119,6 +119,7 @@ type MaintenanceAttentionTarget = {
     roomNumber?: string
     createdAt: string
     sortGroup: number
+    priority: 'normal' | 'urgent'
 }
 
 type MaintenanceFocusRequest = {
@@ -877,10 +878,18 @@ export default function App() {
     const [maintenanceFocusRequest, setMaintenanceFocusRequest] = useState<MaintenanceFocusRequest | null>(null)
     const [maintenanceLastFocusedTargetId, setMaintenanceLastFocusedTargetId] = useState<string | null>(null)
     const [maintenanceNavMessage, setMaintenanceNavMessage] = useState<string | null>(null)
+    const [soundEnabled, setSoundEnabled] = useState(() => {
+        if (typeof window === 'undefined') return false
+        return window.localStorage.getItem('chill_ops_alert_sound_enabled') === '1'
+    })
+    const [soundHintMessage, setSoundHintMessage] = useState<string | null>(null)
     const lateTaskFocusRequestCounterRef = useRef(0)
     const lateTaskNavMessageTimeoutRef = useRef<number | null>(null)
     const maintenanceFocusRequestCounterRef = useRef(0)
     const maintenanceNavMessageTimeoutRef = useRef<number | null>(null)
+    const audioContextRef = useRef<AudioContext | null>(null)
+    const seenAlertSoundKeysRef = useRef<Set<string>>(new Set())
+    const alertSoundBaselineReadyRef = useRef(false)
     const [installHintDismissed, setInstallHintDismissed] = useState(() => {
         if (typeof window === 'undefined') return false
         return window.localStorage.getItem('chill_ops_install_hint_dismissed') === '1'
@@ -904,6 +913,9 @@ export default function App() {
     const currentUser = runtimeMode === 'online'
         ? (staff.find((u) => u.id === userId) || onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
+    const currentRole = (currentUser?.role || 'cleaner') as UserRole
+    const isAvailabilityOff = currentUser?.availability === 'dnes_nepracuji'
+    const urgentOnlyAvailability = currentUser?.availability === 'jen_urgentni'
     const isAdminUser = currentUser?.role === 'admin'
     const enableDangerousReset = isAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
     const showInstallHint = isAdminUser && !isStandalone && !installHintDismissed
@@ -1059,8 +1071,8 @@ export default function App() {
     }, [currentImportJobs, pendingImportJobs])
 
     const visibleTodayTasks = useMemo(
-        () => tasks.filter((task) => canViewTask((currentUser?.role || 'cleaner') as UserRole, task)),
-        [tasks, currentUser?.role]
+        () => tasks.filter((task) => canViewTask(currentRole, task)),
+        [tasks, currentRole]
     )
 
     const maintenanceTasks = useMemo(
@@ -1116,7 +1128,8 @@ export default function App() {
                 kind: 'task',
                 roomNumber: task.roomNumber,
                 createdAt: task.createdAt || '',
-                sortGroup: 1
+                sortGroup: 1,
+                priority: task.priority || 'normal'
             }))
     ), [maintenanceTasks])
 
@@ -1128,7 +1141,8 @@ export default function App() {
                 kind: 'item',
                 roomNumber: item.roomNumber,
                 createdAt: item.createdAt || '',
-                sortGroup: 0
+                sortGroup: 0,
+                priority: item.priority || 'normal'
             }))
     ), [maintenanceItems])
 
@@ -1157,6 +1171,30 @@ export default function App() {
 
     const unacknowledgedMaintenanceCount = orderedMaintenanceAttentionTargets.length
 
+    const relevantSoundAlerts = useMemo(() => {
+        const alerts: Array<{ key: string; priority: 'normal' | 'urgent' }> = []
+
+        if (currentRole === 'admin' || currentRole === 'lead' || currentRole === 'cleaner') {
+            unacknowledgedLateTodayTasks.forEach((task) => {
+                alerts.push({
+                    key: `late:${task.id}`,
+                    priority: task.priority || 'normal'
+                })
+            })
+        }
+
+        if (currentRole === 'maintenance' || currentRole === 'admin') {
+            orderedMaintenanceAttentionTargets.forEach((target) => {
+                alerts.push({
+                    key: `maintenance:${target.kind}:${target.id}`,
+                    priority: target.priority || 'normal'
+                })
+            })
+        }
+
+        return alerts
+    }, [currentRole, unacknowledgedLateTodayTasks, orderedMaintenanceAttentionTargets])
+
     useEffect(() => {
         if (orderedLateRoomNumbers.length === 0) {
             setLateTaskLastFocusedRoomNumber(null)
@@ -1177,8 +1215,122 @@ export default function App() {
             if (maintenanceNavMessageTimeoutRef.current) {
                 window.clearTimeout(maintenanceNavMessageTimeoutRef.current)
             }
+            if (audioContextRef.current) {
+                void audioContextRef.current.close()
+                audioContextRef.current = null
+            }
         }
     }, [])
+
+    async function getOrCreateAudioContext() {
+        if (typeof window === 'undefined') return null
+        const AudioCtor = window.AudioContext || (window as any).webkitAudioContext
+        if (!AudioCtor) return null
+        if (!audioContextRef.current) {
+            audioContextRef.current = new AudioCtor()
+        }
+        if (audioContextRef.current.state === 'suspended') {
+            await audioContextRef.current.resume()
+        }
+        return audioContextRef.current
+    }
+
+    async function unlockSoundByUserGesture() {
+        const ctx = await getOrCreateAudioContext()
+        if (!ctx) return false
+
+        const oscillator = ctx.createOscillator()
+        const gain = ctx.createGain()
+        oscillator.type = 'sine'
+        oscillator.frequency.value = 440
+        gain.gain.value = 0.0001
+        oscillator.connect(gain)
+        gain.connect(ctx.destination)
+        oscillator.start()
+        oscillator.stop(ctx.currentTime + 0.03)
+        return true
+    }
+
+    async function playInAppAlertSound() {
+        const ctx = await getOrCreateAudioContext()
+        if (!ctx) throw new Error('AudioContext not available')
+
+        const now = ctx.currentTime
+        const oscillator = ctx.createOscillator()
+        const gain = ctx.createGain()
+        oscillator.type = 'triangle'
+        oscillator.frequency.setValueAtTime(830, now)
+        oscillator.frequency.linearRampToValueAtTime(640, now + 0.16)
+
+        gain.gain.setValueAtTime(0.0001, now)
+        gain.gain.exponentialRampToValueAtTime(0.085, now + 0.018)
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18)
+
+        oscillator.connect(gain)
+        gain.connect(ctx.destination)
+        oscillator.start(now)
+        oscillator.stop(now + 0.2)
+    }
+
+    function handleToggleAlertSound() {
+        const nextEnabled = !soundEnabled
+        setSoundEnabled(nextEnabled)
+        if (typeof window !== 'undefined') {
+            window.localStorage.setItem('chill_ops_alert_sound_enabled', nextEnabled ? '1' : '0')
+        }
+
+        if (!nextEnabled) {
+            setSoundHintMessage(null)
+            return
+        }
+
+        seenAlertSoundKeysRef.current = new Set(relevantSoundAlerts.map((item) => item.key))
+        void unlockSoundByUserGesture()
+            .then((ok) => {
+                if (!ok) {
+                    setSoundHintMessage('Zvuk je potřeba povolit klepnutím v aplikaci.')
+                    return
+                }
+                setSoundHintMessage(null)
+            })
+            .catch(() => {
+                setSoundHintMessage('Zvuk je potřeba povolit klepnutím v aplikaci.')
+            })
+    }
+
+    useEffect(() => {
+        if (!soundEnabled) {
+            alertSoundBaselineReadyRef.current = false
+            return
+        }
+        if (alertSoundBaselineReadyRef.current) return
+
+        seenAlertSoundKeysRef.current = new Set(relevantSoundAlerts.map((item) => item.key))
+        alertSoundBaselineReadyRef.current = true
+    }, [soundEnabled, relevantSoundAlerts])
+
+    useEffect(() => {
+        if (!soundEnabled) return
+        if (!alertSoundBaselineReadyRef.current) return
+
+        const nextKeys = new Set(relevantSoundAlerts.map((item) => item.key))
+        const newAlerts = relevantSoundAlerts.filter((item) => !seenAlertSoundKeysRef.current.has(item.key))
+        seenAlertSoundKeysRef.current = nextKeys
+        if (newAlerts.length === 0) return
+
+        // TODO: Hook future push-notification delivery into this same alert sound trigger path.
+        if (isAvailabilityOff) return
+
+        const shouldPlay = urgentOnlyAvailability
+            ? newAlerts.some((item) => item.priority === 'urgent')
+            : true
+
+        if (!shouldPlay) return
+
+        void playInAppAlertSound().catch(() => {
+            setSoundHintMessage('Zvuk je potřeba povolit klepnutím v aplikaci.')
+        })
+    }, [soundEnabled, relevantSoundAlerts, isAvailabilityOff, urgentOnlyAvailability])
 
     const visibleSupplies = useMemo(() => {
         const role = (currentUser?.role || 'cleaner') as UserRole
@@ -3841,6 +3993,17 @@ export default function App() {
                             )}
                         </div>
                         <button className="btn" onClick={handleLogout} disabled={!authUser}>Odhlásit</button>
+                    </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <div style={{ fontSize: 12, color: '#475569', fontWeight: 700 }}>Zvuk upozornění</div>
+                    <button className={`btn ${soundEnabled ? 'active' : ''}`} style={{ minHeight: 32, padding: '6px 10px', fontSize: 12 }} onClick={handleToggleAlertSound}>
+                        {soundEnabled ? 'Zapnuto' : 'Vypnuto'}
+                    </button>
+                </div>
+                {soundHintMessage && (
+                    <div style={{ fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: '6px 8px' }}>
+                        {soundHintMessage}
                     </div>
                 )}
             </div>
