@@ -259,6 +259,50 @@ export default function RoomSheetView({
         return next
     }, [roomsByDate])
 
+    const spanOverlays = useMemo(() => {
+        const overlays: Record<string, Map<string, Partial<RoomPlan>>> = {}
+        const dates = dateColumns.map((c) => c.dateIso)
+
+        for (let rn = 0; rn < roomNumbers.length; rn++) {
+            const roomNumber = roomNumbers[rn]
+            const seq = dates.map((dateIso) => lookupByDate[dateIso]?.get(roomNumber) || null)
+
+            for (let i = 0; i < seq.length; i++) {
+                const current = seq[i]
+                if (!current) continue
+
+                const hasArrival = Boolean(current.arrivalTime || (current.arrival && current.arrival.time))
+                if (!hasArrival) continue
+
+                const startGuest = current.arrival?.guestLabel || current.arrivalGuestName || current.stayoverGuestName || ''
+
+                // find next date with a departure for this room
+                let end = i
+                for (let j = i + 1; j < seq.length; j++) {
+                    const next = seq[j]
+                    if (next && (next.departureTime || (next.departure && next.departure.time))) {
+                        end = j
+                        break
+                    }
+                }
+
+                // mark intermediate days as occupied (stayover)
+                for (let k = i + 1; k < end; k++) {
+                    const dateIso = dates[k]
+                    if (!overlays[dateIso]) overlays[dateIso] = new Map()
+                    overlays[dateIso].set(roomNumber, {
+                        occupiedConfirmed: true,
+                        stayoverGuestName: startGuest
+                    })
+                }
+
+                i = Math.max(i, end)
+            }
+        }
+
+        return overlays
+    }, [lookupByDate, dateColumns, roomNumbers])
+
     return (
         <div className="section">
             <h3>Plachta</h3>
@@ -287,8 +331,10 @@ export default function RoomSheetView({
                                     <tr key={`sheet-row-${roomNumber}`}>
                                         <th scope="row" className="sheet-room-cell">{roomNumber}</th>
                                         {dateColumns.map((column) => {
-                                            const room = lookupByDate[column.dateIso]?.get(roomNumber)
-                                            const cell = buildCellModel(room)
+                                            const baseRoom = lookupByDate[column.dateIso]?.get(roomNumber)
+                                            const overlay = spanOverlays[column.dateIso]?.get(roomNumber)
+                                            const effectiveRoom = overlay ? { ...(baseRoom || {}), ...overlay } as RoomPlan : baseRoom
+                                            const cell = buildCellModel(effectiveRoom)
                                             const keepStayoverColor = Boolean(
                                                 cell.state === 'occupied'
                                                 && previousState === 'occupied'
