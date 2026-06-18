@@ -13,8 +13,7 @@ const {
 } = require('../netlify/functions/lib/previo-state-preview.js')
 
 const root = process.cwd()
-const requiredFixtureRelativePath = 'private-sources/previo/stav-2026-06-18-1656.pdf'
-const requiredFixturePath = path.join(root, requiredFixtureRelativePath)
+const DEFAULT_REPO_FIXTURE = 'private-sources/previo/Stav-2026-06-18-0900.pdf'
 
 function normalizeRoomNumber(raw) {
     return String(raw || '').trim().replace(/^0+/, '').padStart(3, '0')
@@ -61,15 +60,31 @@ function notesToString(notes) {
 }
 
 async function requireStavFixture() {
-    try {
-        await fs.access(requiredFixturePath)
-        return requiredFixturePath
-    } catch {
-        throw new Error(
-            '[validate:previo-state] Missing required fixture ' +
-            `${requiredFixtureRelativePath}. Place the exact uploaded Stav PDF at this path and rerun validation.`
-        )
+    const cliArg = process.argv[2]
+    const envPath = process.env.PREVIO_STATE_FIXTURE
+
+    const candidates = []
+    if (cliArg) candidates.push(cliArg)
+    if (envPath) candidates.push(envPath)
+    candidates.push(DEFAULT_REPO_FIXTURE)
+
+    for (const rel of candidates) {
+        if (!rel) continue
+        const full = path.isAbsolute(rel) ? rel : path.join(root, rel)
+        try {
+            await fs.access(full)
+            return full
+        } catch {
+            // continue to next candidate
+        }
     }
+
+    console.error('[validate:previo-state] Missing required fixture PDF.')
+    console.error('Provide a local fixture via the PREVIO_STATE_FIXTURE env var or as first CLI argument.')
+    console.error('Examples:')
+    console.error('  PREVIO_STATE_FIXTURE=private-sources/previo/stav-2026-06-18-1656.pdf node scripts/validate-previo-state-parser.mjs')
+    console.error('  node scripts/validate-previo-state-parser.mjs private-sources/previo/stav-2026-06-18-1656.pdf')
+    process.exit(1)
 }
 
 function runChecks(parsed) {
