@@ -427,7 +427,17 @@ function extractSideNotes(sideText: string) {
 
 function extractSideTimeAndCount(sideText: string, side: 'departure' | 'arrival') {
     const entries = detectTimedEntries(sideText)
-    if (entries.length === 0) {
+    const times = detectTimes(sideText)
+    const standaloneCounts = extractStandaloneGuestCounts(sideText)
+
+    let combined = entries.slice()
+
+    // If no timed entries found but plain times exist, create lightweight entries
+    if (combined.length === 0 && times.length > 0) {
+        combined = times.map((t, idx) => ({ time: t, guestCount: undefined as number | undefined, index: idx }))
+    }
+
+    if (combined.length === 0) {
         return {
             time: undefined,
             guestCount: undefined,
@@ -435,16 +445,32 @@ function extractSideTimeAndCount(sideText: string, side: 'departure' | 'arrival'
         }
     }
 
-    const ordered = [...entries].sort((a, b) => {
+    const ordered = [...combined].sort((a, b) => {
         const minuteDiff = toMinutes(a.time) - toMinutes(b.time)
         if (minuteDiff !== 0) return minuteDiff
         return a.index - b.index
     })
 
     const selected = side === 'departure' ? ordered[0] : ordered[ordered.length - 1]
+
+    // If selected entry doesn't carry a guestCount, try to infer from standalone counts
+    let inferredCount = selected?.guestCount
+    if (typeof inferredCount === 'undefined' && standaloneCounts.length > 0) {
+        if (standaloneCounts.length === 1) {
+            inferredCount = standaloneCounts[0]
+        } else if (times.length === standaloneCounts.length) {
+            // Map counts by order of appearance to times
+            const selIdx = ordered.findIndex((e) => e.time === selected?.time && e.index === selected?.index)
+            inferredCount = standaloneCounts[selIdx] ?? standaloneCounts[0]
+        } else {
+            // Fallback to nearest: prefer first for departure, last for arrival
+            inferredCount = side === 'departure' ? standaloneCounts[0] : standaloneCounts[standaloneCounts.length - 1]
+        }
+    }
+
     return {
         time: selected?.time,
-        guestCount: selected?.guestCount,
+        guestCount: inferredCount,
         hadAmPm: /\b(?:AM|PM)\b/i.test(sideText)
     }
 }
@@ -584,9 +610,11 @@ function chooseGuestCounts(
 
 function extractStandaloneGuestCounts(blockText: string) {
     const source = stripAlfredWindowSegments(String(blockText || ''))
-    return [...source.matchAll(/\((\d{1,2})\)/g)]
-        .map((match) => Number(match[1]))
-        .filter((value) => Number.isFinite(value) && value >= 0)
+    const parenthesis = [...source.matchAll(/\((\d{1,2})\)/g)].map((m) => Number(m[1]))
+    const suffixCounts = [...source.matchAll(/\b(\d{1,2})\s*(?:p|os|host|pax)\b/gi)].map((m) => Number(m[1]))
+    const all = [...parenthesis, ...suffixCounts].filter((value) => Number.isFinite(value) && value >= 0)
+    // preserve order but remove duplicates
+    return Array.from(new Set(all))
 }
 
 function chooseStayoverGuestCount(roomNumber: string, ...texts: string[]) {
@@ -924,6 +952,27 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
                 }
 
+                // If arrival has a guest name but missing guest count, try to infer from nearby standalone counts in raw text
+                if (arrivalGuestName && typeof arrivalGuestCount !== 'number') {
+                    try {
+                        const raw = String(block.rawText || '')
+                        const re = /\((\d{1,2})\)|\b(\d{1,2})\s*(?:p|os|host|pax)\b/gi
+                        const matches = [...raw.matchAll(re)].map((m) => ({ index: typeof m.index === 'number' ? m.index : 0, value: Number(m[1] || m[2]) }))
+                        if (matches.length > 0) {
+                            const nameIdx = raw.toLowerCase().indexOf(arrivalGuestName.toLowerCase())
+                            let chosen = matches[0]
+                            if (nameIdx >= 0) {
+                                chosen = matches.reduce((acc, m) => (Math.abs((m.index || 0) - nameIdx) < Math.abs((acc.index || 0) - nameIdx) ? m : acc), matches[0])
+                            } else {
+                                chosen = matches[matches.length - 1]
+                            }
+                            if (typeof chosen.value === 'number' && Number.isFinite(chosen.value)) arrivalGuestCount = chosen.value
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+
                 rows.push({
                     dateIso: pageDateIso,
                     roomNumber: block.room,
@@ -1109,7 +1158,28 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
             }
 
-            rows.push({
+                // If arrival has a guest name but missing guest count, try to infer from nearby standalone counts in rawBlock
+                if (arrivalGuestName && typeof arrivalGuestCount !== 'number') {
+                    try {
+                        const raw = String(rawBlock || '')
+                        const re = /\((\d{1,2})\)|\b(\d{1,2})\s*(?:p|os|host|pax)\b/gi
+                        const matches = [...raw.matchAll(re)].map((m) => ({ index: typeof m.index === 'number' ? m.index : 0, value: Number(m[1] || m[2]) }))
+                        if (matches.length > 0) {
+                            const nameIdx = raw.toLowerCase().indexOf(arrivalGuestName.toLowerCase())
+                            let chosen = matches[0]
+                            if (nameIdx >= 0) {
+                                chosen = matches.reduce((acc, m) => (Math.abs((m.index || 0) - nameIdx) < Math.abs((acc.index || 0) - nameIdx) ? m : acc), matches[0])
+                            } else {
+                                chosen = matches[matches.length - 1]
+                            }
+                            if (typeof chosen.value === 'number' && Number.isFinite(chosen.value)) arrivalGuestCount = chosen.value
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+
+                rows.push({
                 dateIso: pageDateIso,
                 roomNumber: roomInfo.room,
                 departureTime,

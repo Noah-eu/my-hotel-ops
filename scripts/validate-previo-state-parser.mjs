@@ -13,7 +13,7 @@ const {
 } = require('../netlify/functions/lib/previo-state-preview.js')
 
 const root = process.cwd()
-const requiredFixtureRelativePath = 'private-sources/previo/Stav-2026-06-18-0900.pdf'
+const requiredFixtureRelativePath = 'private-sources/previo/stav-2026-06-18-1656.pdf'
 const requiredFixturePath = path.join(root, requiredFixtureRelativePath)
 
 function normalizeRoomNumber(raw) {
