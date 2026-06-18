@@ -2105,7 +2105,7 @@ export default function App() {
     function buildRoomsForStateDay(dateIso: string, dayPreview: PrevioStateImportPreview['days'][number], importedAt: string, importJobId?: string) {
         const existingTabs = ['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]
         const currentTabDate = existingTabs.find((day) => importedTabDates[day] === dateIso)
-        const sourceRooms = importedRoomsByDate[dateIso] || (currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes)
+        const sourceRooms = (currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes) || importedRoomsByDate[dateIso] || []
         const existingByRoom = new Map(
             sourceRooms.map((room) => [normalizeCatalogRoomNumber(room.number), room])
         )
