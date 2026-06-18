@@ -345,14 +345,18 @@ export default function DashboardToday({
 
     function submitTask(roomId: string) {
         if (readOnly) return
-        if (!taskTitle.trim()) {
+        const effectiveTaskTitle = (selectedQuickTask && selectedQuickTask !== 'Vlastní úkol')
+            ? selectedQuickTask.trim()
+            : taskTitle.trim()
+
+        if (!effectiveTaskTitle) {
             setTaskFormError('Napište, co je potřeba udělat.')
             return
         }
 
         try {
             onCreateTask(roomId, {
-                title: taskTitle.trim(),
+                title: effectiveTaskTitle,
                 category: taskCategory,
                 priority: taskPriority,
                 assignedToRole: taskAssignedRole,
@@ -618,7 +622,7 @@ export default function DashboardToday({
                                                     {departureDisplay.notes.map((n) => (
                                                         <div key={n} className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                             <span>{n}</span>
-                                                            <OriginBadge input={roomOrigin} />
+                                                            <OriginBadge input={roomOrigin} hidePrevio />
                                                         </div>
                                                     ))}
                                                 </div>
@@ -643,19 +647,19 @@ export default function DashboardToday({
                                                 {arrivalDisplay.box && (
                                                     <div className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                         <span>{arrivalDisplay.box}</span>
-                                                        <OriginBadge input={roomOrigin} />
+                                                        <OriginBadge input={roomOrigin} hidePrevio />
                                                     </div>
                                                 )}
                                                 {arrivalDisplay.notes.map(n => (
                                                     <div key={n} className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                         <span>{n}</span>
-                                                        <OriginBadge input={roomOrigin} />
+                                                        <OriginBadge input={roomOrigin} hidePrevio />
                                                     </div>
                                                 ))}
                                                 {arrivalPrepChipsDeduped.map((chip) => (
                                                     <div key={`prep-${room.id}-${chip}`} className="note-chip" style={{ border: '1px solid #bfdbfe', background: '#eff6ff', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                         <span>{chip}</span>
-                                                        <OriginBadge input={roomOrigin} />
+                                                        <OriginBadge input={roomOrigin} hidePrevio />
                                                     </div>
                                                 ))}
                                                 {arrivalPrepTasks.map((task) => (
@@ -836,15 +840,15 @@ export default function DashboardToday({
                                                 ))}
                                             </div>
 
-                                            {selectedQuickTask === 'Vlastní úkol' && (
-                                                <input
+                                            {(selectedQuickTask === 'Vlastní úkol' || !selectedQuickTask) && (
+                                                <textarea
                                                     value={taskTitle}
                                                     onChange={(e) => {
                                                         setTaskTitle(e.target.value)
                                                         if (taskFormError) setTaskFormError(null)
                                                     }}
-                                                    placeholder="Název úkolu"
-                                                    style={{ width: '100%', marginBottom: 8, minHeight: 38, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px' }}
+                                                    placeholder="Napište vlastní úkol"
+                                                    style={{ width: '100%', marginBottom: 8, minHeight: 72, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical', background: '#fff' }}
                                                 />
                                             )}
 

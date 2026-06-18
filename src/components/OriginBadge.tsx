@@ -118,7 +118,10 @@ export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
     }
 }
 
-export default function OriginBadge({ input }: { input: OriginInput }) {
+export default function OriginBadge({ input, hidePrevio = false }: { input: OriginInput; hidePrevio?: boolean }) {
+    const source = inferSource(input)
+    if (hidePrevio && source === 'previo') return null
+
     const info = resolveOriginBadge(input)
 
     return (
