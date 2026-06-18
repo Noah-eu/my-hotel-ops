@@ -11,6 +11,12 @@ export const MASTER_ROOM_NUMBERS = [
 ]
 
 const MASTER_ROOM_SET = new Set(MASTER_ROOM_NUMBERS)
+const ROOM_CAPACITY_BY_NUMBER: Record<string, number> = {
+    '102': 2,
+    '105': 2,
+    '205': 2,
+    '305': 2
+}
 
 export type PrevioStateParsedRow = {
     dateIso: string
@@ -22,6 +28,7 @@ export type PrevioStateParsedRow = {
     departureGuestName?: string
     arrivalGuestName?: string
     stayoverGuestName?: string
+    stayoverGuestCount?: number
     stayoverUntil?: string
     departureNotes: string[]
     arrivalNotes: string[]
@@ -575,6 +582,26 @@ function chooseGuestCounts(
     }
 }
 
+function extractStandaloneGuestCounts(blockText: string) {
+    const source = stripAlfredWindowSegments(String(blockText || ''))
+    return [...source.matchAll(/\((\d{1,2})\)/g)]
+        .map((match) => Number(match[1]))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+}
+
+function chooseStayoverGuestCount(roomNumber: string, ...texts: string[]) {
+    const allCounts = texts.flatMap((text) => extractStandaloneGuestCounts(text))
+    if (allCounts.length === 0) return undefined
+
+    const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(roomNumber)]
+    const filteredCounts = typeof roomCapacity === 'number'
+        ? allCounts.filter((count) => count <= roomCapacity)
+        : allCounts
+
+    if (filteredCounts.length === 0) return undefined
+    return filteredCounts.sort((a, b) => a - b)[0]
+}
+
 function assignNotesBySide(noteGroups: string[], departureTime?: string, arrivalTime?: string) {
     const departureNotes: string[] = []
     const arrivalNotes: string[] = []
@@ -613,6 +640,11 @@ function assignNotesBySide(noteGroups: string[], departureTime?: string, arrival
 
 function extractNameCandidates(blockLines: string[]) {
     const candidates: string[] = []
+    const singleTokenLines: string[] = []
+    const forbiddenTokens = new Set([
+        'odjezd', 'prijezd', 'datum', 'pokoj', 'poznamka',
+        'recepce', 'box', 'studio', 'alfred', 'chill', 'apartments'
+    ])
 
     function normalizeCandidateCase(value: string) {
         return value
@@ -626,6 +658,12 @@ function extractNameCandidates(blockLines: string[]) {
 
     function pushCandidate(value: string) {
         const formatted = normalizeCandidateCase(value)
+        const containsForbiddenToken = formatted
+            .split(' ')
+            .map((token) => normalizeForMatch(token))
+            .some((token) => forbiddenTokens.has(token))
+        if (containsForbiddenToken) return
+
         const normalized = normalizeForMatch(formatted)
         if (!normalized || candidates.some((item) => normalizeForMatch(item) === normalized)) return
         candidates.push(formatted)
@@ -645,7 +683,7 @@ function extractNameCandidates(blockLines: string[]) {
             .replace(/\b(?:AM|PM)\b/gi, ' ')
             .replace(/\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/g, ' ')
             .replace(/[()]/g, ' ')
-            .replace(/\b(?:recepce|box|alfred|studio)\b/gi, ' ')
+            .replace(/\b(?:odjezd|prijezd|datum|pokoj|poznamka|recepce|box|alfred|studio|chill|apartments)\b/gi, ' ')
             .replace(/\s+/g, ' ')
             .trim()
 
@@ -666,6 +704,10 @@ function extractNameCandidates(blockLines: string[]) {
         }
 
         const tokens = cleaned.split(' ').map((token) => token.trim()).filter(Boolean)
+        if (tokens.length === 1 && /^\p{L}[\p{L}'’-]*$/u.test(tokens[0])) {
+            singleTokenLines.push(tokens[0])
+        }
+
         for (let i = 0; i + 1 < tokens.length; i++) {
             const first = tokens[i]
             const second = tokens[i + 1]
@@ -677,6 +719,16 @@ function extractNameCandidates(blockLines: string[]) {
             }
         }
     })
+
+    for (let i = 0; i + 1 < singleTokenLines.length; i++) {
+        const first = singleTokenLines[i]
+        const second = singleTokenLines[i + 1]
+        const firstNameLike = /^\p{L}[\p{L}'’-]*$/u.test(first)
+        const secondNameLike = /^\p{L}[\p{L}'’-]*$/u.test(second)
+        if (firstNameLike && secondNameLike) {
+            pushCandidate(`${first} ${second}`)
+        }
+    }
 
     return candidates
 }
@@ -753,10 +805,13 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 const departureInfo = extractSideTimeAndCount(block.departureText, 'departure')
                 const arrivalInfo = extractSideTimeAndCount(block.arrivalText, 'arrival')
 
-                const departureTime = departureInfo.time
-                const arrivalTime = arrivalInfo.time
-                const departureGuestCount = departureInfo.guestCount
-                const arrivalGuestCount = arrivalInfo.guestCount
+                let departureTime = departureInfo.time
+                let arrivalTime = arrivalInfo.time
+                let departureGuestCount = departureInfo.guestCount
+                let arrivalGuestCount = arrivalInfo.guestCount
+                let stayoverGuestCount = !departureTime && !arrivalTime
+                    ? chooseStayoverGuestCount(block.room, block.departureText, block.arrivalText, block.rawText)
+                    : undefined
 
                 let departureNotes = extractSideNotes(block.departureText)
                 let arrivalNotes = extractSideNotes(block.arrivalText)
@@ -766,14 +821,34 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     arrivalNotes = [arrivalNotes[1], ...arrivalNotes.slice(2)]
                 }
 
-                const departureGuestName = extractNameCandidates(block.departureText.split(/\r?\n/))[0]
-                const arrivalGuestName = extractNameCandidates(block.arrivalText.split(/\r?\n/))[0]
-                const stayoverGuestName = !departureTime && !arrivalTime
+                let departureGuestName = extractNameCandidates(block.departureText.split(/\r?\n/))[0]
+                let arrivalGuestName = extractNameCandidates(block.arrivalText.split(/\r?\n/))[0]
+                let stayoverGuestName = !departureTime && !arrivalTime
                     ? (departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
                     : undefined
 
+                const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(block.room)]
+                const inferredStayoverCount = chooseStayoverGuestCount(block.room, block.departureText, block.arrivalText, block.rawText)
+                const hasGhostArrivalBleed = (
+                    !departureTime
+                    && Boolean(arrivalTime)
+                    && !arrivalGuestName
+                    && Boolean(departureGuestName)
+                    && typeof arrivalGuestCount === 'number'
+                    && typeof roomCapacity === 'number'
+                    && arrivalGuestCount > roomCapacity
+                    && typeof inferredStayoverCount === 'number'
+                )
+
+                if (hasGhostArrivalBleed) {
+                    arrivalTime = undefined
+                    arrivalGuestCount = undefined
+                    stayoverGuestName = departureGuestName
+                    stayoverGuestCount = inferredStayoverCount
+                }
+
                 const dateTokens = extractDateTokens(block.rawText)
-                const stayoverUntil = (() => {
+                const stayoverUntilRaw = (() => {
                     if (dateTokens.length === 0) return undefined
                     const parsed = dateTokens
                         .map((token) => parseDateToken(token, pageDate.getFullYear()))
@@ -783,6 +858,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     if (!last) return undefined
                     return formatLocalDate(last)
                 })()
+                const stayoverUntil = !departureTime && !arrivalTime ? stayoverUntilRaw : undefined
 
                 const blockWarnings: string[] = []
                 if (!departureTime && !arrivalTime) {
@@ -814,6 +890,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     departureGuestName,
                     arrivalGuestName,
                     stayoverGuestName,
+                    stayoverGuestCount,
                     stayoverUntil,
                     departureNotes,
                     arrivalNotes,
@@ -867,8 +944,11 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             const timeSource = blockLines.map((line) => stripAlfredWindowSegments(line)).filter(Boolean).join('\n')
             const timedEntries = detectTimedEntries(timeSource)
             const detectedTimes = detectTimes(timeSource)
-            const { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
-            const { departureGuestCount, arrivalGuestCount } = chooseGuestCounts(timedEntries, departureTime, arrivalTime, noteGroups.length)
+            let { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
+            let { departureGuestCount, arrivalGuestCount } = chooseGuestCounts(timedEntries, departureTime, arrivalTime, noteGroups.length)
+            let stayoverGuestCount = !departureTime && !arrivalTime
+                ? chooseStayoverGuestCount(roomInfo.room, rawBlock)
+                : undefined
 
             const { departureNotes, arrivalNotes, sideWarnings } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
             const guestCandidates = extractNameCandidates(blockLines)
@@ -888,8 +968,28 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 stayoverGuestName = guestCandidates[0]
             }
 
+            const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(roomInfo.room)]
+            const inferredStayoverCount = chooseStayoverGuestCount(roomInfo.room, rawBlock)
+            const hasGhostArrivalBleed = (
+                !departureTime
+                && Boolean(arrivalTime)
+                && !arrivalGuestName
+                && Boolean(departureGuestName)
+                && typeof arrivalGuestCount === 'number'
+                && typeof roomCapacity === 'number'
+                && arrivalGuestCount > roomCapacity
+                && typeof inferredStayoverCount === 'number'
+            )
+
+            if (hasGhostArrivalBleed) {
+                arrivalTime = undefined
+                arrivalGuestCount = undefined
+                stayoverGuestName = departureGuestName
+                stayoverGuestCount = inferredStayoverCount
+            }
+
             const dateTokens = extractDateTokens(afterMarker.join(' '))
-            const stayoverUntil = (() => {
+            const stayoverUntilRaw = (() => {
                 if (dateTokens.length === 0) return undefined
                 const parsed = dateTokens
                     .map((token) => parseDateToken(token, pageDate.getFullYear()))
@@ -899,6 +999,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 if (!last) return undefined
                 return formatLocalDate(last)
             })()
+            const stayoverUntil = !departureTime && !arrivalTime ? stayoverUntilRaw : undefined
 
             const blockWarnings: string[] = [...sideWarnings]
             if (!departureTime && !arrivalTime) {
@@ -930,6 +1031,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 departureGuestName,
                 arrivalGuestName,
                 stayoverGuestName,
+                stayoverGuestCount,
                 stayoverUntil,
                 departureNotes,
                 arrivalNotes,
@@ -1157,7 +1259,6 @@ export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyIn
     const arrivalsMissingIdentity = arrivals.filter((row) => (
         Boolean(row.arrivalTime)
         && !row.arrivalGuestName
-        && typeof row.arrivalGuestCount !== 'number'
     ))
     if (arrivalsMissingIdentity.length > 0) {
         blocks.push('Příjezd má čas, ale chybí jméno hosta.')
@@ -1166,10 +1267,54 @@ export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyIn
     const departuresMissingIdentity = departures.filter((row) => (
         Boolean(row.departureTime)
         && !row.departureGuestName
-        && typeof row.departureGuestCount !== 'number'
     ))
     if (departuresMissingIdentity.length > 0) {
         blocks.push('Odjezd má čas, ale chybí jméno hosta.')
+    }
+
+    const arrivalsCountWithoutName = rows.filter((row) => (
+        typeof row.arrivalGuestCount === 'number' && row.arrivalGuestCount > 0 && !row.arrivalGuestName
+    ))
+    if (arrivalsCountWithoutName.length > 0) {
+        blocks.push('Příjezd má počet hostů, ale chybí jméno hosta.')
+    }
+
+    const departuresCountWithoutName = rows.filter((row) => (
+        typeof row.departureGuestCount === 'number' && row.departureGuestCount > 0 && !row.departureGuestName
+    ))
+    if (departuresCountWithoutName.length > 0) {
+        blocks.push('Odjezd má počet hostů, ale chybí jméno hosta.')
+    }
+
+    const stayoversCountWithoutName = rows.filter((row) => (
+        row.isStayover
+        && typeof row.stayoverGuestCount === 'number'
+        && row.stayoverGuestCount > 0
+        && !row.stayoverGuestName
+    ))
+    if (stayoversCountWithoutName.length > 0) {
+        blocks.push('Probíhající pobyt má počet hostů, ale chybí jméno hosta.')
+    }
+
+    const capacityViolations = rows.flatMap((row) => {
+        const roomNumber = normalizeRoomKey(row.roomNumber)
+        const maxCapacity = ROOM_CAPACITY_BY_NUMBER[roomNumber]
+        if (typeof maxCapacity !== 'number') return []
+
+        const issues: string[] = []
+        if (typeof row.arrivalGuestCount === 'number' && row.arrivalGuestCount > maxCapacity) {
+            issues.push(`Automatické potvrzení blokováno: pokoj ${roomNumber} má ${row.arrivalGuestCount} osob, kapacita ${maxCapacity}.`)
+        }
+        if (typeof row.departureGuestCount === 'number' && row.departureGuestCount > maxCapacity) {
+            issues.push(`Automatické potvrzení blokováno: pokoj ${roomNumber} má ${row.departureGuestCount} osob, kapacita ${maxCapacity}.`)
+        }
+        if (typeof row.stayoverGuestCount === 'number' && row.stayoverGuestCount > maxCapacity) {
+            issues.push(`Automatické potvrzení blokováno: pokoj ${roomNumber} má ${row.stayoverGuestCount} osob, kapacita ${maxCapacity}.`)
+        }
+        return issues
+    })
+    if (capacityViolations.length > 0) {
+        blocks.push(...capacityViolations)
     }
 
     if (turnoverRows.length >= 6 && turnoverRowsMissingGuestName >= 4 && turnoverRowsMissingGuestName / turnoverRows.length >= 0.3) {

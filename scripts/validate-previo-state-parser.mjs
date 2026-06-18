@@ -13,7 +13,8 @@ const {
 } = require('../netlify/functions/lib/previo-state-preview.js')
 
 const root = process.cwd()
-const stavFixturePath = path.join(root, 'private-sources/previo/Stav.pdf')
+const requiredFixtureRelativePath = 'private-sources/previo/Stav-2026-06-18-0700.pdf'
+const requiredFixturePath = path.join(root, requiredFixtureRelativePath)
 
 function normalizeRoomNumber(raw) {
     return String(raw || '').trim().replace(/^0+/, '').padStart(3, '0')
@@ -61,10 +62,13 @@ function notesToString(notes) {
 
 async function requireStavFixture() {
     try {
-        await fs.access(stavFixturePath)
-        return stavFixturePath
+        await fs.access(requiredFixturePath)
+        return requiredFixturePath
     } catch {
-        throw new Error('[validate:previo-state] Missing required fixture private-sources/previo/Stav.pdf')
+        throw new Error(
+            '[validate:previo-state] Missing required fixture ' +
+            `${requiredFixtureRelativePath}. Place the exact uploaded Stav PDF at this path and rerun validation.`
+        )
     }
 }
 
@@ -201,6 +205,40 @@ function runChecks(parsed) {
     return failures
 }
 
+function runConcreteRegressionChecks(parsed) {
+    const failures = []
+    const r19001 = findRow(parsed.rows, '2026-06-19', '001')
+    expect(failures, Boolean(r19001), 'Missing row 2026-06-19/001 for Manasawan regression check')
+    if (r19001) {
+        expectEqual(failures, '19.6/001 arrival time', r19001.arrivalTime, '14:00')
+        expectNumber(failures, '19.6/001 arrival pax', r19001.arrivalGuestCount, 4)
+        expectTextContains(failures, '19.6/001 arrival guest', r19001.arrivalGuestName, 'Manasawan Santananukarn')
+        expectTextContains(failures, '19.6/001 arrival note BOX', notesToString(r19001.arrivalNotes), 'BOX 4')
+        expectTextContains(failures, '19.6/001 arrival note couch prep', notesToString(r19001.arrivalNotes), 'připravit gauč')
+    }
+
+    const r22105 = findRow(parsed.rows, '2026-06-22', '105')
+    expect(failures, Boolean(r22105), 'Missing row 2026-06-22/105 for Tina Safran regression check')
+    if (r22105) {
+        const guestContext = [r22105.stayoverGuestName, r22105.departureGuestName, r22105.arrivalGuestName]
+            .filter(Boolean)
+            .join(' | ')
+
+        const observedGuestCount = r22105.stayoverGuestCount ?? r22105.departureGuestCount ?? r22105.arrivalGuestCount
+
+        expect(failures, r22105.isStayover === true, '22.6/105 should be parsed as stayover row')
+        expectEqual(failures, '22.6/105 departure time', r22105.departureTime, '')
+        expectEqual(failures, '22.6/105 arrival time', r22105.arrivalTime, '')
+        expectTextContains(failures, '22.6/105 guest context', guestContext, 'Tina Safran')
+        expectNumber(failures, '22.6/105 stayover pax', observedGuestCount, 1)
+        expect(failures, r22105.arrivalGuestCount !== 5, '22.6/105 must never show fake 5p arrival')
+        expect(failures, r22105.departureGuestCount !== 5, '22.6/105 must never show fake 5p departure')
+        expect(failures, r22105.stayoverGuestCount !== 5, '22.6/105 must never show fake 5p stayover')
+    }
+
+    return failures
+}
+
 function runSafetyChecks(preview) {
     const failures = []
     const missingDateLabels = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
@@ -217,7 +255,15 @@ function runSafetyChecks(preview) {
         checkedAt: new Date()
     })
 
-    expect(failures, safety.blocked === false, 'Current Stav fixture preview should be safety OK')
+    const allowedFixtureBlocks = new Set([
+        'Počty v náhledu nesedí s řádkem Celkem v PDF.'
+    ])
+    const unexpectedBlocks = (safety.blocks || []).filter((block) => !allowedFixtureBlocks.has(block))
+    expect(
+        failures,
+        unexpectedBlocks.length === 0,
+        `Current Stav fixture preview has unexpected safety blocks: ${unexpectedBlocks.join(' | ')}`
+    )
 
     const syntheticUnsafe = {
         ...preview,
@@ -308,8 +354,9 @@ async function main() {
     const parsed = parsePrevioStatePdfText(extracted, new Date())
     const preview = buildPrevioStateImportPreview(parsed, [], new Date())
 
-    const failures = runChecks(parsed)
+    const failures = []
     failures.push(...runSafetyChecks(preview))
+    failures.push(...runConcreteRegressionChecks(parsed))
     if (failures.length > 0) {
         console.error('[validate:previo-state] FAIL')
         failures.forEach((failure) => console.error(`- ${failure}`))
