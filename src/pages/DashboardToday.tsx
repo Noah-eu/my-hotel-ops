@@ -197,6 +197,7 @@ export default function DashboardToday({
     onAction,
     onCreateTask,
     onUpdateTaskStatus,
+    onCancelTask,
     onAcknowledgeLateTasks,
     onReportProblem,
     role,
@@ -213,6 +214,7 @@ export default function DashboardToday({
     onAction: (id: string, action: string, payload?: RoomActionPayload) => void
     onCreateTask: (roomId: string, input: CreateTaskInput) => void
     onUpdateTaskStatus: (taskId: string, status: Task['status']) => void
+    onCancelTask: (taskId: string) => void
     onAcknowledgeLateTasks: (roomNumber: string) => void
     onReportProblem: (roomId: string, input: ReportRoomProblemInput) => void
     role: UserRole
@@ -959,9 +961,14 @@ export default function DashboardToday({
                                                             </div>
                                                             {canDelete && (
                                                                 <button
+                                                                    type="button"
                                                                     className="chip"
-                                                                    style={{ borderColor: '#fecaca', color: '#b91c1c', background: '#fff1f2' }}
-                                                                    onClick={() => !readOnly && onUpdateTaskStatus(task.id, 'cancelled')}
+                                                                    style={{ borderColor: '#fecaca', color: '#b91c1c', background: '#fff1f2', position: 'relative', zIndex: 1, pointerEvents: 'auto', flexShrink: 0 }}
+                                                                    onClick={(event) => {
+                                                                        event.preventDefault()
+                                                                        if (readOnly) return
+                                                                        onCancelTask(task.id)
+                                                                    }}
                                                                     title="Smazat úkol"
                                                                     disabled={readOnly}
                                                                 >

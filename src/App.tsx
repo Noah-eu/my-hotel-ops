@@ -3290,6 +3290,10 @@ export default function App() {
         }))
     }
 
+    function handleCancelTask(taskId: string) {
+        handleUpdateTaskStatus(taskId, 'cancelled')
+    }
+
     function handleAcknowledgeRoomLateTasks(roomNumber: string) {
         const now = new Date().toISOString()
         const actor = currentUser?.name || currentUser?.id || 'staff'
@@ -4502,6 +4506,7 @@ export default function App() {
                                     onAction={handleAction}
                                     onCreateTask={handleCreateTask}
                                     onUpdateTaskStatus={handleUpdateTaskStatus}
+                                    onCancelTask={handleCancelTask}
                                     onAcknowledgeLateTasks={handleAcknowledgeRoomLateTasks}
                                     onReportProblem={handleReportRoomProblem}
                                     role={(currentUser?.role || 'cleaner') as UserRole}
