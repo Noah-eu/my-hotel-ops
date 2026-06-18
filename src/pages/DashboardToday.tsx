@@ -191,6 +191,10 @@ function taskStatusLabel(status: Task['status']) {
     }
 }
 
+function getTaskDetailText(task: Task) {
+    return task.note?.trim() || ''
+}
+
 export default function DashboardToday({
     rooms,
     tasks,
@@ -538,7 +542,6 @@ export default function DashboardToday({
                     const roomTasks = tasks.filter((t) => t.roomNumber === room.number && canSeeTask(role, t))
                     const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
-                    const otherRoomTasks = activeRoomTasks.filter((t) => !arrivalPreparationTitles.has(t.title))
                     const lateAttentionTasks = activeRoomTasks.filter((task) => (
                         task.attentionRequired
                         && task.attentionReason === 'late_today_room_task'
@@ -709,41 +712,6 @@ export default function DashboardToday({
                                     )}
                                 </div>
                             </div>
-
-                            {otherRoomTasks.length > 0 && (
-                                <div style={{ padding: '8px 10px', borderTop: '1px solid rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                    {otherRoomTasks.map((task) => (
-                                        <div
-                                            key={task.id}
-                                            style={{
-                                                border: task.priority === 'urgent' ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(148,163,184,0.35)',
-                                                background: task.priority === 'urgent' ? 'rgba(254,242,242,0.8)' : 'rgba(248,250,252,0.85)',
-                                                borderRadius: 8,
-                                                padding: '6px 8px',
-                                                fontSize: 12
-                                            }}
-                                        >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                    {task.title || 'Bez názvu úkolu'}
-                                                    <OriginBadge
-                                                        input={{
-                                                            source: task.source,
-                                                            createdByUid: task.createdByUid,
-                                                            createdByName: task.createdByName,
-                                                            createdByRole: task.createdByRole,
-                                                            createdBy: task.createdBy
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div style={{ color: '#475569' }}>
-                                                {roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
 
                             {isExpanded && (
                                 <div className="expanded-actions">
@@ -950,18 +918,37 @@ export default function DashboardToday({
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                                 {activeRoomTasks.map((task) => {
                                                     const canDelete = canDeleteTask(role, currentUserId, currentUserName, task)
+                                                    const taskDetail = getTaskDetailText(task)
                                                     return (
                                                         <div key={`active-task-${room.id}-${task.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 8px' }}>
                                                             <div>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                                    <div style={{ fontWeight: 700 }}>{task.title || 'Bez názvu úkolu'}</div>
+                                                                    <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                                        {task.title || 'Bez názvu úkolu'}
+                                                                        <OriginBadge
+                                                                            input={{
+                                                                                source: task.source,
+                                                                                createdByUid: task.createdByUid,
+                                                                                createdByName: task.createdByName,
+                                                                                createdByRole: task.createdByRole,
+                                                                                createdBy: task.createdBy
+                                                                            }}
+                                                                        />
+                                                                    </div>
                                                                     {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
                                                                         <span style={{ fontSize: 10, fontWeight: 700, color: '#7c2d12', border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: 999, padding: '1px 6px' }}>
                                                                             Nové
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <div style={{ color: '#475569', fontSize: 12 }}>{roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'}</div>
+                                                                <div style={{ color: '#475569', fontSize: 12 }}>
+                                                                    {roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
+                                                                </div>
+                                                                {taskDetail && (
+                                                                    <div style={{ marginTop: 4, color: '#334155', fontSize: 13, lineHeight: 1.35 }}>
+                                                                        {taskDetail}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                             {canDelete && (
                                                                 <button
