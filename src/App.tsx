@@ -2138,12 +2138,23 @@ export default function App() {
             const hasDeparture = Boolean(parsed.departureTime)
             const hasArrival = Boolean(parsed.arrivalTime)
             if (!hasDeparture && !hasArrival) {
+                const stayoverNotes = parsed.arrivalNotes.length
+                    ? parsed.arrivalNotes
+                    : parsed.departureNotes.length
+                        ? parsed.departureNotes
+                        : undefined
+                const stayoverBox = extractArrivalBoxFromNotes(stayoverNotes)
+                const stayoverGuestCount = parsed.stayoverGuestCount ?? parsed.arrivalGuestCount ?? parsed.departureGuestCount
+
                 return {
                     ...row,
                     planDateIso: dateIso,
                     occupiedConfirmed: true,
                     stayoverGuestName: parsed.stayoverGuestName || parsed.departureGuestName || parsed.arrivalGuestName,
-                    stayoverUntil: parsed.stayoverUntil
+                    stayoverUntil: parsed.stayoverUntil,
+                    guestCount: stayoverGuestCount,
+                    box: stayoverBox,
+                    notes: stayoverNotes
                 }
             }
 

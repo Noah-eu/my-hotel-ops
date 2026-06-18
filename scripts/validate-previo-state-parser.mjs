@@ -8,6 +8,7 @@ const {
     extractStateTextFromPdfBuffer,
     parsePrevioStatePdfText,
     buildPrevioStateImportPreview,
+    buildByDateFromPreview,
     evaluatePrevioStateImportSafety,
     detectMissingDatesInRange
 } = require('../netlify/functions/lib/previo-state-preview.js')
@@ -29,6 +30,12 @@ function normalizeForMatch(value) {
 function findRow(rows, dateIso, roomNumber) {
     const room = normalizeRoomNumber(roomNumber)
     return rows.find((row) => row.dateIso === dateIso && normalizeRoomNumber(row.roomNumber) === room)
+}
+
+function findPlanRow(byDate, dateIso, roomNumber) {
+    const room = normalizeRoomNumber(roomNumber)
+    const rows = Array.isArray(byDate?.[dateIso]) ? byDate[dateIso] : []
+    return rows.find((row) => normalizeRoomNumber(row.number) === room)
 }
 
 function expect(failures, condition, message) {
@@ -260,6 +267,103 @@ function runConcreteRegressionChecks(parsed) {
     return failures
 }
 
+function runCriticalFixtureCellChecks(parsed, preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '18.06.2026 20:01')
+
+    const r19001 = findRow(parsed.rows, '2026-06-19', '001')
+    expect(failures, Boolean(r19001), 'Missing parser row 2026-06-19/001')
+    if (r19001) {
+        expectEqual(failures, '19.6/001 parser departure time', r19001.departureTime, '11:00')
+        expectEqual(failures, '19.6/001 parser arrival time', r19001.arrivalTime, '14:00')
+        expectTextContains(failures, '19.6/001 parser departure guest', r19001.departureGuestName, 'Estreicher')
+        expectTextContains(failures, '19.6/001 parser arrival guest', r19001.arrivalGuestName, 'Manasawan')
+        expectNumber(failures, '19.6/001 parser departure pax', r19001.departureGuestCount, 5)
+        expectNumber(failures, '19.6/001 parser arrival pax', r19001.arrivalGuestCount, 4)
+        expectTextContains(failures, '19.6/001 parser departure BOX', notesToString(r19001.departureNotes), 'BOX 2')
+        expectTextContains(failures, '19.6/001 parser arrival BOX', notesToString(r19001.arrivalNotes), 'BOX 4')
+        expectTextContains(failures, '19.6/001 parser arrival couch', notesToString(r19001.arrivalNotes), 'připravit gauč')
+    }
+
+    const r20001 = findRow(parsed.rows, '2026-06-20', '001')
+    expect(failures, Boolean(r20001), 'Missing parser row 2026-06-20/001')
+    if (r20001) {
+        expect(failures, r20001.isStayover === true, '20.6/001 parser should be stayover')
+        expectEqual(failures, '20.6/001 parser departure time', r20001.departureTime, '')
+        expectEqual(failures, '20.6/001 parser arrival time', r20001.arrivalTime, '')
+        expectTextContains(failures, '20.6/001 parser stayover guest', r20001.stayoverGuestName || r20001.departureGuestName, 'Manasawan')
+        expectTextContains(failures, '20.6/001 parser stayover BOX', notesToString(r20001.arrivalNotes), 'BOX 4')
+        expectTextContains(failures, '20.6/001 parser stayover couch', notesToString(r20001.arrivalNotes), 'připravit gauč')
+    }
+
+    const r21001 = findRow(parsed.rows, '2026-06-21', '001')
+    expect(failures, Boolean(r21001), 'Missing parser row 2026-06-21/001')
+    if (r21001) {
+        expectEqual(failures, '21.6/001 parser departure time', r21001.departureTime, '11:00')
+        expectEqual(failures, '21.6/001 parser arrival time', r21001.arrivalTime, '14:00')
+        expectTextContains(failures, '21.6/001 parser departure guest', r21001.departureGuestName, 'Manasawan')
+        expectTextContains(failures, '21.6/001 parser arrival guest', r21001.arrivalGuestName, 'Sogol')
+        expectTextContains(failures, '21.6/001 parser departure BOX', notesToString(r21001.departureNotes), 'BOX 4')
+        expectTextContains(failures, '21.6/001 parser arrival BOX', notesToString(r21001.arrivalNotes), 'BOX 6')
+    }
+
+    const r22201 = findRow(parsed.rows, '2026-06-22', '201')
+    expect(failures, Boolean(r22201), 'Missing parser row 2026-06-22/201')
+    if (r22201) {
+        expectEqual(failures, '22.6/201 parser departure time', r22201.departureTime, '11:00')
+        expectEqual(failures, '22.6/201 parser arrival time', r22201.arrivalTime, '11:00')
+        expectNumber(failures, '22.6/201 parser departure pax', r22201.departureGuestCount, 5)
+        expectNumber(failures, '22.6/201 parser arrival pax', r22201.arrivalGuestCount, 5)
+        expectTextContains(failures, '22.6/201 parser departure guest', r22201.departureGuestName, 'Michaela Císařová')
+        expectTextContains(failures, '22.6/201 parser arrival guest', r22201.arrivalGuestName, 'Rozewicz Wanda')
+        expectTextContains(failures, '22.6/201 parser departure BOX', notesToString(r22201.departureNotes), 'BOX 10')
+        expectTextContains(failures, '22.6/201 parser arrival BOX', notesToString(r22201.arrivalNotes), 'BOX 1')
+    }
+
+    const b19001 = findPlanRow(byDate, '2026-06-19', '001')
+    expect(failures, Boolean(b19001), 'Missing byDate row 2026-06-19/001')
+    if (b19001) {
+        expectEqual(failures, '19.6/001 byDate departure time', b19001.departureTime, '11:00')
+        expectEqual(failures, '19.6/001 byDate arrival time', b19001.arrivalTime, '14:00')
+        expectTextContains(failures, '19.6/001 byDate departure guest', b19001.departure?.guestLabel, 'Estreicher')
+        expectTextContains(failures, '19.6/001 byDate arrival guest', b19001.arrival?.guestLabel, 'Manasawan')
+        expectTextContains(failures, '19.6/001 byDate BOX', b19001.box, 'BOX 4')
+    }
+
+    const b20001 = findPlanRow(byDate, '2026-06-20', '001')
+    expect(failures, Boolean(b20001), 'Missing byDate row 2026-06-20/001')
+    if (b20001) {
+        expect(failures, b20001.occupiedConfirmed === true, '20.6/001 byDate should be occupiedConfirmed')
+        expect(failures, b20001.freeConfirmed !== true, '20.6/001 byDate must not be freeConfirmed')
+        expectTextContains(failures, '20.6/001 byDate stayover guest', b20001.stayoverGuestName, 'Manasawan')
+        expectTextContains(failures, '20.6/001 byDate stayover BOX', b20001.box, 'BOX 4')
+        expectTextContains(failures, '20.6/001 byDate stayover notes', notesToString(b20001.notes), 'připravit gauč')
+    }
+
+    const b21001 = findPlanRow(byDate, '2026-06-21', '001')
+    expect(failures, Boolean(b21001), 'Missing byDate row 2026-06-21/001')
+    if (b21001) {
+        expectEqual(failures, '21.6/001 byDate departure time', b21001.departureTime, '11:00')
+        expectEqual(failures, '21.6/001 byDate arrival time', b21001.arrivalTime, '14:00')
+        expectTextContains(failures, '21.6/001 byDate departure guest', b21001.departure?.guestLabel, 'Manasawan')
+        expectTextContains(failures, '21.6/001 byDate arrival guest', b21001.arrival?.guestLabel, 'Sogol')
+        expectTextContains(failures, '21.6/001 byDate BOX', b21001.box, 'BOX 6')
+    }
+
+    const b22201 = findPlanRow(byDate, '2026-06-22', '201')
+    expect(failures, Boolean(b22201), 'Missing byDate row 2026-06-22/201')
+    if (b22201) {
+        expectEqual(failures, '22.6/201 byDate departure time', b22201.departureTime, '11:00')
+        expectEqual(failures, '22.6/201 byDate arrival time', b22201.arrivalTime, '11:00')
+        expectTextContains(failures, '22.6/201 byDate departure guest', b22201.departure?.guestLabel, 'Michaela Císařová')
+        expectTextContains(failures, '22.6/201 byDate arrival guest', b22201.arrival?.guestLabel, 'Rozewicz Wanda')
+        expectTextContains(failures, '22.6/201 byDate departure BOX', notesToString(b22201.departure?.notes), 'BOX 10')
+        expectTextContains(failures, '22.6/201 byDate arrival BOX', b22201.box, 'BOX 1')
+    }
+
+    return failures
+}
+
 function runTotalsChecks(parsed) {
     const failures = []
     const totalsByDate = parsed.dayTotals || {}
@@ -414,6 +518,7 @@ async function main() {
     failures.push(...runTotalsChecks(parsed))
     failures.push(...runSafetyChecks(preview))
     failures.push(...runConcreteRegressionChecks(parsed))
+    failures.push(...runCriticalFixtureCellChecks(parsed, preview))
     if (failures.length > 0) {
         console.error('[validate:previo-state] FAIL')
         failures.forEach((failure) => console.error(`- ${failure}`))

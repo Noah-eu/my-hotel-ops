@@ -475,6 +475,74 @@ function extractSideTimeAndCount(sideText: string, side: 'departure' | 'arrival'
     }
 }
 
+function namesDiffer(left?: string, right?: string) {
+    if (!left || !right) return false
+    return normalizeForMatch(left) !== normalizeForMatch(right)
+}
+
+function extractRawNoteGroups(rawText: string) {
+    const noteSource = String(rawText || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => isNoteLine(line))
+        .join(' ')
+
+    return splitNoteGroups(noteSource)
+}
+
+function backfillAmbiguousTurnoverFromRawBlock(params: {
+    rawText: string
+    departureTime?: string
+    arrivalTime?: string
+    departureGuestName?: string
+    arrivalGuestName?: string
+    departureGuestCount?: number
+    arrivalGuestCount?: number
+    departureNotes: string[]
+    arrivalNotes: string[]
+}) {
+    let {
+        departureTime,
+        arrivalTime,
+        departureNotes,
+        arrivalNotes
+    } = params
+
+    const rawNoteGroups = extractRawNoteGroups(params.rawText)
+    const hasDistinctGuests = namesDiffer(params.departureGuestName, params.arrivalGuestName)
+    const hasMatchingCounts = typeof params.departureGuestCount === 'number'
+        && typeof params.arrivalGuestCount === 'number'
+        && params.departureGuestCount === params.arrivalGuestCount
+    const canAssumeSameTimeTurnover = hasDistinctGuests && (rawNoteGroups.length >= 2 || hasMatchingCounts)
+
+    if (departureTime && !arrivalTime && canAssumeSameTimeTurnover) {
+        arrivalTime = departureTime
+    }
+    if (arrivalTime && !departureTime && canAssumeSameTimeTurnover) {
+        departureTime = arrivalTime
+    }
+
+    if (rawNoteGroups.length > 0) {
+        if (departureTime && departureNotes.length === 0 && rawNoteGroups[0]) {
+            departureNotes = [rawNoteGroups[0]]
+        }
+        if (arrivalTime && arrivalNotes.length === 0) {
+            if (departureTime && rawNoteGroups[1]) {
+                arrivalNotes = [rawNoteGroups[1]]
+            } else if (!departureTime && rawNoteGroups[0]) {
+                arrivalNotes = [rawNoteGroups[0]]
+            }
+        }
+    }
+
+    return {
+        departureTime,
+        arrivalTime,
+        departureNotes,
+        arrivalNotes
+    }
+}
+
 function isSuspiciousNightTurnover(time?: string) {
     if (!time) return false
     const [hoursRaw] = time.split(':')
@@ -778,6 +846,47 @@ function parseTotalsLine(line: string) {
     }
 }
 
+function mergeMissingFieldsFromTextFallback(primaryRows: PrevioStateParsedRow[], fallbackRows: PrevioStateParsedRow[]) {
+    const fallbackByKey = new Map<string, PrevioStateParsedRow>()
+    fallbackRows.forEach((row) => {
+        const key = `${row.dateIso}__${normalizeRoomKey(row.roomNumber)}`
+        fallbackByKey.set(key, row)
+    })
+
+    primaryRows.forEach((row) => {
+        const key = `${row.dateIso}__${normalizeRoomKey(row.roomNumber)}`
+        const fallback = fallbackByKey.get(key)
+        if (!fallback) return
+
+        if (!row.departureTime && fallback.departureTime) row.departureTime = fallback.departureTime
+        if (!row.arrivalTime && fallback.arrivalTime) row.arrivalTime = fallback.arrivalTime
+
+        if (typeof row.departureGuestCount !== 'number' && typeof fallback.departureGuestCount === 'number') {
+            row.departureGuestCount = fallback.departureGuestCount
+        }
+        if (typeof row.arrivalGuestCount !== 'number' && typeof fallback.arrivalGuestCount === 'number') {
+            row.arrivalGuestCount = fallback.arrivalGuestCount
+        }
+        if (typeof row.stayoverGuestCount !== 'number' && typeof fallback.stayoverGuestCount === 'number') {
+            row.stayoverGuestCount = fallback.stayoverGuestCount
+        }
+
+        if (!row.departureGuestName && fallback.departureGuestName) row.departureGuestName = fallback.departureGuestName
+        if (!row.arrivalGuestName && fallback.arrivalGuestName) row.arrivalGuestName = fallback.arrivalGuestName
+        if (!row.stayoverGuestName && fallback.stayoverGuestName) row.stayoverGuestName = fallback.stayoverGuestName
+
+        if ((!row.departureNotes || row.departureNotes.length === 0) && fallback.departureNotes?.length) {
+            row.departureNotes = [...fallback.departureNotes]
+        }
+        if ((!row.arrivalNotes || row.arrivalNotes.length === 0) && fallback.arrivalNotes?.length) {
+            row.arrivalNotes = [...fallback.arrivalNotes]
+        }
+
+        if (!row.stayoverUntil && fallback.stayoverUntil) row.stayoverUntil = fallback.stayoverUntil
+        row.isStayover = !row.departureTime && !row.arrivalTime
+    })
+}
+
 export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceDate = new Date()): PrevioStateParseResult {
     const parsedSource = typeof source === 'string'
         ? { rawText: source, pages: [] as PrevioPdfExtract['pages'] }
@@ -918,6 +1027,23 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 } else {
                     pendingGhostArrivalTransfer = null
                 }
+
+                ;({
+                    departureTime,
+                    arrivalTime,
+                    departureNotes,
+                    arrivalNotes
+                } = backfillAmbiguousTurnoverFromRawBlock({
+                    rawText: block.rawText,
+                    departureTime,
+                    arrivalTime,
+                    departureGuestName,
+                    arrivalGuestName,
+                    departureGuestCount,
+                    arrivalGuestCount,
+                    departureNotes,
+                    arrivalNotes
+                }))
 
                 const dateTokens = extractDateTokens(block.rawText)
                 const stayoverUntilRaw = (() => {
@@ -1125,6 +1251,23 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 pendingGhostArrivalTransfer = null
             }
 
+            ;({
+                departureTime,
+                arrivalTime,
+                departureNotes,
+                arrivalNotes
+            } = backfillAmbiguousTurnoverFromRawBlock({
+                rawText: rawBlock,
+                departureTime,
+                arrivalTime,
+                departureGuestName,
+                arrivalGuestName,
+                departureGuestCount,
+                arrivalGuestCount,
+                departureNotes,
+                arrivalNotes
+            }))
+
             const dateTokens = extractDateTokens(afterMarker.join(' '))
             const stayoverUntilRaw = (() => {
                 if (dateTokens.length === 0) return undefined
@@ -1206,6 +1349,11 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             }
         })
     })
+
+    if (typeof source !== 'string' && parsedSource.pages?.length) {
+        const textFallback = parsePrevioStatePdfText(parsedSource.rawText, referenceDate)
+        mergeMissingFieldsFromTextFallback(rows, textFallback.rows)
+    }
 
     const sortedRows = [...rows].sort((a, b) => {
         if (a.dateIso !== b.dateIso) return a.dateIso.localeCompare(b.dateIso)
