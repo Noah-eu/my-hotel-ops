@@ -15,6 +15,8 @@ type OriginInput = {
     importedAt?: string
 }
 
+type OriginBadgeContext = 'default' | 'previo-note' | 'box-chip' | 'active-task'
+
 type OriginBadgeInfo = {
     code: string
     description: string
@@ -43,6 +45,11 @@ function inferCleanerCode(identity: string) {
     if (/\bu\s*2\b/.test(identity) || /\buklid\s*2\b/.test(identity)) return 'U2'
     if (/\bu\s*3\b/.test(identity) || /\buklid\s*3\b/.test(identity)) return 'U3'
     return null
+}
+
+export function shouldShowOriginBadge(_input: OriginInput, context: OriginBadgeContext = 'default') {
+    if (context === 'previo-note' || context === 'box-chip') return false
+    return true
 }
 
 export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
@@ -119,7 +126,9 @@ export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
     }
 }
 
-export default function OriginBadge({ input, hidePrevio = false }: { input: OriginInput; hidePrevio?: boolean }) {
+export default function OriginBadge({ input, hidePrevio = false, context = 'default' }: { input: OriginInput; hidePrevio?: boolean; context?: OriginBadgeContext }) {
+    if (!shouldShowOriginBadge(input, context)) return null
+
     const source = inferSource(input)
     if (hidePrevio && source === 'previo') return null
 

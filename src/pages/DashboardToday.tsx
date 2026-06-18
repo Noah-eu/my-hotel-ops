@@ -606,7 +606,7 @@ export default function DashboardToday({
                                                     {departureDisplay.notes.map((n) => (
                                                         <div key={n} className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                             <span>{n}</span>
-                                                            <OriginBadge input={roomOrigin} hidePrevio />
+                                                            <OriginBadge input={roomOrigin} context="previo-note" />
                                                         </div>
                                                     ))}
                                                 </div>
@@ -631,19 +631,19 @@ export default function DashboardToday({
                                                 {arrivalDisplay.box && (
                                                     <div className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                         <span>{arrivalDisplay.box}</span>
-                                                        <OriginBadge input={roomOrigin} hidePrevio />
+                                                        <OriginBadge input={roomOrigin} context="box-chip" />
                                                     </div>
                                                 )}
                                                 {arrivalDisplay.notes.map(n => (
                                                     <div key={n} className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                         <span>{n}</span>
-                                                        <OriginBadge input={roomOrigin} hidePrevio />
+                                                        <OriginBadge input={roomOrigin} context="previo-note" />
                                                     </div>
                                                 ))}
                                                 {arrivalPrepChipsDeduped.map((chip) => (
                                                     <div key={`prep-${room.id}-${chip}`} className="note-chip" style={{ border: '1px solid #bfdbfe', background: '#eff6ff', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                                         <span>{chip}</span>
-                                                        <OriginBadge input={roomOrigin} hidePrevio />
+                                                        <OriginBadge input={roomOrigin} context="previo-note" />
                                                     </div>
                                                 ))}
                                                 {arrivalPrepTasks.map((task) => (

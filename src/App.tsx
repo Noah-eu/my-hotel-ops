@@ -3580,6 +3580,74 @@ export default function App() {
         handleAction(roomId, 'problem', { problemText: description })
     }
 
+    function syncCancelledRoomProblemNote(item: MaintenanceItem) {
+        if (item.category !== 'room_issue') return
+
+        const normalizedRoomNumber = normalizeCatalogRoomNumber(item.roomNumber || '')
+        const normalizedCancelledTitle = normalizeIdentity(item.title)
+
+        if (!normalizedRoomNumber || !normalizedCancelledTitle) return
+
+        const replacementIssue = maintenanceItems.find((candidate) => (
+            candidate.id !== item.id
+            && candidate.category === 'room_issue'
+            && candidate.status !== 'done'
+            && candidate.status !== 'cancelled'
+            && normalizeCatalogRoomNumber(candidate.roomNumber || '') === normalizedRoomNumber
+        ))
+
+        const buildPatch = (room: RoomPlan): Partial<RoomPlan> | null => {
+            if (room.checkoutException) return null
+            if (normalizeCatalogRoomNumber(room.number) !== normalizedRoomNumber) return null
+            if (normalizeIdentity(room.statusNote) !== normalizedCancelledTitle) return null
+
+            if (replacementIssue) {
+                return {
+                    status: 'problem',
+                    statusNote: replacementIssue.title,
+                    source: replacementIssue.source,
+                    createdByUid: replacementIssue.createdByUid,
+                    createdByName: replacementIssue.createdByName,
+                    createdByRole: replacementIssue.createdByRole,
+                    importJobId: replacementIssue.importJobId,
+                    importedAt: replacementIssue.importedAt
+                }
+            }
+
+            return {
+                statusNote: undefined,
+                status: room.status === 'problem' ? 'ceka' : room.status
+            }
+        }
+
+        const days: OpsTab[] = ['Dnes', 'Zitra', 'Pozitri']
+
+        if (runtimeMode === 'online') {
+            days.forEach((day) => {
+                roomsByDay[day].forEach((room) => {
+                    const patch = buildPatch(room)
+                    if (patch) activeStore.updateRoomPlan(day, room.id, patch)
+                })
+            })
+        }
+
+        setRoomsByDay((prev) => {
+            let changed = false
+            const next = { ...prev }
+
+            days.forEach((day) => {
+                next[day] = prev[day].map((room) => {
+                    const patch = buildPatch(room)
+                    if (!patch) return room
+                    changed = true
+                    return { ...room, ...patch }
+                })
+            })
+
+            return changed ? next : prev
+        })
+    }
+
     function handleCleanupTestTasks() {
         const matchingIds = tasks
             .filter((task) => task.status !== 'cancelled' && shouldCleanupTestTask(task.title))
@@ -3763,9 +3831,16 @@ export default function App() {
     }
 
     function handleUpdateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>) {
+        const currentItem = maintenanceItems.find((it) => it.id === itemId)
+
         if (runtimeMode === 'online') {
             activeStore.updateMaintenanceItem(itemId, patch)
         }
+
+        if (patch.status === 'cancelled' && currentItem) {
+            syncCancelledRoomProblemNote(currentItem)
+        }
+
         setMaintenanceItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch, updatedAt: formatNowHHmm(new Date()) } : it)))
     }
 
