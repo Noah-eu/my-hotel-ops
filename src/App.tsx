@@ -293,6 +293,7 @@ function evaluateImportJobAutoConfirm(params: {
     } = params
 
     const dynamicBlockedReasons: string[] = []
+    const parsedButSuspicious = job.status === 'parsed' && Boolean(safety?.blocked)
 
     if (job.type !== 'previo-state-pdf') {
         dynamicBlockedReasons.push('Podporován je jen Stav PDF import.')
@@ -303,7 +304,9 @@ function evaluateImportJobAutoConfirm(params: {
     if (job.status === 'cancelled') {
         dynamicBlockedReasons.push('Import je zrušený.')
     }
-    if (job.status !== 'needs_review') {
+    if (parsedButSuspicious) {
+        dynamicBlockedReasons.push('Náhled vytvořen, ale import je podezřelý.')
+    } else if (job.status !== 'needs_review') {
         dynamicBlockedReasons.push('Import není ve stavu čeká na kontrolu.')
     }
     if (isSupersededPrevioStateJob || !isNewestPrevioStateJob) {
@@ -319,6 +322,9 @@ function evaluateImportJobAutoConfirm(params: {
         dynamicBlockedReasons.push('Chybí bezpečnostní kontrola importu.')
     } else if (safety.blocked) {
         dynamicBlockedReasons.push('Bezpečnostní kontrola import blokuje.')
+            ; (safety.blocks || []).slice(0, 3).forEach((reason) => {
+                if (!dynamicBlockedReasons.includes(reason)) dynamicBlockedReasons.push(reason)
+            })
     }
 
     const storedBlockedReasons = (job.automation?.autoConfirm?.blockedReasons || []).filter((reason) => !dynamicBlockedReasons.includes(reason))
@@ -4673,6 +4679,11 @@ export default function App() {
                                                                 {job.source === 'email' && !job.previewSummary?.byDate && (
                                                                     <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
                                                                         PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
+                                                                    </div>
+                                                                )}
+                                                                {job.source === 'email' && Boolean(job.previewSummary?.byDate) && Boolean(jobSafety?.blocked) && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, color: '#9a3412', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 8, padding: 6 }}>
+                                                                        Náhled vytvořen, ale import je podezřelý.
                                                                     </div>
                                                                 )}
                                                                 {job.warnings.length > 0 && (

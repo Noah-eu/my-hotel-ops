@@ -13,7 +13,7 @@ const {
 } = require('../netlify/functions/lib/previo-state-preview.js')
 
 const root = process.cwd()
-const requiredFixtureRelativePath = 'private-sources/previo/Stav-2026-06-18-0700.pdf'
+const requiredFixtureRelativePath = 'private-sources/previo/Stav-2026-06-18-0900.pdf'
 const requiredFixturePath = path.join(root, requiredFixtureRelativePath)
 
 function normalizeRoomNumber(raw) {
@@ -225,6 +225,7 @@ function runConcreteRegressionChecks(parsed) {
             .join(' | ')
 
         const observedGuestCount = r22105.stayoverGuestCount ?? r22105.departureGuestCount ?? r22105.arrivalGuestCount
+        const noteText = `${notesToString(r22105.departureNotes)} | ${notesToString(r22105.arrivalNotes)}`
 
         expect(failures, r22105.isStayover === true, '22.6/105 should be parsed as stayover row')
         expectEqual(failures, '22.6/105 departure time', r22105.departureTime, '')
@@ -234,7 +235,51 @@ function runConcreteRegressionChecks(parsed) {
         expect(failures, r22105.arrivalGuestCount !== 5, '22.6/105 must never show fake 5p arrival')
         expect(failures, r22105.departureGuestCount !== 5, '22.6/105 must never show fake 5p departure')
         expect(failures, r22105.stayoverGuestCount !== 5, '22.6/105 must never show fake 5p stayover')
+        expect(
+            failures,
+            !normalizeForMatch(noteText).includes(normalizeForMatch('BOX 1')),
+            '22.6/105 must not leak BOX 1 note from neighboring room'
+        )
     }
+
+    return failures
+}
+
+function runTotalsChecks(parsed) {
+    const failures = []
+    const totalsByDate = parsed.dayTotals || {}
+    const rows = Array.isArray(parsed.rows) ? parsed.rows : []
+
+    Object.entries(totalsByDate).forEach(([dateIso, totals]) => {
+        const dayRows = rows.filter((row) => row.dateIso === dateIso)
+        const arrivalsCount = dayRows.filter((row) => Boolean(row.arrivalTime)).length
+        const departuresCount = dayRows.filter((row) => Boolean(row.departureTime)).length
+        const stayoversCount = dayRows.filter((row) => !row.departureTime && !row.arrivalTime).length
+
+        const arrivalsGuests = dayRows.reduce((sum, row) => (
+            sum + (typeof row.arrivalGuestCount === 'number' ? row.arrivalGuestCount : 0)
+        ), 0)
+        const departuresGuests = dayRows.reduce((sum, row) => (
+            sum + (typeof row.departureGuestCount === 'number' ? row.departureGuestCount : 0)
+        ), 0)
+        const stayoversGuests = dayRows.reduce((sum, row) => (
+            sum + (typeof row.stayoverGuestCount === 'number' ? row.stayoverGuestCount : 0)
+        ), 0)
+
+        const effectiveArrivals = arrivalsGuests > 0 ? arrivalsGuests : arrivalsCount
+        const effectiveDepartures = departuresGuests > 0 ? departuresGuests : departuresCount
+        const effectiveStayovers = stayoversGuests > 0 ? stayoversGuests : stayoversCount
+
+        if (typeof totals.arrivals === 'number') {
+            expectNumber(failures, `${dateIso} totals arrivals`, effectiveArrivals, totals.arrivals)
+        }
+        if (typeof totals.departures === 'number') {
+            expectNumber(failures, `${dateIso} totals departures`, effectiveDepartures, totals.departures)
+        }
+        if (typeof totals.stayovers === 'number') {
+            expectNumber(failures, `${dateIso} totals stayovers`, effectiveStayovers, totals.stayovers)
+        }
+    })
 
     return failures
 }
@@ -255,14 +300,10 @@ function runSafetyChecks(preview) {
         checkedAt: new Date()
     })
 
-    const allowedFixtureBlocks = new Set([
-        'Počty v náhledu nesedí s řádkem Celkem v PDF.'
-    ])
-    const unexpectedBlocks = (safety.blocks || []).filter((block) => !allowedFixtureBlocks.has(block))
     expect(
         failures,
-        unexpectedBlocks.length === 0,
-        `Current Stav fixture preview has unexpected safety blocks: ${unexpectedBlocks.join(' | ')}`
+        safety.blocked === false,
+        `Current Stav fixture preview is safety-blocked: ${(safety.blocks || []).join(' | ')}`
     )
 
     const syntheticUnsafe = {
@@ -355,6 +396,7 @@ async function main() {
     const preview = buildPrevioStateImportPreview(parsed, [], new Date())
 
     const failures = []
+    failures.push(...runTotalsChecks(parsed))
     failures.push(...runSafetyChecks(preview))
     failures.push(...runConcreteRegressionChecks(parsed))
     if (failures.length > 0) {

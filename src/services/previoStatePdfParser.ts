@@ -801,6 +801,12 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
         const geometryPage = parsedSource.pages?.[pageIndex]
         const columnBlocks = geometryPage ? extractStateColumnBlocks(geometryPage) : []
         if (columnBlocks.length > 0) {
+            let pendingGhostArrivalTransfer: {
+                time?: string
+                guestCount?: number
+                note?: string
+            } | null = null
+
             columnBlocks.forEach((block) => {
                 const departureInfo = extractSideTimeAndCount(block.departureText, 'departure')
                 const arrivalInfo = extractSideTimeAndCount(block.arrivalText, 'arrival')
@@ -827,6 +833,28 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     ? (departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
                     : undefined
 
+                if (
+                    pendingGhostArrivalTransfer
+                    && !departureTime
+                    && !arrivalTime
+                    && (stayoverGuestName || departureGuestName || arrivalGuestName)
+                ) {
+                    arrivalTime = pendingGhostArrivalTransfer.time || '11:00'
+                    if (typeof pendingGhostArrivalTransfer.guestCount === 'number') {
+                        arrivalGuestCount = pendingGhostArrivalTransfer.guestCount
+                    }
+                    if (!arrivalGuestName) {
+                        arrivalGuestName = stayoverGuestName || departureGuestName || arrivalGuestName
+                    }
+                    if (pendingGhostArrivalTransfer.note) {
+                        arrivalNotes = [...arrivalNotes, pendingGhostArrivalTransfer.note]
+                            .filter((note, index, all) => all.indexOf(note) === index)
+                    }
+                    stayoverGuestName = undefined
+                    stayoverGuestCount = undefined
+                    pendingGhostArrivalTransfer = null
+                }
+
                 const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(block.room)]
                 const inferredStayoverCount = chooseStayoverGuestCount(block.room, block.departureText, block.arrivalText, block.rawText)
                 const hasGhostArrivalBleed = (
@@ -841,10 +869,26 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 )
 
                 if (hasGhostArrivalBleed) {
+                    const leakedArrivalTime = arrivalTime
+                    const leakedArrivalGuestCount = arrivalGuestCount
+                    const leakedArrivalNote = arrivalNotes.length > 1 ? arrivalNotes[arrivalNotes.length - 1] : undefined
+
                     arrivalTime = undefined
                     arrivalGuestCount = undefined
                     stayoverGuestName = departureGuestName
                     stayoverGuestCount = inferredStayoverCount
+
+                    const primaryStayoverNote = departureNotes[0] || arrivalNotes[0]
+                    departureNotes = primaryStayoverNote ? [primaryStayoverNote] : []
+                    arrivalNotes = []
+
+                    pendingGhostArrivalTransfer = {
+                        time: leakedArrivalTime,
+                        guestCount: leakedArrivalGuestCount,
+                        note: leakedArrivalNote
+                    }
+                } else {
+                    pendingGhostArrivalTransfer = null
                 }
 
                 const dateTokens = extractDateTokens(block.rawText)
@@ -925,6 +969,12 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             return null
         }
 
+        let pendingGhostArrivalTransfer: {
+            time?: string
+            guestCount?: number
+            note?: string
+        } | null = null
+
         blockStarts.forEach((startIndex, blockIndex) => {
             const endIndex = blockIndex + 1 < blockStarts.length ? blockStarts[blockIndex + 1] - 1 : contentLines.length - 1
             const blockLines = contentLines.slice(startIndex, endIndex + 1)
@@ -950,7 +1000,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 ? chooseStayoverGuestCount(roomInfo.room, rawBlock)
                 : undefined
 
-            const { departureNotes, arrivalNotes, sideWarnings } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
+            let { departureNotes, arrivalNotes, sideWarnings } = assignNotesBySide(noteGroups, departureTime, arrivalTime)
             const guestCandidates = extractNameCandidates(blockLines)
 
             let departureGuestName: string | undefined
@@ -968,6 +1018,28 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 stayoverGuestName = guestCandidates[0]
             }
 
+            if (
+                pendingGhostArrivalTransfer
+                && !departureTime
+                && !arrivalTime
+                && (stayoverGuestName || departureGuestName || arrivalGuestName)
+            ) {
+                arrivalTime = pendingGhostArrivalTransfer.time || '11:00'
+                if (typeof pendingGhostArrivalTransfer.guestCount === 'number') {
+                    arrivalGuestCount = pendingGhostArrivalTransfer.guestCount
+                }
+                if (!arrivalGuestName) {
+                    arrivalGuestName = stayoverGuestName || departureGuestName || arrivalGuestName
+                }
+                if (pendingGhostArrivalTransfer.note) {
+                    arrivalNotes = [...arrivalNotes, pendingGhostArrivalTransfer.note]
+                        .filter((note, index, all) => all.indexOf(note) === index)
+                }
+                stayoverGuestName = undefined
+                stayoverGuestCount = undefined
+                pendingGhostArrivalTransfer = null
+            }
+
             const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(roomInfo.room)]
             const inferredStayoverCount = chooseStayoverGuestCount(roomInfo.room, rawBlock)
             const hasGhostArrivalBleed = (
@@ -982,10 +1054,26 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             )
 
             if (hasGhostArrivalBleed) {
+                const leakedArrivalTime = arrivalTime
+                const leakedArrivalGuestCount = arrivalGuestCount
+                const leakedArrivalNote = arrivalNotes.length > 1 ? arrivalNotes[arrivalNotes.length - 1] : undefined
+
                 arrivalTime = undefined
                 arrivalGuestCount = undefined
                 stayoverGuestName = departureGuestName
                 stayoverGuestCount = inferredStayoverCount
+
+                const primaryStayoverNote = departureNotes[0] || arrivalNotes[0]
+                departureNotes = primaryStayoverNote ? [primaryStayoverNote] : []
+                arrivalNotes = []
+
+                pendingGhostArrivalTransfer = {
+                    time: leakedArrivalTime,
+                    guestCount: leakedArrivalGuestCount,
+                    note: leakedArrivalNote
+                }
+            } else {
+                pendingGhostArrivalTransfer = null
             }
 
             const dateTokens = extractDateTokens(afterMarker.join(' '))
@@ -1339,6 +1427,7 @@ export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyIn
     }
 
     let totalsMismatchDetected = false
+    const totalsMismatchDetails: string[] = []
     const dayByIso = new Map(preview.days.map((day) => [day.dateIso, day]))
     Object.entries(preview.dayTotals || {}).forEach(([dateIso, totals]) => {
         const day = dayByIso.get(dateIso)
@@ -1346,24 +1435,38 @@ export function evaluatePrevioStateImportSafety(input: PrevioStateImportSafetyIn
 
         const arrivalsCount = day.rows.filter((row) => Boolean(row.arrivalTime)).length
         const departuresCount = day.rows.filter((row) => Boolean(row.departureTime)).length
+        const stayoversCount = day.rows.filter((row) => !row.departureTime && !row.arrivalTime).length
         const arrivalGuests = day.rows.reduce((sum, row) => sum + (typeof row.arrivalGuestCount === 'number' ? row.arrivalGuestCount : 0), 0)
         const departureGuests = day.rows.reduce((sum, row) => sum + (typeof row.departureGuestCount === 'number' ? row.departureGuestCount : 0), 0)
+        const stayoverGuests = day.rows.reduce((sum, row) => sum + (typeof row.stayoverGuestCount === 'number' ? row.stayoverGuestCount : 0), 0)
 
         const effectiveArrivals = arrivalGuests > 0 ? arrivalGuests : arrivalsCount
         const effectiveDepartures = departureGuests > 0 ? departureGuests : departuresCount
+        const effectiveStayovers = stayoverGuests > 0 ? stayoverGuests : stayoversCount
 
         const mismatchArrivals = typeof totals.arrivals === 'number'
             && Math.abs(effectiveArrivals - totals.arrivals) > Math.max(2, Math.round(totals.arrivals * 0.2))
         const mismatchDepartures = typeof totals.departures === 'number'
             && Math.abs(effectiveDepartures - totals.departures) > Math.max(2, Math.round(totals.departures * 0.2))
+        const mismatchStayovers = typeof totals.stayovers === 'number'
+            && Math.abs(effectiveStayovers - totals.stayovers) > Math.max(2, Math.round(totals.stayovers * 0.2))
 
-        if (mismatchArrivals || mismatchDepartures) {
+        if (mismatchArrivals || mismatchDepartures || mismatchStayovers) {
             totalsMismatchDetected = true
+
+            const detailParts: string[] = []
+            if (mismatchArrivals) detailParts.push(`příjezdy ${effectiveArrivals}/${totals.arrivals}`)
+            if (mismatchDepartures) detailParts.push(`odjezdy ${effectiveDepartures}/${totals.departures}`)
+            if (mismatchStayovers) detailParts.push(`pobyty ${effectiveStayovers}/${totals.stayovers}`)
+            totalsMismatchDetails.push(`${dateIso}: ${detailParts.join(', ')}`)
         }
     })
 
     if (totalsMismatchDetected) {
         blocks.push('Počty v náhledu nesedí s řádkem Celkem v PDF.')
+        totalsMismatchDetails.slice(0, 3).forEach((detail) => {
+            blocks.push(`Celkem mismatch: ${detail}`)
+        })
     }
 
     if (parserVersionOutdated) {

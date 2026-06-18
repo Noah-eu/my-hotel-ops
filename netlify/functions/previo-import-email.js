@@ -163,8 +163,11 @@ function formatDateLabel(dateIso) {
 
 function buildAutoConfirmSummary({ mode, nextStatus, byDate, parsedTabDates, safety }) {
     const blockedReasons = []
+    const parsedButSuspicious = nextStatus === 'parsed' && Boolean(safety?.blocked)
 
-    if (nextStatus !== 'needs_review') {
+    if (parsedButSuspicious) {
+        blockedReasons.push('Náhled vytvořen, ale import je podezřelý.')
+    } else if (nextStatus !== 'needs_review') {
         blockedReasons.push('Import není ve stavu čeká na kontrolu.')
     }
     if (!byDate || Object.keys(byDate).length === 0) {
@@ -177,6 +180,9 @@ function buildAutoConfirmSummary({ mode, nextStatus, byDate, parsedTabDates, saf
         blockedReasons.push('Chybí safety summary importu.')
     } else if (safety.blocked) {
         blockedReasons.push('Safety kontrola import blokuje.')
+            ; (safety.blocks || []).slice(0, 3).forEach((reason) => {
+                if (!blockedReasons.includes(reason)) blockedReasons.push(reason)
+            })
     }
 
     const eligible = blockedReasons.length === 0
