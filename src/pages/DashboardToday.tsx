@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { RoomPlan, Task, UserRole } from '../types'
 import OriginBadge from '../components/OriginBadge'
+import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from '../lib/roles'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -125,10 +126,10 @@ function displayNotesWithoutDuplicateBox(box?: string, notes?: string[]) {
 }
 
 function canSeeTask(role: UserRole, task: Task) {
-    if (role === 'admin') return true
-    if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
-    if (role === 'cleaner') return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
-    if (role === 'maintenance') return task.assignedToRole === 'maintenance'
+    if (isAdminRole(role)) return true
+    if (isCleaningLeadRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'lead' || task.assignedToRole === 'cleaner'
+    if (isCleanerRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
+    if (isMaintenanceRole(role)) return task.assignedToRole === 'maintenance'
     return false
 }
 
@@ -143,9 +144,9 @@ function normalizeIdentity(value?: string) {
 }
 
 function canDeleteTask(role: UserRole, currentUserId: string, currentUserName: string | undefined, task: Task) {
-    if (role === 'admin') return true
-    if (role === 'lead') return task.category === 'cleaning'
-    if (role === 'cleaner') {
+    if (isAdminRole(role)) return true
+    if (isCleaningLeadRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'lead' || task.assignedToRole === 'cleaner'
+    if (isCleanerRole(role)) {
         if (!task.createdBy) return false
         const creator = normalizeIdentity(task.createdBy)
         const userId = normalizeIdentity(currentUserId)
@@ -153,21 +154,6 @@ function canDeleteTask(role: UserRole, currentUserId: string, currentUserName: s
         return creator === userId || (!!userName && creator === userName)
     }
     return false
-}
-
-function roleLabel(role: UserRole) {
-    switch (role) {
-        case 'admin':
-            return 'Admin'
-        case 'lead':
-            return 'Iryna'
-        case 'cleaner':
-            return 'Úklid'
-        case 'maintenance':
-            return 'Údržba'
-        default:
-            return role
-    }
 }
 
 function taskStatusLabel(status: Task['status']) {
@@ -244,8 +230,8 @@ export default function DashboardToday({
     const [problemPriority, setProblemPriority] = useState<Task['priority']>('normal')
     const [problemFormError, setProblemFormError] = useState<string | null>(null)
     const [highlightedRoomId, setHighlightedRoomId] = useState<string | null>(null)
-    const isCleaningRole = role === 'cleaner' || role === 'lead'
-    const canCreateTask = role === 'admin' || role === 'lead'
+    const isCleaningRole = isCleaningStaffRole(role)
+    const canCreateTask = isAdminRole(role) || isCleaningLeadRole(role)
     const fixedEstimateOptions = ['12:00', '12:15', '12:30', '12:45', '13:00']
     const relativeEstimateOptions = [30, 45, 60]
 

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 import { UserRole } from '../types'
+import { isAdminRole, isCleanerRole, isCleaningLeadRole, roleLabel } from '../lib/roles'
 
 type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'
 
@@ -27,13 +28,6 @@ function normalizeIdentity(value?: string) {
         .trim()
 }
 
-function roleLabel(role: UserRole) {
-    if (role === 'admin') return 'Admin'
-    if (role === 'lead') return 'Iryna'
-    if (role === 'cleaner') return 'Úklid'
-    return 'Údržba'
-}
-
 function availabilityLabel(availability?: Availability) {
     if (availability === 'dnes_pracuji') return 'Pracuje dnes'
     if (availability === 'jen_urgentni') return 'Jen urgentní'
@@ -47,8 +41,8 @@ function availabilityColor(availability?: Availability) {
 }
 
 function canEditAvailability(viewerRole: UserRole, viewerId: string, staffMember: TeamMember) {
-    if (viewerRole === 'admin') return true
-    if (viewerRole === 'lead') return staffMember.role === 'cleaner' || staffMember.id === viewerId
+    if (isAdminRole(viewerRole)) return true
+    if (isCleaningLeadRole(viewerRole)) return isCleanerRole(staffMember.role) || staffMember.id === viewerId
     return staffMember.id === viewerId
 }
 
@@ -65,8 +59,8 @@ function dedupeTeamMembers(staff: TeamMember[], currentUserId: string) {
         }
 
         const existing = byName.get(key) as TeamMember
-        const existingScore = Number(existing.id === currentUserId) * 10 + Number(existing.role === 'admin') * 5 + Number(Boolean(existing.availability))
-        const incomingScore = Number(member.id === currentUserId) * 10 + Number(member.role === 'admin') * 5 + Number(Boolean(member.availability))
+        const existingScore = Number(existing.id === currentUserId) * 10 + Number(isAdminRole(existing.role)) * 5 + Number(Boolean(existing.availability))
+        const incomingScore = Number(member.id === currentUserId) * 10 + Number(isAdminRole(member.role)) * 5 + Number(Boolean(member.availability))
 
         if (incomingScore > existingScore) {
             byName.set(key, member)

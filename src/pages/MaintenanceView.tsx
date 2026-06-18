@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Task, MaintenanceItem, UserRole } from '../types'
 import OriginBadge from '../components/OriginBadge'
+import { isAdminRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
 
 type MaintenanceFocusRequest = {
     requestId: number
@@ -76,9 +77,9 @@ export default function MaintenanceView({
     const [materialOpenItemId, setMaterialOpenItemId] = useState<string | null>(null)
     const [highlightTargetKey, setHighlightTargetKey] = useState<string | null>(null)
 
-    const isAdmin = role === 'admin'
-    const isLead = role === 'lead'
-    const isMaintenance = role === 'maintenance'
+    const isAdmin = isAdminRole(role)
+    const isLead = isCleaningLeadRole(role)
+    const isMaintenance = isMaintenanceRole(role)
 
     function categoryLabel(category: MaintenanceItem['category']) {
         switch (category) {

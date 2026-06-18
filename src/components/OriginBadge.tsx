@@ -1,5 +1,6 @@
 import React from 'react'
 import { UserRole } from '../types'
+import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
 
 type OriginInput = {
     source?: 'manual' | 'previo' | 'legacy'
@@ -73,7 +74,7 @@ export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
         }
     }
 
-    if (role === 'admin' || identity.includes('david')) {
+    if (isAdminRole(role) || identity.includes('david')) {
         return {
             code: 'D',
             description: 'Manualne David/admin',
@@ -81,7 +82,7 @@ export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
         }
     }
 
-    if (role === 'lead' || identity.includes('iryna')) {
+    if (isCleaningLeadRole(role) || identity.includes('iryna')) {
         return {
             code: 'I',
             description: 'Manualne Iryna/lead',
@@ -89,7 +90,7 @@ export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
         }
     }
 
-    if (role === 'maintenance' || identity.includes('serhii')) {
+    if (isMaintenanceRole(role) || identity.includes('serhii')) {
         return {
             code: 'S',
             description: 'Manualne Serhii/udrzba',
@@ -97,7 +98,7 @@ export function resolveOriginBadge(input: OriginInput): OriginBadgeInfo {
         }
     }
 
-    if (role === 'cleaner') {
+    if (isCleanerRole(role)) {
         const cleanerCode = inferCleanerCode(identity)
         return {
             code: cleanerCode || 'U',

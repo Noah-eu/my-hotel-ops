@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'lead' | 'cleaner' | 'maintenance'
+export type UserRole = 'admin' | 'lead' | 'iryna' | 'cleaner' | 'maintenance'
 
 export type RecordSource = 'manual' | 'previo' | 'legacy'
 

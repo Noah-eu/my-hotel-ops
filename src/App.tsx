@@ -30,6 +30,7 @@ import {
     signOutFirebaseUser
 } from './lib/firebase'
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
+import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -546,10 +547,10 @@ function isCleaningDomain(category: SupplyRequest['category']) {
 }
 
 function canViewTask(role: UserRole, task: Task) {
-    if (role === 'admin') return true
-    if (role === 'lead') return task.category === 'cleaning' || task.assignedToRole === 'lead'
-    if (role === 'cleaner') return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
-    if (role === 'maintenance') return task.assignedToRole === 'maintenance'
+    if (isAdminRole(role)) return true
+    if (isCleaningLeadRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'lead' || task.assignedToRole === 'cleaner'
+    if (isCleanerRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
+    if (isMaintenanceRole(role)) return task.assignedToRole === 'maintenance'
     return false
 }
 
@@ -563,13 +564,6 @@ function defaultAssigneeName(role: Task['assignedToRole']) {
     if (role === 'cleaner') return 'Uklízečka'
     if (role === 'maintenance') return 'Údržbář'
     return undefined
-}
-
-function roleLabel(role: UserRole) {
-    if (role === 'admin') return 'Admin'
-    if (role === 'lead') return 'Iryna'
-    if (role === 'cleaner') return 'Úklid'
-    return 'Údržba'
 }
 
 function importJobStatusLabel(status: ImportJob['status']) {
@@ -1053,7 +1047,7 @@ export default function App() {
     const currentRole = (currentUser?.role || 'cleaner') as UserRole
     const isAvailabilityOff = currentUser?.availability === 'dnes_nepracuji'
     const urgentOnlyAvailability = currentUser?.availability === 'jen_urgentni'
-    const isAdminUser = currentUser?.role === 'admin'
+    const isAdminUser = isAdminRole(currentUser?.role)
     const enableDangerousReset = isAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
     const showInstallHint = isAdminUser && !isStandalone && !installHintDismissed
 
@@ -1316,7 +1310,7 @@ export default function App() {
     const relevantSoundAlerts = useMemo(() => {
         const alerts: Array<{ key: string; priority: 'normal' | 'urgent' }> = []
 
-        if (currentRole === 'admin' || currentRole === 'lead' || currentRole === 'cleaner') {
+        if (isAdminRole(currentRole) || isCleaningStaffRole(currentRole)) {
             unacknowledgedLateTodayTasks.forEach((task) => {
                 alerts.push({
                     key: `late:${task.id}`,
@@ -1325,7 +1319,7 @@ export default function App() {
             })
         }
 
-        if (currentRole === 'maintenance' || currentRole === 'admin') {
+        if (isMaintenanceRole(currentRole) || isAdminRole(currentRole)) {
             orderedMaintenanceAttentionTargets.forEach((target) => {
                 alerts.push({
                     key: `maintenance:${target.kind}:${target.id}`,
@@ -1477,11 +1471,11 @@ export default function App() {
     const visibleSupplies = useMemo(() => {
         const role = (currentUser?.role || 'cleaner') as UserRole
         // Always hide cancelled requests from visible lists
-        if (role === 'admin') return supplyRequests.filter((s) => s.status !== 'cancelled')
-        if (role === 'lead' || role === 'cleaner') {
+        if (isAdminRole(role)) return supplyRequests.filter((s) => s.status !== 'cancelled')
+        if (isCleaningStaffRole(role)) {
             return supplyRequests.filter((s) => s.status !== 'cancelled' && (s.category !== 'maintenance' || s.requestedByRole === role))
         }
-        if (role === 'maintenance') {
+        if (isMaintenanceRole(role)) {
             return supplyRequests.filter((s) => s.status !== 'cancelled' && (s.category === 'maintenance' || s.requestedByRole === 'maintenance'))
         }
         return supplyRequests.filter((s) => s.status !== 'cancelled')
@@ -3166,7 +3160,7 @@ export default function App() {
         const nextUser = users.find((u) => u.id === nextUserId)
         setUserId(nextUserId)
 
-        if (nextUser?.role === 'maintenance') {
+        if (isMaintenanceRole(nextUser?.role)) {
             setView('maintenance')
         } else if (view === 'maintenance') {
             setView('today')
@@ -3835,10 +3829,10 @@ export default function App() {
     function handleCreateSupplyRequest(input: CreateSupplyRequestInput) {
         if (!currentUser) return
         const role = currentUser.role
-        const canCreate = role === 'admin' || role === 'lead' || role === 'cleaner' || role === 'maintenance'
+        const canCreate = isAdminRole(role) || isCleaningLeadRole(role) || isCleanerRole(role) || isMaintenanceRole(role)
         if (!canCreate) return
 
-        if (role === 'maintenance' && input.category !== 'maintenance') return
+        if (isMaintenanceRole(role) && input.category !== 'maintenance') return
         const manualOriginMeta = buildManualOriginMeta()
 
         const newRequest: SupplyRequest = {
@@ -3890,7 +3884,7 @@ export default function App() {
     }
 
     function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
-        if (!currentUser || currentUser.role !== 'admin') return
+        if (!currentUser || !isAdminRole(currentUser.role)) return
         if (runtimeMode === 'online') {
             supplyRequests.filter((s) => s.itemName === itemName).forEach((s) => activeStore.updateSupplyStatus(s.id, status))
         }
@@ -3909,10 +3903,10 @@ export default function App() {
 
     function canCancelSupplyRequest(request: SupplyRequest) {
         if (!currentUser) return false
-        if (currentUser.role === 'admin') return true
-        if (currentUser.role === 'lead') return isCleaningDomain(request.category)
-        if (currentUser.role === 'cleaner') return request.status === 'new' && request.requestedByRole === 'cleaner' && request.requestedBy === currentUser.name
-        if (currentUser.role === 'maintenance') {
+        if (isAdminRole(currentUser.role)) return true
+        if (isCleaningLeadRole(currentUser.role)) return isCleaningDomain(request.category)
+        if (isCleanerRole(currentUser.role)) return request.status === 'new' && request.requestedByRole === 'cleaner' && request.requestedBy === currentUser.name
+        if (isMaintenanceRole(currentUser.role)) {
             return request.status === 'new' && request.category === 'maintenance' && request.requestedByRole === 'maintenance' && request.requestedBy === currentUser.name
         }
         return false
@@ -3934,7 +3928,7 @@ export default function App() {
 
     useEffect(() => {
         if (view !== 'admin' || isAdminUser) return
-        if (currentUser?.role === 'maintenance') {
+        if (isMaintenanceRole(currentUser?.role)) {
             setView('maintenance')
             return
         }
@@ -4102,7 +4096,7 @@ export default function App() {
                     ...prev,
                     profileLoaded: true
                 }))
-                if (profile.role === 'maintenance') {
+                if (isMaintenanceRole(profile.role)) {
                     setView('maintenance')
                 }
                 return onlineStore.initializeState(defaultState)
@@ -4547,7 +4541,7 @@ export default function App() {
                             )}
                             {view === 'admin' && isAdminUser && (
                                 <>
-                                    {currentUser?.role === 'admin' && (
+                                    {isAdminUser && (
                                         <div className="section">
                                             <h3>Import z Previa</h3>
                                             <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, marginBottom: 8 }}>
@@ -5639,7 +5633,7 @@ export default function App() {
                             </button>
                         )}
 
-                        {(unacknowledgedMaintenanceCount > 0 && ((currentUser?.role === 'maintenance') || isAdminUser)) && (
+                        {(unacknowledgedMaintenanceCount > 0 && (isMaintenanceRole(currentUser?.role) || isAdminUser)) && (
                             <button
                                 type="button"
                                 className="maintenance-task-fab"

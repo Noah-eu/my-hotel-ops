@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { SupplyRequest, UserRole } from '../types'
+import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
 
 type Props = {
     userName: string
@@ -101,10 +102,10 @@ function statusText(status: SupplyRequest['status']) {
 }
 
 function canCancel(role: UserRole, userName: string, request: SupplyRequest) {
-    if (role === 'admin') return true
-    if (role === 'lead') return request.category !== 'maintenance'
-    if (role === 'cleaner') return request.status === 'new' && request.requestedBy === userName && request.requestedByRole === 'cleaner'
-    if (role === 'maintenance') {
+    if (isAdminRole(role)) return true
+    if (isCleaningLeadRole(role)) return request.category !== 'maintenance'
+    if (isCleanerRole(role)) return request.status === 'new' && request.requestedBy === userName && request.requestedByRole === 'cleaner'
+    if (isMaintenanceRole(role)) {
         return request.status === 'new' && request.category === 'maintenance' && request.requestedBy === userName && request.requestedByRole === 'maintenance'
     }
     return false
@@ -136,8 +137,8 @@ export default function SuppliesView({
     const completedRequests = useMemo(() => requests.filter((r) => r.status === 'delivered' || r.status === 'handed_over'), [requests])
     const cancelledRequests = useMemo(() => requests.filter((r) => r.status === 'cancelled'), [requests])
 
-    const shouldShowCleaningChips = role === 'admin' || role === 'lead' || role === 'cleaner'
-    const shouldShowMaintenanceForm = role === 'maintenance'
+    const shouldShowCleaningChips = isAdminRole(role) || isCleaningLeadRole(role)
+    const shouldShowMaintenanceForm = isMaintenanceRole(role)
 
     const visibleCustomChips = useMemo(() => customChips || [], [customChips])
 
