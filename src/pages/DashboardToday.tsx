@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { RoomPlan, Task, UserRole } from '../types'
+import { MaintenanceItem, RoomPlan, Task, UserRole } from '../types'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from '../lib/roles'
 
@@ -156,6 +156,38 @@ function canDeleteTask(role: UserRole, currentUserId: string, currentUserName: s
     return false
 }
 
+function normalizeRoomNumber(value?: string) {
+    if (!value) return ''
+    const trimmed = value.trim()
+    const match = trimmed.match(/\b(\d{3})\b/)
+    if (match) return match[1]
+
+    const digits = trimmed.replace(/\D/g, '')
+    if (digits.length >= 3) return digits.slice(-3)
+    return trimmed
+}
+
+function getVisibleRoomProblemNote(room: RoomPlan, maintenanceItems: MaintenanceItem[]) {
+    if (room.checkoutException) {
+        return room.statusNote?.trim() || 'Host neodešel'
+    }
+
+    const roomStatusNote = room.statusNote?.trim()
+    if (!roomStatusNote) return null
+
+    const normalizedRoomNumber = normalizeRoomNumber(room.number)
+    const normalizedRoomNote = normalizeIdentity(roomStatusNote)
+    const hasActiveRoomIssue = maintenanceItems.some((item) => (
+        item.category === 'room_issue'
+        && item.status !== 'done'
+        && item.status !== 'cancelled'
+        && normalizeRoomNumber(item.roomNumber) === normalizedRoomNumber
+        && normalizeIdentity(item.title) === normalizedRoomNote
+    ))
+
+    return hasActiveRoomIssue ? roomStatusNote : null
+}
+
 function taskStatusLabel(status: Task['status']) {
     switch (status) {
         case 'new':
@@ -195,6 +227,7 @@ export default function DashboardToday({
     currentUserId,
     currentUserName,
     staff,
+    maintenanceItems,
     focusLateTaskRoomRequest,
     onFocusLateTaskRoomResult,
     readOnly
@@ -212,6 +245,7 @@ export default function DashboardToday({
     currentUserId: string
     currentUserName?: string
     staff: Array<{ id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }>
+    maintenanceItems: MaintenanceItem[]
     focusLateTaskRoomRequest?: LateTaskRoomFocusRequest | null
     onFocusLateTaskRoomResult?: (result: { requestId: number; roomNumber: string; found: boolean }) => void
     readOnly?: boolean
@@ -515,11 +549,6 @@ export default function DashboardToday({
                     const stateOnlyRoom = isStateOnlyRoom(room)
                     const workflowDisabled = readOnly || stateOnlyRoom
                     const taskAndProblemDisabled = readOnly
-                    const stateRowClass = room.occupiedConfirmed
-                        ? 'status-row-stayover'
-                        : room.freeConfirmed
-                            ? 'status-row-free'
-                            : statusClass(room.status)
                     const roomTasks = tasks.filter((t) => t.roomNumber === room.number && canSeeTask(role, t))
                     const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
@@ -546,6 +575,15 @@ export default function DashboardToday({
                         importJobId: room.importJobId,
                         importedAt: room.importedAt || room.stateImportedAt
                     }
+                    const visibleRoomProblemNote = getVisibleRoomProblemNote(room, maintenanceItems)
+                    const displayStatus = !room.checkoutException && !visibleRoomProblemNote && room.status === 'problem'
+                        ? 'ceka'
+                        : room.status
+                    const stateRowClass = room.occupiedConfirmed
+                        ? 'status-row-stayover'
+                        : room.freeConfirmed
+                            ? 'status-row-free'
+                            : statusClass(displayStatus)
 
                     return (
                         <div
@@ -562,7 +600,7 @@ export default function DashboardToday({
                                     ) : room.freeConfirmed ? (
                                         <div className="mini-badge mini-badge-free">Potvrzeně volný</div>
                                     ) : (
-                                        <div className="mini-badge">{statusLabel(room.status)}</div>
+                                        <div className="mini-badge">{statusLabel(displayStatus)}</div>
                                     )}
                                     <button className="room-action-btn" onClick={() => toggleExpandedRoom(room.id)}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
@@ -577,15 +615,15 @@ export default function DashboardToday({
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
                                             <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                {room.statusNote || 'Host neodešel'}
+                                                {visibleRoomProblemNote || 'Host neodešel'}
                                                 <OriginBadge input={roomOrigin} />
                                             </div>
                                             <button className="chip" style={{ marginTop: 4, fontSize: 11, padding: '4px 8px' }} onClick={() => onAction(room.id, 'clear_exception')} disabled={readOnly || stateOnlyRoom}>Vyřešeno</button>
                                         </div>
                                     )}
-                                    {!room.checkoutException && room.statusNote && (
+                                    {!room.checkoutException && visibleRoomProblemNote && (
                                         <div className="mini-muted" style={{ color: '#b45309', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                            {room.statusNote}
+                                            {visibleRoomProblemNote}
                                             <OriginBadge input={roomOrigin} />
                                         </div>
                                     )}

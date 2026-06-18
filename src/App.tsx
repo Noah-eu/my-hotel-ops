@@ -3599,9 +3599,9 @@ export default function App() {
         const buildPatch = (room: RoomPlan): Partial<RoomPlan> | null => {
             if (room.checkoutException) return null
             if (normalizeCatalogRoomNumber(room.number) !== normalizedRoomNumber) return null
-            if (normalizeIdentity(room.statusNote) !== normalizedCancelledTitle) return null
 
             if (replacementIssue) {
+                if (normalizeIdentity(room.statusNote) !== normalizedCancelledTitle) return null
                 return {
                     status: 'problem',
                     statusNote: replacementIssue.title,
@@ -3613,6 +3613,8 @@ export default function App() {
                     importedAt: replacementIssue.importedAt
                 }
             }
+
+            if (!room.statusNote || room.status !== 'problem') return null
 
             return {
                 statusNote: undefined,
@@ -4582,6 +4584,7 @@ export default function App() {
                                 <DashboardToday
                                     rooms={displayedRooms}
                                     tasks={visibleDashboardTasks}
+                                    maintenanceItems={maintenanceItems}
                                     onAction={handleAction}
                                     onCreateTask={handleCreateTask}
                                     onUpdateTaskStatus={handleUpdateTaskStatus}
