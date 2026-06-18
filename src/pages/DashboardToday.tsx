@@ -238,7 +238,6 @@ export default function DashboardToday({
     const [taskCategory, setTaskCategory] = useState<Task['category']>('cleaning')
     const [taskAssignedRole, setTaskAssignedRole] = useState<Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>>('cleaner')
     const [taskPriority, setTaskPriority] = useState<Task['priority']>('normal')
-    const [taskNote, setTaskNote] = useState<string>('')
     const [taskFormError, setTaskFormError] = useState<string | null>(null)
     const [problemPanelRoom, setProblemPanelRoom] = useState<string | null>(null)
     const [problemText, setProblemText] = useState<string>('')
@@ -330,7 +329,6 @@ export default function DashboardToday({
         setTaskCategory('cleaning')
         setTaskAssignedRole('cleaner')
         setTaskPriority('normal')
-        setTaskNote('')
         setTaskFormError(null)
         if (problemPanelRoom === roomId) {
             setProblemPanelRoom(null)
@@ -340,18 +338,16 @@ export default function DashboardToday({
     function pickQuickTask(label: string, category: Task['category']) {
         setSelectedQuickTask(label)
         setTaskCategory(category)
-        if (label === 'Vlastní úkol') {
-            setTaskTitle('')
-        } else {
-            setTaskTitle(label)
-        }
+        setTaskTitle('')
+        setTaskFormError(null)
     }
 
     function submitTask(roomId: string) {
         if (readOnly) return
-        const effectiveTaskTitle = (selectedQuickTask && selectedQuickTask !== 'Vlastní úkol')
-            ? selectedQuickTask.trim()
-            : taskTitle.trim()
+        const isQuickTask = Boolean(selectedQuickTask && selectedQuickTask !== 'Vlastní úkol')
+        const textValue = taskTitle.trim()
+        const effectiveTaskTitle = isQuickTask ? selectedQuickTask.trim() : textValue
+        const effectiveTaskNote = isQuickTask ? textValue : undefined
 
         if (!effectiveTaskTitle) {
             setTaskFormError('Napište, co je potřeba udělat.')
@@ -364,7 +360,7 @@ export default function DashboardToday({
                 category: taskCategory,
                 priority: taskPriority,
                 assignedToRole: taskAssignedRole,
-                note: taskNote.trim() || undefined
+                note: effectiveTaskNote || undefined
             })
 
             setTaskPanelRoom(null)
@@ -373,7 +369,6 @@ export default function DashboardToday({
             setTaskCategory('cleaning')
             setTaskAssignedRole('cleaner')
             setTaskPriority('normal')
-            setTaskNote('')
             setTaskFormError(null)
         } catch (error: any) {
             console.error('[task-create] save failed', error)
@@ -808,17 +803,15 @@ export default function DashboardToday({
                                                 ))}
                                             </div>
 
-                                            {(selectedQuickTask === 'Vlastní úkol' || !selectedQuickTask) && (
-                                                <textarea
-                                                    value={taskTitle}
-                                                    onChange={(e) => {
-                                                        setTaskTitle(e.target.value)
-                                                        if (taskFormError) setTaskFormError(null)
-                                                    }}
-                                                    placeholder="Napište vlastní úkol"
-                                                    style={{ width: '100%', marginBottom: 8, minHeight: 72, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical', background: '#fff' }}
-                                                />
-                                            )}
+                                            <textarea
+                                                value={taskTitle}
+                                                onChange={(e) => {
+                                                    setTaskTitle(e.target.value)
+                                                    if (taskFormError) setTaskFormError(null)
+                                                }}
+                                                placeholder={selectedQuickTask && selectedQuickTask !== 'Vlastní úkol' ? 'Poznámka k úkolu (volitelné)' : 'Napište úkol'}
+                                                style={{ width: '100%', marginBottom: 8, minHeight: 72, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical', background: '#fff' }}
+                                            />
 
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                                                 <label style={{ fontSize: 12 }}>
@@ -847,13 +840,6 @@ export default function DashboardToday({
                                             </div>
 
                                             <div style={{ fontSize: 13, color: '#334155', marginTop: 8 }}>{taskAssigneeHint(taskAssignedRole)}</div>
-
-                                            <textarea
-                                                value={taskNote}
-                                                onChange={(e) => setTaskNote(e.target.value)}
-                                                placeholder="Poznámka (volitelné)"
-                                                style={{ width: '100%', marginTop: 8, minHeight: 64, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical' }}
-                                            />
 
                                             {taskFormError && (
                                                 <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c', fontWeight: 700 }}>{taskFormError}</div>
