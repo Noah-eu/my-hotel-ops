@@ -2063,7 +2063,7 @@ export default function App() {
         return true
     }
 
-    function buildImportedBaseRow(base: RoomPlan | undefined, roomNumber: string, displayName: string | undefined, importedAt: string): RoomPlan {
+    function buildImportedBaseRow(base: RoomPlan | undefined, roomNumber: string, displayName: string | undefined, importedAt: string, importJobId?: string): RoomPlan {
         return {
             id: base?.id || roomIdForNumber(roomNumber),
             number: base?.number || displayName || roomNumber,
@@ -2088,11 +2088,17 @@ export default function App() {
             stateImportedAt: importedAt,
             planDateIso: base?.planDateIso,
             stayoverGuestName: undefined,
-            stayoverUntil: undefined
+            stayoverUntil: undefined,
+            source: 'previo',
+            importJobId,
+            importedAt,
+            createdByUid: undefined,
+            createdByName: undefined,
+            createdByRole: undefined
         }
     }
 
-    function buildRoomsForStateDay(dateIso: string, dayPreview: PrevioStateImportPreview['days'][number], importedAt: string) {
+    function buildRoomsForStateDay(dateIso: string, dayPreview: PrevioStateImportPreview['days'][number], importedAt: string, importJobId?: string) {
         const existingTabs = ['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]
         const currentTabDate = existingTabs.find((day) => importedTabDates[day] === dateIso)
         const sourceRooms = importedRoomsByDate[dateIso] || (currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes)
@@ -2115,7 +2121,7 @@ export default function App() {
             const base = existingByRoom.get(roomNumber)
             const parsed = parsedByRoom.get(roomNumber)
             const catalogRoom = catalogByRoom.get(roomNumber)
-            const row = buildImportedBaseRow(base, roomNumber, catalogRoom?.displayName || catalogRoom?.roomNumber, importedAt)
+            const row = buildImportedBaseRow(base, roomNumber, catalogRoom?.displayName || catalogRoom?.roomNumber, importedAt, importJobId)
 
             if (!parsed) {
                 return {
@@ -2179,7 +2185,7 @@ export default function App() {
         })
     }
 
-    function buildMergedPlansFromStateImport(preview: PrevioStateImportPreview, importedAt: string) {
+    function buildMergedPlansFromStateImport(preview: PrevioStateImportPreview, importedAt: string, importJobId?: string) {
         const next: Record<OpsTab, typeof roomsByDay[OpsTab]> = {
             Dnes: [],
             Zitra: [],
@@ -2189,7 +2195,7 @@ export default function App() {
         const byDate: Record<string, typeof roomsByDay[OpsTab]> = {}
 
         preview.days.forEach((day) => {
-            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day, importedAt)
+            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day, importedAt, importJobId)
         })
 
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
@@ -2202,6 +2208,25 @@ export default function App() {
             })
 
         return { next, byDate }
+    }
+
+    function applyPrevioOriginToByDate(byDate: Record<string, RoomPlan[]>, importedAt: string, importJobId?: string) {
+        return Object.fromEntries(
+            Object.entries(byDate).map(([dateIso, rooms]) => [
+                dateIso,
+                rooms.map((room) => ({
+                    ...room,
+                    source: 'previo' as const,
+                    importJobId,
+                    importedAt,
+                    stateSource: room.stateSource || 'previo-state-pdf',
+                    stateImportedAt: room.stateImportedAt || importedAt,
+                    createdByUid: undefined,
+                    createdByName: undefined,
+                    createdByRole: undefined
+                }))
+            ])
+        ) as Record<string, RoomPlan[]>
     }
 
     async function handleCopyImportDebugText() {
@@ -2374,7 +2399,7 @@ export default function App() {
 
         try {
             const importedAt = formatImportTimestamp(new Date())
-            const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview, importedAt)
+            const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview, importedAt, targetJob?.id)
 
             const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
             if (targetJob) {
@@ -2543,6 +2568,8 @@ export default function App() {
         }
 
         try {
+            const importedAt = formatImportTimestamp(new Date())
+            const byDateWithOrigin = applyPrevioOriginToByDate(byDate, importedAt, job.id)
             const next: Record<OpsTab, RoomPlan[]> = {
                 Dnes: roomsByDay.Dnes,
                 Zitra: roomsByDay.Zitra,
@@ -2551,16 +2578,16 @@ export default function App() {
 
                 ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                     const dateIso = parsedTabDates[day]
-                    if (!dateIso || !byDate[dateIso]) return
-                    next[day] = byDate[dateIso]
+                    if (!dateIso || !byDateWithOrigin[dateIso]) return
+                    next[day] = byDateWithOrigin[dateIso]
                 })
 
             const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
-            const backupPayload = buildImportBackupPayload(job.id, byDate, parsedTabDates, confirmedBy)
+            const backupPayload = buildImportBackupPayload(job.id, byDateWithOrigin, parsedTabDates, confirmedBy)
             await persistImportBackup(job, backupPayload, confirmedBy)
 
             setImportedTabDates(parsedTabDates)
-            setImportedRoomsByDate(byDate)
+            setImportedRoomsByDate(byDateWithOrigin)
             setSelectedImportedDateIso(null)
             setRoomsByDay(next)
 
@@ -2570,7 +2597,7 @@ export default function App() {
                 })
 
                 const primaryDateSet = new Set(Object.values(parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso)))
-                Object.entries(byDate).forEach(([dateIso, rooms]) => {
+                Object.entries(byDateWithOrigin).forEach(([dateIso, rooms]) => {
                     if (primaryDateSet.has(dateIso)) return
                     rooms.forEach((room) => activeStore.replaceRoomPlan(dateIso, room))
                 })
@@ -3140,6 +3167,15 @@ export default function App() {
         return date.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', hour12: false })
     }
 
+    function buildManualOriginMeta() {
+        return {
+            source: 'manual' as const,
+            createdByUid: currentUser?.id,
+            createdByName: currentUser?.name,
+            createdByRole: currentUser?.role
+        }
+    }
+
     function addMinutes(base: Date, minutes: number) {
         const next = new Date(base.getTime() + minutes * 60 * 1000)
         return formatNowHHmm(next)
@@ -3154,13 +3190,14 @@ export default function App() {
             : typeof payload?.relativeMinutes === 'number'
                 ? addMinutes(now, payload.relativeMinutes)
                 : undefined
+        const manualOriginMeta = buildManualOriginMeta()
 
         let patch: Partial<any> = {}
         if (action === 'hotovo') patch = { status: 'hotovo' }
         if (action === 'prevzit') patch = { status: 'prevzato', assigned: assignedName }
         if (action === 'odhad') patch = { status: 'odhad', estimatedReady: computedEstimate || '12:30', estimateSetAt: setAt, assigned: assignedName }
-        if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen' }
-        if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true }
+        if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen', ...manualOriginMeta }
+        if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true, ...manualOriginMeta }
         if (action === 'clear_exception') patch = { checkoutException: false, statusNote: undefined, status: 'ceka' }
         if (runtimeMode === 'online') {
             activeStore.updateRoomPlan(tab, id, patch)
@@ -3200,7 +3237,8 @@ export default function App() {
                     return {
                         ...r,
                         status: 'problem',
-                        statusNote: payload?.problemText?.trim() || 'Problém nahlášen'
+                        statusNote: payload?.problemText?.trim() || 'Problém nahlášen',
+                        ...manualOriginMeta
                     }
                 }
                 if (action === 'host_zustava') {
@@ -3209,7 +3247,8 @@ export default function App() {
                         ...r,
                         status: 'problem',
                         statusNote: 'Host neodešel',
-                        checkoutException: true
+                        checkoutException: true,
+                        ...manualOriginMeta
                     }
                 }
                 if (action === 'clear_exception') {
@@ -3433,6 +3472,7 @@ export default function App() {
         const todayIso = formatLocalDateIso(new Date())
         const isTodayTask = tab === 'Dnes' && selectedTabDateIso === todayIso
         const lateTodayRoomTask = isTodayTask && isRoomLikelyAlreadyTouched(room)
+        const manualOriginMeta = buildManualOriginMeta()
 
         // TODO: Hook push notification trigger here when backend notification pipeline is ready.
         const newTask: Task = {
@@ -3449,7 +3489,8 @@ export default function App() {
             createdAt,
             taskDateIso: selectedTabDateIso,
             attentionRequired: lateTodayRoomTask || undefined,
-            attentionReason: lateTodayRoomTask ? 'late_today_room_task' : undefined
+            attentionReason: lateTodayRoomTask ? 'late_today_room_task' : undefined,
+            ...manualOriginMeta
         }
 
         if (runtimeMode === 'online') {
@@ -3465,7 +3506,13 @@ export default function App() {
                 createdAt: newTask.createdAt,
                 taskDateIso: newTask.taskDateIso,
                 attentionRequired: newTask.attentionRequired,
-                attentionReason: newTask.attentionReason
+                attentionReason: newTask.attentionReason,
+                source: newTask.source,
+                createdByUid: newTask.createdByUid,
+                createdByName: newTask.createdByName,
+                createdByRole: newTask.createdByRole,
+                importJobId: newTask.importJobId,
+                importedAt: newTask.importedAt
             })
         }
 
@@ -3488,6 +3535,7 @@ export default function App() {
 
         const now = new Date()
         const createdAt = formatNowHHmm(now)
+        const manualOriginMeta = buildManualOriginMeta()
         const newItem: MaintenanceItem = {
             id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             roomNumber: formatRoomNumber(room.number),
@@ -3497,7 +3545,8 @@ export default function App() {
             status: 'new',
             reportedBy: currentUser.name,
             createdAt,
-            note: `Nahlášeno z pokojů (${dayLabel || tab})`
+            note: `Nahlášeno z pokojů (${dayLabel || tab})`,
+            ...manualOriginMeta
         }
 
         if (runtimeMode === 'online') {
@@ -3509,7 +3558,13 @@ export default function App() {
                 priority: newItem.priority,
                 note: newItem.note,
                 reportedBy: newItem.reportedBy,
-                createdAt: newItem.createdAt
+                createdAt: newItem.createdAt,
+                source: newItem.source,
+                createdByUid: newItem.createdByUid,
+                createdByName: newItem.createdByName,
+                createdByRole: newItem.createdByRole,
+                importJobId: newItem.importJobId,
+                importedAt: newItem.importedAt
             })
         }
         setMaintenanceItems((prev) => [newItem, ...prev])
@@ -3582,7 +3637,13 @@ export default function App() {
                 stateSource: undefined,
                 stateImportedAt: undefined,
                 stayoverGuestName: undefined,
-                stayoverUntil: undefined
+                stayoverUntil: undefined,
+                source: undefined,
+                createdByUid: undefined,
+                createdByName: undefined,
+                createdByRole: undefined,
+                importJobId: undefined,
+                importedAt: undefined
             }
         })
     }
@@ -3659,6 +3720,7 @@ export default function App() {
 
     function handleCreateMaintenanceItem(input: { roomNumber?: string; title: string; category: MaintenanceItem['category']; priority: MaintenanceItem['priority']; note?: string }) {
         if (!currentUser) return
+        const manualOriginMeta = buildManualOriginMeta()
         const newItem: MaintenanceItem = {
             id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             roomNumber: formatRoomNumber(input.roomNumber),
@@ -3668,7 +3730,8 @@ export default function App() {
             status: 'new',
             note: input.note?.trim() || undefined,
             reportedBy: currentUser.name,
-            createdAt: formatNowHHmm(new Date())
+            createdAt: formatNowHHmm(new Date()),
+            ...manualOriginMeta
         }
         if (runtimeMode === 'online') {
             activeStore.createMaintenanceItem({
@@ -3679,7 +3742,13 @@ export default function App() {
                 priority: newItem.priority,
                 note: newItem.note,
                 reportedBy: newItem.reportedBy,
-                createdAt: newItem.createdAt
+                createdAt: newItem.createdAt,
+                source: newItem.source,
+                createdByUid: newItem.createdByUid,
+                createdByName: newItem.createdByName,
+                createdByRole: newItem.createdByRole,
+                importJobId: newItem.importJobId,
+                importedAt: newItem.importedAt
             })
         }
         setMaintenanceItems((prev) => [newItem, ...prev])
@@ -3697,6 +3766,7 @@ export default function App() {
         if (!material) return
         const item = maintenanceItems.find((m) => m.id === itemId)
         if (!item) return
+        const manualOriginMeta = buildManualOriginMeta()
 
         // update maintenance item
         handleUpdateMaintenanceItem(itemId, { materialNeeded: material, status: 'waiting_material' })
@@ -3714,7 +3784,8 @@ export default function App() {
             requestedByRole: currentUser?.role || 'maintenance',
             createdAt: formatNowHHmm(new Date()),
             status: 'new',
-            priority: item.priority
+            priority: item.priority,
+            ...manualOriginMeta
         }
 
         if (runtimeMode === 'online') {
@@ -3729,7 +3800,13 @@ export default function App() {
                 priority: newRequest.priority,
                 requestedBy: newRequest.requestedBy,
                 requestedByRole: newRequest.requestedByRole,
-                createdAt: newRequest.createdAt
+                createdAt: newRequest.createdAt,
+                source: newRequest.source,
+                createdByUid: newRequest.createdByUid,
+                createdByName: newRequest.createdByName,
+                createdByRole: newRequest.createdByRole,
+                importJobId: newRequest.importJobId,
+                importedAt: newRequest.importedAt
             })
         }
 
@@ -3748,6 +3825,7 @@ export default function App() {
         if (!canCreate) return
 
         if (role === 'maintenance' && input.category !== 'maintenance') return
+        const manualOriginMeta = buildManualOriginMeta()
 
         const newRequest: SupplyRequest = {
             id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -3761,7 +3839,8 @@ export default function App() {
             requestedByRole: currentUser.role,
             createdAt: formatNowHHmm(new Date()),
             status: 'new',
-            priority: input.priority
+            priority: input.priority,
+            ...manualOriginMeta
         }
 
         if (runtimeMode === 'online') {
@@ -3776,7 +3855,13 @@ export default function App() {
                 priority: newRequest.priority,
                 requestedBy: newRequest.requestedBy,
                 requestedByRole: newRequest.requestedByRole,
-                createdAt: newRequest.createdAt
+                createdAt: newRequest.createdAt,
+                source: newRequest.source,
+                createdByUid: newRequest.createdByUid,
+                createdByName: newRequest.createdByName,
+                createdByRole: newRequest.createdByRole,
+                importJobId: newRequest.importJobId,
+                importedAt: newRequest.importedAt
             })
         }
 

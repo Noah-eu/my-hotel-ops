@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { RoomPlan, Task, UserRole } from '../types'
+import OriginBadge from '../components/OriginBadge'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -546,6 +547,15 @@ export default function DashboardToday({
                     const arrivalPrepChipsDeduped = arrivalPrepChips.filter((chip) => (
                         !arrivalDisplay.notes.some((note) => normalizeForKeywordMatch(note) === normalizeForKeywordMatch(chip))
                     ))
+                    const roomOrigin = {
+                        source: room.source,
+                        stateSource: room.stateSource,
+                        createdByUid: room.createdByUid,
+                        createdByName: room.createdByName,
+                        createdByRole: room.createdByRole,
+                        importJobId: room.importJobId,
+                        importedAt: room.importedAt || room.stateImportedAt
+                    }
 
                     return (
                         <div
@@ -576,11 +586,19 @@ export default function DashboardToday({
                                     )}
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
-                                            <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c' }}>{room.statusNote || 'Host neodešel'}</div>
+                                            <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                {room.statusNote || 'Host neodešel'}
+                                                <OriginBadge input={roomOrigin} />
+                                            </div>
                                             <button className="chip" style={{ marginTop: 4, fontSize: 11, padding: '4px 8px' }} onClick={() => onAction(room.id, 'clear_exception')} disabled={readOnly || stateOnlyRoom}>Vyřešeno</button>
                                         </div>
                                     )}
-                                    {!room.checkoutException && room.statusNote && <div className="mini-muted" style={{ color: '#b45309' }}>{room.statusNote}</div>}
+                                    {!room.checkoutException && room.statusNote && (
+                                        <div className="mini-muted" style={{ color: '#b45309', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                            {room.statusNote}
+                                            <OriginBadge input={roomOrigin} />
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className={`plan-col ${room.departure ? '' : 'empty-col'}`}>
@@ -595,7 +613,12 @@ export default function DashboardToday({
                                             )}
                                             {departureDisplay.notes.length > 0 && (
                                                 <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                                    {departureDisplay.notes.map((n) => <div key={n} className="note-chip">{n}</div>)}
+                                                    {departureDisplay.notes.map((n) => (
+                                                        <div key={n} className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                            <span>{n}</span>
+                                                            <OriginBadge input={roomOrigin} />
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             )}
                                         </>
@@ -615,11 +638,22 @@ export default function DashboardToday({
                                                 </div>
                                             )}
                                             <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                                {arrivalDisplay.box && <div className="note-chip">{arrivalDisplay.box}</div>}
-                                                {arrivalDisplay.notes.map(n => <div key={n} className="note-chip">{n}</div>)}
+                                                {arrivalDisplay.box && (
+                                                    <div className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                        <span>{arrivalDisplay.box}</span>
+                                                        <OriginBadge input={roomOrigin} />
+                                                    </div>
+                                                )}
+                                                {arrivalDisplay.notes.map(n => (
+                                                    <div key={n} className="note-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                        <span>{n}</span>
+                                                        <OriginBadge input={roomOrigin} />
+                                                    </div>
+                                                ))}
                                                 {arrivalPrepChipsDeduped.map((chip) => (
-                                                    <div key={`prep-${room.id}-${chip}`} className="note-chip" style={{ border: '1px solid #bfdbfe', background: '#eff6ff' }}>
-                                                        {chip}
+                                                    <div key={`prep-${room.id}-${chip}`} className="note-chip" style={{ border: '1px solid #bfdbfe', background: '#eff6ff', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                        <span>{chip}</span>
+                                                        <OriginBadge input={roomOrigin} />
                                                     </div>
                                                 ))}
                                                 {arrivalPrepTasks.map((task) => (
@@ -631,7 +665,18 @@ export default function DashboardToday({
                                                         title="Označit jako hotovo"
                                                         disabled={readOnly}
                                                     >
-                                                        {task.title || 'Bez názvu úkolu'}
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                            <span>{task.title || 'Bez názvu úkolu'}</span>
+                                                            <OriginBadge
+                                                                input={{
+                                                                    source: task.source,
+                                                                    createdByUid: task.createdByUid,
+                                                                    createdByName: task.createdByName,
+                                                                    createdByRole: task.createdByRole,
+                                                                    createdBy: task.createdBy
+                                                                }}
+                                                            />
+                                                        </span>
                                                     </button>
                                                 ))}
                                             </div>
@@ -673,7 +718,18 @@ export default function DashboardToday({
                                             }}
                                         >
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                <div style={{ fontWeight: 700 }}>{task.title || 'Bez názvu úkolu'}</div>
+                                                <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                    {task.title || 'Bez názvu úkolu'}
+                                                    <OriginBadge
+                                                        input={{
+                                                            source: task.source,
+                                                            createdByUid: task.createdByUid,
+                                                            createdByName: task.createdByName,
+                                                            createdByRole: task.createdByRole,
+                                                            createdBy: task.createdBy
+                                                        }}
+                                                    />
+                                                </div>
                                             </div>
                                             <div style={{ color: '#475569' }}>
                                                 {roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}

@@ -41,6 +41,12 @@ export interface CreateTaskInput {
     acknowledgedBy?: string
     maintenanceAcknowledgedAt?: string
     maintenanceAcknowledgedBy?: string
+    source?: Task['source']
+    createdByUid?: string
+    createdByName?: string
+    createdByRole?: Task['createdByRole']
+    importJobId?: string
+    importedAt?: string
 }
 
 export interface CreateSupplyRequestInput {
@@ -55,6 +61,12 @@ export interface CreateSupplyRequestInput {
     requestedBy: string
     requestedByRole: UserRole
     createdAt: string
+    source?: SupplyRequest['source']
+    createdByUid?: string
+    createdByName?: string
+    createdByRole?: SupplyRequest['createdByRole']
+    importJobId?: string
+    importedAt?: string
 }
 
 export interface CreateMaintenanceItemInput {
@@ -68,6 +80,12 @@ export interface CreateMaintenanceItemInput {
     createdAt: string
     maintenanceAcknowledgedAt?: string
     maintenanceAcknowledgedBy?: string
+    source?: MaintenanceItem['source']
+    createdByUid?: string
+    createdByName?: string
+    createdByRole?: MaintenanceItem['createdByRole']
+    importJobId?: string
+    importedAt?: string
 }
 
 export interface CreateImportJobInput {

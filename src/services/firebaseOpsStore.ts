@@ -505,7 +505,13 @@ export function createFirebaseOpsStore(): OpsStore {
                 acknowledgedAt: input.acknowledgedAt,
                 acknowledgedBy: input.acknowledgedBy,
                 maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
-                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy,
+                source: input.source,
+                createdByUid: input.createdByUid,
+                createdByName: input.createdByName,
+                createdByRole: input.createdByRole,
+                importJobId: input.importJobId,
+                importedAt: input.importedAt
             }
             const { cleaned } = sanitizeForFirestore(task, `tasks.${task.id}`)
             void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), cleaned))
@@ -545,7 +551,13 @@ export function createFirebaseOpsStore(): OpsStore {
                 requestedByRole: input.requestedByRole,
                 createdAt: input.createdAt,
                 status: 'new',
-                priority: input.priority
+                priority: input.priority,
+                source: input.source,
+                createdByUid: input.createdByUid,
+                createdByName: input.createdByName,
+                createdByRole: input.createdByRole,
+                importJobId: input.importJobId,
+                importedAt: input.importedAt
             }
             const { cleaned } = sanitizeForFirestore(request, `supplyRequests.${request.id}`)
             void runWrite('createSupplyRequest', async () => {
@@ -581,7 +593,13 @@ export function createFirebaseOpsStore(): OpsStore {
                 reportedBy: input.reportedBy,
                 createdAt: input.createdAt,
                 maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
-                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy,
+                source: input.source,
+                createdByUid: input.createdByUid,
+                createdByName: input.createdByName,
+                createdByRole: input.createdByRole,
+                importJobId: input.importJobId,
+                importedAt: input.importedAt
             }
             const { cleaned } = sanitizeForFirestore(item, `maintenanceItems.${item.id}`)
             void runWrite('createMaintenanceItem', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', item.id), cleaned))

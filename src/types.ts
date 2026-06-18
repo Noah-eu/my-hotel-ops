@@ -1,5 +1,16 @@
 export type UserRole = 'admin' | 'lead' | 'cleaner' | 'maintenance'
 
+export type RecordSource = 'manual' | 'previo' | 'legacy'
+
+export interface OriginMetadata {
+    source?: RecordSource
+    createdByUid?: string
+    createdByName?: string
+    createdByRole?: UserRole
+    importJobId?: string
+    importedAt?: string
+}
+
 export type RoomSituation = 'odjezd' | 'prijezd' | 'odjezd_prijezd' | 'volny'
 
 export type RoomStatus = 'ceka' | 'problem' | 'prevzato' | 'probihá' | 'odhad' | 'hotovo' | 'neni'
@@ -51,6 +62,12 @@ export interface RoomPlan {
     planDateIso?: string
     stayoverGuestName?: string
     stayoverUntil?: string
+    source?: RecordSource
+    createdByUid?: string
+    createdByName?: string
+    createdByRole?: UserRole
+    importJobId?: string
+    importedAt?: string
 }
 
 export type ImportJobType = 'previo-state-pdf'
@@ -127,6 +144,12 @@ export type RoomPlanScheduleSnapshot = {
     planDateIso?: string
     stayoverGuestName?: string
     stayoverUntil?: string
+    source?: RecordSource
+    createdByUid?: string
+    createdByName?: string
+    createdByRole?: UserRole
+    importJobId?: string
+    importedAt?: string
 }
 
 export interface ImportBackupRoomSnapshot {
@@ -229,7 +252,7 @@ export interface ImportJob {
     automation?: ImportJobAutomationSummary
 }
 
-export interface Task {
+export interface Task extends OriginMetadata {
     id: string
     roomNumber: string
     title: string
@@ -252,7 +275,7 @@ export interface Task {
 
 export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'
 
-export interface SupplyRequest {
+export interface SupplyRequest extends OriginMetadata {
     id: string
     itemName: string
     category: 'cleaning' | 'laundry' | 'bathroom' | 'kitchen' | 'maintenance' | 'other'
@@ -267,7 +290,7 @@ export interface SupplyRequest {
     priority: 'normal' | 'urgent'
 }
 
-export interface MaintenanceItem {
+export interface MaintenanceItem extends OriginMetadata {
     id: string
     roomNumber?: string
     title: string

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Task, MaintenanceItem, UserRole } from '../types'
+import OriginBadge from '../components/OriginBadge'
 
 type MaintenanceFocusRequest = {
     requestId: number
@@ -201,7 +202,21 @@ export default function MaintenanceView({
                         <div style={{ fontSize: 12, color: '#475569' }}>{categoryLabel(m.category)}</div>
                     </div>
 
-                    <div style={{ fontWeight: 800, fontSize: 18, lineHeight: 1.2, color: '#0f172a' }}>{m.title}</div>
+                    <div style={{ fontWeight: 800, fontSize: 18, lineHeight: 1.2, color: '#0f172a', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {m.title}
+                        <OriginBadge
+                            input={{
+                                source: m.source,
+                                createdByUid: m.createdByUid,
+                                createdByName: m.createdByName,
+                                createdByRole: m.createdByRole,
+                                createdBy: m.reportedBy,
+                                reportedBy: m.reportedBy,
+                                importJobId: m.importJobId,
+                                importedAt: m.importedAt
+                            }}
+                        />
+                    </div>
 
                     {m.note && <div style={{ fontSize: 14, color: '#334155' }}>{m.note}</div>}
                     {m.materialNeeded && <div style={{ fontSize: 14, color: '#6b21a8', fontWeight: 600 }}>Materiál: {m.materialNeeded}</div>}
@@ -342,7 +357,20 @@ export default function MaintenanceView({
                                             style={highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {}}
                                         >
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                                <div style={{ fontWeight: 700 }}>{t.roomNumber || 'Pokoj ?'} – {t.title || 'Bez názvu úkolu'}</div>
+                                                <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                    {t.roomNumber || 'Pokoj ?'} – {t.title || 'Bez názvu úkolu'}
+                                                    <OriginBadge
+                                                        input={{
+                                                            source: t.source,
+                                                            createdByUid: t.createdByUid,
+                                                            createdByName: t.createdByName,
+                                                            createdByRole: t.createdByRole,
+                                                            createdBy: t.createdBy,
+                                                            importJobId: t.importJobId,
+                                                            importedAt: t.importedAt
+                                                        }}
+                                                    />
+                                                </div>
                                                 <div style={{ fontSize: 13, color: '#64748b' }}>
                                                     {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {t.createdAt || '-'}
                                                 </div>

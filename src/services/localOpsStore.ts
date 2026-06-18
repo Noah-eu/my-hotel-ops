@@ -130,7 +130,13 @@ export function createLocalOpsStore(): OpsStore {
                 acknowledgedAt: input.acknowledgedAt,
                 acknowledgedBy: input.acknowledgedBy,
                 maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
-                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy,
+                source: input.source,
+                createdByUid: input.createdByUid,
+                createdByName: input.createdByName,
+                createdByRole: input.createdByRole,
+                importJobId: input.importJobId,
+                importedAt: input.importedAt
             }
             withState((state) => ({ ...state, tasks: [task, ...state.tasks] }))
             return task
@@ -160,7 +166,13 @@ export function createLocalOpsStore(): OpsStore {
                 requestedByRole: input.requestedByRole,
                 createdAt: input.createdAt,
                 status: 'new',
-                priority: input.priority
+                priority: input.priority,
+                source: input.source,
+                createdByUid: input.createdByUid,
+                createdByName: input.createdByName,
+                createdByRole: input.createdByRole,
+                importJobId: input.importJobId,
+                importedAt: input.importedAt
             }
             withState((state) => ({ ...state, supplyRequests: [request, ...state.supplyRequests] }))
             return request
@@ -189,7 +201,13 @@ export function createLocalOpsStore(): OpsStore {
                 reportedBy: input.reportedBy,
                 createdAt: input.createdAt,
                 maintenanceAcknowledgedAt: input.maintenanceAcknowledgedAt,
-                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy
+                maintenanceAcknowledgedBy: input.maintenanceAcknowledgedBy,
+                source: input.source,
+                createdByUid: input.createdByUid,
+                createdByName: input.createdByName,
+                createdByRole: input.createdByRole,
+                importJobId: input.importJobId,
+                importedAt: input.importedAt
             }
             withState((state) => ({ ...state, maintenanceItems: [item, ...state.maintenanceItems] }))
             return item
