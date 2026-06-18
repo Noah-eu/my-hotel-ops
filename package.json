@@ -6,6 +6,7 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
+        "validate:auto-confirm-mode": "node scripts/validate-auto-confirm-mode.mjs",
         "validate:previo": "node scripts/validate-previo-parser.mjs",
         "validate:previo-state": "node scripts/validate-previo-state-parser.mjs"
     },

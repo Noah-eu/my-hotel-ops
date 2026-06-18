@@ -210,11 +210,21 @@ type ImportAutoPreviewStatusInfo = {
 const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce…'
 
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
-const AUTO_CONFIRM_STAV_IMPORTS_ENABLED = import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS === 'true'
-const AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN = import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN !== 'false'
+function readBooleanViteEnv(value: unknown, fallback: boolean) {
+    if (typeof value !== 'string' || !value.trim()) return fallback
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false
+    return fallback
+}
+
+const AUTO_CONFIRM_STAV_IMPORTS_ENABLED = readBooleanViteEnv(import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS, false)
+const AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN = readBooleanViteEnv(import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN, true)
 const AUTO_CONFIRM_STAV_IMPORTS_MODE: ImportJobAutoConfirmMode = AUTO_CONFIRM_STAV_IMPORTS_ENABLED
-    ? (AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN ? 'dry-run' : 'enabled')
-    : 'off'
+    ? 'enabled'
+    : AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN
+        ? 'dry-run'
+        : 'off'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CONFIRM_SUPERSEDED_MESSAGE = 'Tento import je starší než novější Stav PDF. Nepotvrzujte ho.'

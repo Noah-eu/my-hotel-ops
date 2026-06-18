@@ -146,8 +146,9 @@ function readBooleanEnv(name, fallback) {
 function resolveAutoConfirmMode() {
     const enabled = readBooleanEnv('AUTO_CONFIRM_STAV_IMPORTS', false)
     const dryRun = readBooleanEnv('AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN', true)
-    if (!enabled) return 'off'
-    return dryRun ? 'dry-run' : 'enabled'
+    if (enabled) return 'enabled'
+    if (dryRun) return 'dry-run'
+    return 'off'
 }
 
 function formatDateLabel(dateIso) {
