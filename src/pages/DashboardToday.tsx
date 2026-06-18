@@ -738,7 +738,7 @@ export default function DashboardToday({
                                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                                             <button className="action-secondary" disabled={workflowDisabled} onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
                                             {room.checkoutException && <button className="chip" disabled={workflowDisabled} onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
-                                            <div style={{ fontSize: 12, color: '#64748b' }}>Push notifikace pro admin zde doplníme po backend integraci.</div>
+                                            {/* TODO: Push notifications for admin to be added after backend integration. Not shown to users. */}
                                         </div>
                                     </div>
 
