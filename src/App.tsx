@@ -553,6 +553,11 @@ function canViewTask(role: UserRole, task: Task) {
     return false
 }
 
+function matchesOperationalTaskDate(task: Task, effectiveDateIso: string, todayDateIso: string) {
+    if (task.taskDateIso) return task.taskDateIso === effectiveDateIso
+    return effectiveDateIso === todayDateIso
+}
+
 function defaultAssigneeName(role: Task['assignedToRole']) {
     if (role === 'lead') return 'Iryna'
     if (role === 'cleaner') return 'Uklízečka'
@@ -1207,6 +1212,13 @@ export default function App() {
         [tasks, currentRole]
     )
 
+    const todayDateIso = formatLocalDateIso(new Date())
+
+    const visibleDashboardTasks = useMemo(
+        () => visibleTodayTasks.filter((task) => matchesOperationalTaskDate(task, effectiveDateIso, todayDateIso)),
+        [visibleTodayTasks, effectiveDateIso, todayDateIso]
+    )
+
     const maintenanceTasks = useMemo(
         () => tasks.filter((task) => {
             const assignedName = normalizeIdentity(task.assignedToName)
@@ -1219,8 +1231,6 @@ export default function App() {
         }),
         [tasks]
     )
-
-    const todayDateIso = formatLocalDateIso(new Date())
 
     const unacknowledgedLateTodayTasks = useMemo(() => (
         visibleTodayTasks.filter((task) => (
@@ -4502,7 +4512,7 @@ export default function App() {
                             {view === 'today' && (
                                 <DashboardToday
                                     rooms={displayedRooms}
-                                    tasks={visibleTodayTasks}
+                                    tasks={visibleDashboardTasks}
                                     onAction={handleAction}
                                     onCreateTask={handleCreateTask}
                                     onUpdateTaskStatus={handleUpdateTaskStatus}
