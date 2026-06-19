@@ -199,12 +199,68 @@ export default function RoomSheetView({
     const roomsByDate = useMemo(() => {
         const next: Record<string, RoomPlan[]> = {}
 
+        // helper to merge an imported room with the base room from roomsByDay when possible
+        function mergeWithBase(tab: OpsTab | null, imported: RoomPlan): RoomPlan {
+            const baseList = tab ? roomsByDay[tab] || [] : []
+            const base = baseList.find((b) => {
+                const bn = normalizeRoomNumber(b.number)
+                const rn = normalizeRoomNumber(imported.number)
+                if (b.id && imported.id && b.id === imported.id) return true
+                if (bn && rn && bn === rn) return true
+                return false
+            })
+
+            if (!base) return imported
+
+            // merge but do not overwrite base fields with undefined/null from imported
+            const result: any = { ...base }
+            Object.keys(imported).forEach((key) => {
+                const val: any = (imported as any)[key]
+                if (typeof val === 'undefined' || val === null) return
+                result[key] = val
+            })
+
+            // handle nested arrival/departure: prefer imported sub-object when defined
+            if ((imported as any).arrival !== undefined && (imported as any).arrival !== null) {
+                result.arrival = (imported as any).arrival
+            }
+            if ((imported as any).departure !== undefined && (imported as any).departure !== null) {
+                result.departure = (imported as any).departure
+            }
+
+            // Preserve occupancy-related base flags unless import explicitly and positively sets alternatives.
+            if (base.occupiedConfirmed) result.occupiedConfirmed = true
+            if (base.stayoverGuestName) result.stayoverGuestName = base.stayoverGuestName
+
+            // If occupied is true, ensure freeConfirmed is not set
+            if (result.occupiedConfirmed) result.freeConfirmed = false
+
+            return result as RoomPlan
+        }
+
+        // populate dates from primary tabs (preserve roomsByDay fallback)
         tabDateEntries.forEach(({ tab, dateIso }) => {
-            next[dateIso] = importedRoomsByDate[dateIso] || roomsByDay[tab] || []
+            const imported = importedRoomsByDate[dateIso]
+            if (imported && imported.length > 0) {
+                next[dateIso] = imported.map((r) => mergeWithBase(tab, r))
+            } else {
+                next[dateIso] = roomsByDay[tab] || []
+            }
         })
 
+        // also ensure any other imported dates (not part of primary tabs) are included, merged with best-effort base
         Object.entries(importedRoomsByDate).forEach(([dateIso, rooms]) => {
-            next[dateIso] = rooms
+            if (!rooms || rooms.length === 0) {
+                if (!next[dateIso]) next[dateIso] = []
+                return
+            }
+            // if we already populated this date from primary tabs, skip to avoid overwriting merged results
+            if (next[dateIso] && next[dateIso].length > 0) return
+
+            // try to find mapped tab for this date to use its base list, else null
+            const mappedEntry = tabDateEntries.find((t) => t.dateIso === dateIso)
+            const mappedTab = mappedEntry ? mappedEntry.tab : null
+            next[dateIso] = rooms.map((r) => mergeWithBase(mappedTab, r))
         })
 
         return next
@@ -332,9 +388,13 @@ export default function RoomSheetView({
                                         <th scope="row" className="sheet-room-cell">{roomNumber}</th>
                                         {dateColumns.map((column) => {
                                             const baseRoom = lookupByDate[column.dateIso]?.get(roomNumber)
+                                            const importedRoom = (importedRoomsByDate && importedRoomsByDate[column.dateIso])
+                                                ? (importedRoomsByDate[column.dateIso].find((r) => normalizeRoomNumber(r.number) === roomNumber) as RoomPlan | undefined)
+                                                : undefined
                                             const overlay = spanOverlays[column.dateIso]?.get(roomNumber)
                                             const effectiveRoom = overlay ? { ...(baseRoom || {}), ...overlay } as RoomPlan : baseRoom
                                             const cell = buildCellModel(effectiveRoom)
+                                            
                                             const keepStayoverColor = Boolean(
                                                 cell.state === 'occupied'
                                                 && previousState === 'occupied'
