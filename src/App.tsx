@@ -3985,7 +3985,16 @@ export default function App() {
         setCustomSupplyChips((prev) => {
             const exists = prev.some((chip) => chip.toLowerCase() === cleaned.toLowerCase())
             if (exists) return prev
-            return [...prev, cleaned]
+            const next = [...prev, cleaned]
+            if (runtimeMode === 'online') {
+                try {
+                    // persist to shared meta doc
+                    ; (activeStore as any).persistMetaState({ customSupplyChips: next })
+                } catch (e) {
+                    console.warn('[persistMetaState] write failed', e)
+                }
+            }
+            return next
         })
     }
 

@@ -268,6 +268,7 @@ export function createFirebaseOpsStore(): OpsStore {
             let maintenanceItems: MaintenanceItem[] = []
             let staffDocs: any[] = []
             let availabilityDocs: any[] = []
+            let metaDoc: Record<string, any> = {}
 
             function emitState() {
                 if (roomPlansByDay.Dnes.length === 0 && roomPlansByDay.Zitra.length === 0 && roomPlansByDay.Pozitri.length === 0) return
@@ -284,8 +285,10 @@ export function createFirebaseOpsStore(): OpsStore {
                     tasks,
                     supplyRequests,
                     maintenanceItems,
-                    staff
-                })
+                    staff,
+                    // include persisted meta like custom supply chips
+                    customSupplyChips: Array.isArray(metaDoc?.customSupplyChips) ? metaDoc.customSupplyChips : []
+                } as any)
             }
 
             unsubs.push(onSnapshot(
@@ -407,12 +410,39 @@ export function createFirebaseOpsStore(): OpsStore {
             ))
             devLog('Listener attached: dailyAvailability')
 
+            // listen to meta/appState document for persisted UI meta like custom chips
+            try {
+                const metaRef = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'meta', 'appState')
+                unsubs.push(onSnapshot(
+                    metaRef,
+                    (snap) => {
+                        metaDoc = snap.exists() ? (snap.data() as Record<string, any>) : {}
+                        emitState()
+                    },
+                    (err) => {
+                        const fullError = buildListenerError(err, PATHS.meta)
+                        devLog('Listener error: meta/appState', fullError)
+                        onError(fullError)
+                    }
+                ))
+                devLog('Listener attached: meta/appState')
+            } catch (e) {
+                devLog('Meta listener attach failed', e)
+            }
+
             return () => {
                 unsubs.forEach((u) => u())
             }
         },
         saveState(_state: OpsPersistedState) {
             // Realtime listeners are source of truth in online mode.
+        },
+        // persist meta/appState for global UI settings like customSupplyChips
+        async persistMetaState(meta: { customSupplyChips?: string[] }) {
+            if (!firestoreDb) return
+            const ref = doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'meta', 'appState')
+            const { cleaned } = sanitizeForFirestore(meta, 'meta.appState')
+            await runWrite('persistMetaState', () => setDoc(ref, cleaned, { merge: true }))
         },
         updateRoomPlan(day: OpsTab, roomId: string, patch) {
             if (!firestoreDb) return
