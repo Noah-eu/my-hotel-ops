@@ -4218,6 +4218,15 @@ export default function App() {
                         }
                         if (state.maintenanceItems) setMaintenanceItems(state.maintenanceItems)
                         if (state.staff) setStaff(state.staff as StaffMember[])
+                        if (state.customSupplyChips && Array.isArray(state.customSupplyChips)) {
+                            setCustomSupplyChips((prev) => {
+                                const merged = [...prev]
+                                state.customSupplyChips.forEach((c: string) => {
+                                    if (!merged.some((m) => m.toLowerCase() === c.toLowerCase())) merged.push(c)
+                                })
+                                return merged
+                            })
+                        }
                         setDiagnostics((prev) => ({
                             ...prev,
                             firestoreStatus: 'connected'
