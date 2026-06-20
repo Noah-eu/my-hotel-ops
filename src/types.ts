@@ -62,6 +62,7 @@ export interface RoomPlan {
     planDateIso?: string
     stayoverGuestName?: string
     stayoverUntil?: string
+    carryOverResolvedAt?: string
     source?: RecordSource
     createdByUid?: string
     createdByName?: string
@@ -144,6 +145,7 @@ export type RoomPlanScheduleSnapshot = {
     planDateIso?: string
     stayoverGuestName?: string
     stayoverUntil?: string
+    carryOverResolvedAt?: string
     source?: RecordSource
     createdByUid?: string
     createdByName?: string

@@ -249,6 +249,7 @@ export default function DashboardToday({
     focusLateTaskRoomRequest?: LateTaskRoomFocusRequest | null
     onFocusLateTaskRoomResult?: (result: { requestId: number; roomNumber: string; found: boolean }) => void
     readOnly?: boolean
+    unfinishedCarryOvers?: Record<string, string>
 }) {
     const [expandedRoom, setExpandedRoom] = useState<string | null>(null)
     const [estimatingRoom, setEstimatingRoom] = useState<string | null>(null)
@@ -604,6 +605,20 @@ export default function DashboardToday({
                                     )}
                                     <button className={`room-action-btn ${isExpanded ? 'active' : ''}`} onClick={() => toggleExpandedRoom(room.id)} aria-expanded={isExpanded}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
+                                    {(() => {
+                                        const normalized = normalizeRoomNumber(room.number)
+                                        const carryDate = unfinishedCarryOvers && unfinishedCarryOvers[normalized]
+                                        if (carryDate && room.status !== 'hotovo') {
+                                            const d = new Date(`${carryDate}T00:00:00`)
+                                            const label = `Nedokončeno z ${d.getDate()}.${d.getMonth() + 1}.`
+                                            return (
+                                                <div style={{ marginTop: 6, padding: '2px 8px', borderRadius: 999, background: '#fff1f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, fontWeight: 800 }}>
+                                                    {label}
+                                                </div>
+                                            )
+                                        }
+                                        return null
+                                    })()}
                                     {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted mini-muted-stayover">{room.stayoverGuestName}</div>}
                                     {room.freeConfirmed && <div className="mini-muted mini-muted-free">Pokoj je dostupný při volné kapacitě.</div>}
                                     {hasLateTaskAlert && (

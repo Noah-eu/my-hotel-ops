@@ -1294,6 +1294,39 @@ export default function App() {
 
     const todayDateIso = formatLocalDateIso(new Date())
 
+    const unfinishedCarryOverByRoomNumber = useMemo(() => {
+        const map: Record<string, string> = {}
+        const today = todayDateIso
+
+        function hasTurnover(r: any) {
+            return Boolean(r.departure || r.arrival || r.departureTime || r.arrivalTime)
+        }
+
+        // scan importedRoomsByDate for past dates
+        Object.keys(importedRoomsByDate).forEach((dateIso) => {
+            if (!dateIso || dateIso >= today) return
+            const rows = importedRoomsByDate[dateIso] || []
+            rows.forEach((r) => {
+                if (!hasTurnover(r)) return
+                if (r.status === 'hotovo') return
+                const normalized = normalizeCatalogRoomNumber(r.number || r.roomNumber || '')
+                if (!normalized) return
+                const existing = map[normalized]
+                // choose the most recent past date (closest to today)
+                if (!existing || existing < dateIso) map[normalized] = dateIso
+            })
+        })
+
+        // exclude carry-overs already resolved in today's room plan
+        Object.values(roomsByDay.Dnes || []).forEach((r) => {
+            const normalized = normalizeCatalogRoomNumber(r.number || '')
+            if (!normalized) return
+            if (r.carryOverResolvedAt || r.status === 'hotovo') delete map[normalized]
+        })
+
+        return map
+    }, [importedRoomsByDate, roomsByDay, todayDateIso])
+
     const visibleDashboardTasks = useMemo(
         () => visibleTodayTasks.filter((task) => matchesOperationalTaskDate(task, effectiveDateIso, todayDateIso)),
         [visibleTodayTasks, effectiveDateIso, todayDateIso]
@@ -3316,7 +3349,9 @@ export default function App() {
         const manualOriginMeta = buildManualOriginMeta()
 
         let patch: Partial<any> = {}
-        if (action === 'hotovo') patch = { status: 'hotovo' }
+        if (action === 'hotovo') {
+            patch = { status: 'hotovo', carryOverResolvedAt: new Date().toISOString() }
+        }
         if (action === 'prevzit') patch = { status: 'prevzato', assigned: assignedName }
         if (action === 'odhad') patch = { status: 'odhad', estimatedReady: computedEstimate || '12:30', estimateSetAt: setAt, assigned: assignedName }
         if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen', ...manualOriginMeta }
@@ -3335,6 +3370,7 @@ export default function App() {
                     return {
                         ...r,
                         status: 'hotovo',
+                        carryOverResolvedAt: new Date().toISOString(),
                         statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
@@ -4728,6 +4764,7 @@ export default function App() {
                                     onCancelTask={handleCancelTask}
                                     onAcknowledgeLateTasks={handleAcknowledgeRoomLateTasks}
                                     onReportProblem={handleReportRoomProblem}
+                                    unfinishedCarryOvers={unfinishedCarryOverByRoomNumber}
                                     role={(currentUser?.role || 'cleaner') as UserRole}
                                     dayLabel={dayLabel}
                                     currentUserId={userId}
