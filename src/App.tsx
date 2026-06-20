@@ -1298,19 +1298,25 @@ export default function App() {
         const map: Record<string, string> = {}
         const today = todayDateIso
 
-        function hasTurnover(r: any) {
-            return Boolean(r.departure || r.arrival || r.departureTime || r.arrivalTime)
-        }
-
         // scan importedRoomsByDate for past dates
         Object.keys(importedRoomsByDate).forEach((dateIso) => {
             if (!dateIso || dateIso >= today) return
             const rows = importedRoomsByDate[dateIso] || []
             rows.forEach((r) => {
-                if (!hasTurnover(r)) return
+                // skip already completed
                 if (r.status === 'hotovo') return
+
+                const hasDeparture = Boolean(r.departure || r.departureTime)
+                const hasArrival = Boolean(r.arrival || r.arrivalTime)
+
+                // Only consider carry-over when there was a departure and no arrival,
+                // or when an explicit checkoutException/problem exists.
+                const isCarryCandidate = (hasDeparture && !hasArrival) || Boolean(r.checkoutException) || r.status === 'problem'
+                if (!isCarryCandidate) return
+
                 const normalized = normalizeCatalogRoomNumber(r.number || r.roomNumber || '')
                 if (!normalized) return
+
                 const existing = map[normalized]
                 // choose the most recent past date (closest to today)
                 if (!existing || existing < dateIso) map[normalized] = dateIso
