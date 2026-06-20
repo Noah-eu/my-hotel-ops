@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Task, MaintenanceItem, UserRole } from '../types'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
@@ -38,6 +38,59 @@ function statusColor(item: MaintenanceItem) {
     if (item.priority === 'urgent' || item.status === 'new') return '#dc2626'
     return '#0ea5a4'
 }
+
+type UnifiedMaintenanceEntry =
+    | { kind: 'maintenanceItem'; item: MaintenanceItem }
+    | { kind: 'roomTask'; task: Task }
+
+function isDoneItem(entry?: UnifiedMaintenanceEntry | null) {
+    if (!entry) return false
+    if (entry.kind === 'maintenanceItem') return (entry.item?.status || '') === 'done'
+    return (entry.task?.status || '') === 'done'
+}
+
+function isCancelledItem(entry?: UnifiedMaintenanceEntry | null) {
+    if (!entry) return false
+    if (entry.kind === 'maintenanceItem') return (entry.item?.status || '') === 'cancelled'
+    return (entry.task?.status || '') === 'cancelled'
+}
+
+function isActiveItem(entry?: UnifiedMaintenanceEntry | null) {
+    if (!entry) return false
+    return !isDoneItem(entry) && !isCancelledItem(entry)
+}
+
+function isUrgentItem(entry?: UnifiedMaintenanceEntry | null) {
+    if (!entry) return false
+    if (entry.kind === 'maintenanceItem') return (entry.item?.priority || 'normal') === 'urgent'
+    return (entry.task?.priority || 'normal') === 'urgent'
+}
+
+function isWaitingForMaterialItem(entry?: UnifiedMaintenanceEntry | null) {
+    if (!entry || entry.kind !== 'maintenanceItem') return false
+    return (entry.item?.status || '') === 'waiting_material'
+}
+
+function isNewItem(entry?: UnifiedMaintenanceEntry | null) {
+    if (!entry || !isActiveItem(entry)) return false
+
+    if (entry.kind === 'maintenanceItem') {
+        const status = entry.item?.status || ''
+        return status === 'new' || (!entry.item?.maintenanceAcknowledgedAt && status !== 'accepted' && status !== 'in_progress')
+    }
+
+    const status = entry.task?.status || ''
+    return status === 'new' || status === 'read' || (!entry.task?.maintenanceAcknowledgedAt && status !== 'accepted' && status !== 'in_progress')
+}
+
+function isTaskAssignedToMaintenance(task?: Task | null) {
+    if (!task) return false
+    if ((task.assignedToRole || '') === 'maintenance') return true
+
+    const assignedName = (task.assignedToName || '').toLowerCase()
+    return assignedName.includes('serhii') || assignedName.includes('udrzb')
+}
+
 export default function MaintenanceView({
     maintenanceItems,
     tasks,
@@ -76,6 +129,7 @@ export default function MaintenanceView({
     const [materialInput, setMaterialInput] = useState<Record<string, string>>({})
     const [materialOpenItemId, setMaterialOpenItemId] = useState<string | null>(null)
     const [highlightTargetKey, setHighlightTargetKey] = useState<string | null>(null)
+    const [activeFilter, setActiveFilter] = useState<'active' | 'new' | 'urgent' | 'waiting' | 'done'>('active')
 
     const isAdmin = isAdminRole(role)
     const isLead = isCleaningLeadRole(role)
@@ -146,14 +200,10 @@ export default function MaintenanceView({
         }
     }, [focusRequest])
 
-    const visibleItems = maintenanceItems.filter(i => i.status !== 'cancelled')
+    const safeMaintenanceItems = Array.isArray(maintenanceItems) ? maintenanceItems : []
+    const safeTasks = Array.isArray(tasks) ? tasks : []
 
-    const adminCounts = {
-        nove: maintenanceItems.filter(i => i.status === 'new').length,
-        urgent: maintenanceItems.filter(i => i.priority === 'urgent' && i.status !== 'cancelled').length,
-        waiting: maintenanceItems.filter(i => i.status === 'waiting_material').length,
-        done: maintenanceItems.filter(i => i.status === 'done').length
-    }
+    const visibleItems = safeMaintenanceItems.filter(i => (i?.status || '') !== 'cancelled')
 
     function handleCreate() {
         if (!newTitle.trim()) return
@@ -166,14 +216,72 @@ export default function MaintenanceView({
         setCreating(false)
     }
 
-    const maintenanceVisibleToUser = isAdmin ? visibleItems : isLead ? visibleItems : isMaintenance ? visibleItems.filter(i => !i.assignedTo || i.assignedTo === currentUserId || i.priority === 'urgent') : visibleItems
+    const maintenanceVisibleToUser = isAdmin
+        ? visibleItems
+        : isLead
+            ? visibleItems
+            : isMaintenance
+                ? visibleItems.filter(i => !i.assignedTo || i.assignedTo === currentUserId || i.priority === 'urgent')
+                : visibleItems
 
-    const sortedItems = [...maintenanceVisibleToUser].sort((a, b) => {
+    const maintenanceRoomTasks = useMemo(
+        () => safeTasks.filter((task) => isTaskAssignedToMaintenance(task)),
+        [safeTasks]
+    )
+
+    const unifiedEntries = useMemo<UnifiedMaintenanceEntry[]>(() => {
+        const items: UnifiedMaintenanceEntry[] = maintenanceVisibleToUser.map((item) => ({ kind: 'maintenanceItem', item }))
+        const roomTasks: UnifiedMaintenanceEntry[] = maintenanceRoomTasks.map((task) => ({ kind: 'roomTask', task }))
+        return [...items, ...roomTasks]
+    }, [maintenanceVisibleToUser, maintenanceRoomTasks])
+
+    const counts = useMemo(() => ({
+        nove: unifiedEntries.filter((entry) => isNewItem(entry)).length,
+        urgent: unifiedEntries.filter((entry) => isActiveItem(entry) && isUrgentItem(entry)).length,
+        waiting: unifiedEntries.filter((entry) => isActiveItem(entry) && isWaitingForMaterialItem(entry)).length,
+        done: unifiedEntries.filter((entry) => isDoneItem(entry)).length
+    }), [unifiedEntries])
+
+    const filteredEntries = useMemo(() => (
+        unifiedEntries.filter((entry) => {
+            if (activeFilter === 'active') return isActiveItem(entry)
+            if (activeFilter === 'new') return isNewItem(entry)
+            if (activeFilter === 'urgent') return isActiveItem(entry) && isUrgentItem(entry)
+            if (activeFilter === 'waiting') return isActiveItem(entry) && isWaitingForMaterialItem(entry)
+            if (activeFilter === 'done') return isDoneItem(entry)
+            return true
+        })
+    ), [unifiedEntries, activeFilter])
+
+    const visibleMaintenanceItemIds = useMemo(() => {
+        const ids = new Set<string>()
+        filteredEntries.forEach((entry) => {
+            if (entry.kind === 'maintenanceItem' && entry.item?.id) ids.add(entry.item.id)
+        })
+        return ids
+    }, [filteredEntries])
+
+    const visibleTaskIds = useMemo(() => {
+        const ids = new Set<string>()
+        filteredEntries.forEach((entry) => {
+            if (entry.kind === 'roomTask' && entry.task?.id) ids.add(entry.task.id)
+        })
+        return ids
+    }, [filteredEntries])
+
+    const sortedItems = [...maintenanceVisibleToUser]
+        .filter((item) => visibleMaintenanceItemIds.has(item.id))
+        .sort((a, b) => {
         const pa = a.priority === 'urgent' ? 0 : 1
         const pb = b.priority === 'urgent' ? 0 : 1
         if (pa !== pb) return pa - pb
-        return a.createdAt.localeCompare(b.createdAt)
+        return (a.createdAt || '').localeCompare(b.createdAt || '')
     })
+
+    const visibleRoomTasks = useMemo(
+        () => maintenanceRoomTasks.filter((task) => visibleTaskIds.has(task.id)),
+        [maintenanceRoomTasks, visibleTaskIds]
+    )
 
     function renderItemCard(m: MaintenanceItem) {
         const canActAsMaintenance = isMaintenance && (!m.assignedTo || m.assignedTo === currentUserId)
@@ -289,14 +397,13 @@ export default function MaintenanceView({
             <div className="section">
                 <h3>Údržba</h3>
 
-                {(isAdmin || isLead) && (
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                        <div style={{ fontSize: 13 }}>Nové: <strong>{adminCounts.nove}</strong></div>
-                        <div style={{ fontSize: 13 }}>Urgentní: <strong>{adminCounts.urgent}</strong></div>
-                        <div style={{ fontSize: 13 }}>Čeká na materiál: <strong>{adminCounts.waiting}</strong></div>
-                        <div style={{ fontSize: 13 }}>Hotovo: <strong>{adminCounts.done}</strong></div>
-                    </div>
-                )}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <button className={`chip ${activeFilter === 'active' ? 'active' : ''}`} onClick={() => setActiveFilter('active')}>Aktivní</button>
+                    <button className={`chip ${activeFilter === 'new' ? 'active' : ''}`} onClick={() => setActiveFilter('new')}>Nové: <strong>{counts.nove}</strong></button>
+                    <button className={`chip ${activeFilter === 'urgent' ? 'active' : ''}`} onClick={() => setActiveFilter('urgent')}>Urgentní: <strong>{counts.urgent}</strong></button>
+                    <button className={`chip ${activeFilter === 'waiting' ? 'active' : ''}`} onClick={() => setActiveFilter('waiting')}>Čeká na materiál: <strong>{counts.waiting}</strong></button>
+                    <button className={`chip ${activeFilter === 'done' ? 'active' : ''}`} onClick={() => setActiveFilter('done')}>Hotovo: <strong>{counts.done}</strong></button>
+                </div>
 
                 {(isAdmin || isLead) && (
                     <div style={{ marginBottom: 8 }}>
@@ -336,20 +443,20 @@ export default function MaintenanceView({
 
                 <h4 style={{ margin: '8px 0' }}>Závady</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {sortedItems.length === 0 && (
+                    {sortedItems.length === 0 && visibleRoomTasks.length === 0 && (
                         <div className="room-card" style={{ color: '#475569' }}>Žádné nahlášené problémy.</div>
                     )}
                     {sortedItems.map(renderItemCard)}
                 </div>
 
-                {tasks.length > 0 && (
+                {maintenanceRoomTasks.length > 0 && (
                     <div style={{ marginTop: 12 }}>
                         <h4>Úkoly z pokojů</h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {tasks
-                                .filter((task) => task.status !== 'cancelled')
+                            {visibleRoomTasks
+                                .filter((task) => (task?.status || '') !== 'cancelled')
                                 .map((t) => {
-                                    const unreadForMaintenance = t.status !== 'done' && !t.maintenanceAcknowledgedAt
+                                    const unreadForMaintenance = (t.status || '') !== 'done' && !t.maintenanceAcknowledgedAt
                                     return (
                                         <div
                                             key={t.id}
