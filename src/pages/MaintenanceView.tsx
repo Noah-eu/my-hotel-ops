@@ -102,6 +102,7 @@ export default function MaintenanceView({
     onAcknowledgeTask,
     onAcknowledgeMaintenanceItem,
     onTaskAction,
+    onRequestMaterial,
     onJumpToRoom,
     focusRequest,
     onFocusResult
@@ -116,6 +117,7 @@ export default function MaintenanceView({
     onAcknowledgeTask: (taskId: string) => void
     onAcknowledgeMaintenanceItem: (itemId: string) => void
     onTaskAction: (taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') => void
+    onRequestMaterial?: (taskId: string, materialText: string) => void
     onJumpToRoom: (roomNumber?: string) => void
     focusRequest?: MaintenanceFocusRequest | null
     onFocusResult?: (result: { requestId: number; targetId: string; targetKind: 'task' | 'item'; found: boolean }) => void
@@ -128,6 +130,7 @@ export default function MaintenanceView({
     const [newNote, setNewNote] = useState('')
     const [materialInput, setMaterialInput] = useState<Record<string, string>>({})
     const [materialOpenItemId, setMaterialOpenItemId] = useState<string | null>(null)
+    const [materialOpenTaskId, setMaterialOpenTaskId] = useState<string | null>(null)
     const [highlightTargetKey, setHighlightTargetKey] = useState<string | null>(null)
     const [activeFilter, setActiveFilter] = useState<'active' | 'new' | 'urgent' | 'waiting' | 'done'>('active')
 
@@ -272,11 +275,11 @@ export default function MaintenanceView({
     const sortedItems = [...maintenanceVisibleToUser]
         .filter((item) => visibleMaintenanceItemIds.has(item.id))
         .sort((a, b) => {
-        const pa = a.priority === 'urgent' ? 0 : 1
-        const pb = b.priority === 'urgent' ? 0 : 1
-        if (pa !== pb) return pa - pb
-        return (a.createdAt || '').localeCompare(b.createdAt || '')
-    })
+            const pa = a.priority === 'urgent' ? 0 : 1
+            const pb = b.priority === 'urgent' ? 0 : 1
+            if (pa !== pb) return pa - pb
+            return (a.createdAt || '').localeCompare(b.createdAt || '')
+        })
 
     const visibleRoomTasks = useMemo(
         () => maintenanceRoomTasks.filter((task) => visibleTaskIds.has(task.id)),
@@ -495,7 +498,31 @@ export default function MaintenanceView({
                                                     {t.roomNumber && (
                                                         <button className="chip" onClick={() => onJumpToRoom(t.roomNumber)}>Přejít na pokoj</button>
                                                     )}
+                                                    {(isAdmin || isLead || isMaintenance || isTaskAssignedToMaintenance(t)) && (t.status !== 'done' && t.status !== 'cancelled') && (
+                                                        <button className="chip" onClick={() => setMaterialOpenTaskId(materialOpenTaskId === t.id ? null : t.id)}>Potřebuji materiál</button>
+                                                    )}
                                                 </div>
+                                                {materialOpenTaskId === t.id && (
+                                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingTop: 6 }}>
+                                                        <input
+                                                            placeholder="Co chybí? Např. silikon, žárovka"
+                                                            value={materialInput[t.id] || ''}
+                                                            onChange={(e) => setMaterialInput((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                                                            style={{ minWidth: 180, flex: 1 }}
+                                                        />
+                                                        <button
+                                                            className="btn"
+                                                            onClick={() => {
+                                                                onRequestMaterial?.(t.id, materialInput[t.id] || '')
+                                                                setMaterialInput((prev) => ({ ...prev, [t.id]: '' }))
+                                                                setMaterialOpenTaskId(null)
+                                                            }}
+                                                        >
+                                                            Uložit materiál
+                                                        </button>
+                                                        <button className="btn" onClick={() => setMaterialOpenTaskId(null)}>Zavřít</button>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     )

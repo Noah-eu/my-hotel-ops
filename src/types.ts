@@ -279,7 +279,7 @@ export interface Task extends OriginMetadata {
     priority: 'normal' | 'urgent'
     assignedToRole: UserRole
     assignedToName?: string
-    status: 'new' | 'read' | 'accepted' | 'in_progress' | 'done' | 'problem' | 'cancelled'
+    status: 'new' | 'read' | 'accepted' | 'in_progress' | 'done' | 'problem' | 'waiting_material' | 'cancelled'
     note?: string
     createdBy: string
     createdAt: string
@@ -290,6 +290,10 @@ export interface Task extends OriginMetadata {
     acknowledgedBy?: string
     maintenanceAcknowledgedAt?: string
     maintenanceAcknowledgedBy?: string
+    // material request fields
+    materialNote?: string
+    materialRequestedAt?: string
+    materialRequestedByName?: string
 }
 
 export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'

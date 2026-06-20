@@ -3959,6 +3959,21 @@ export default function App() {
         )
     }
 
+    function handleRequestMaterial(taskId: string, materialText: string) {
+        const patch: Partial<import('./types').Task> = {
+            status: 'waiting_material',
+            materialNote: materialText || undefined,
+            materialRequestedAt: new Date().toISOString(),
+            materialRequestedByName: currentUser?.name || undefined
+        }
+
+        if (runtimeMode === 'online') {
+            activeStore.updateTask(taskId, patch)
+        }
+
+        setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...patch } : task)))
+    }
+
     function handleCreateMaintenanceItem(input: { roomNumber?: string; title: string; category: MaintenanceItem['category']; priority: MaintenanceItem['priority']; note?: string }) {
         if (!currentUser) return
         const manualOriginMeta = buildManualOriginMeta()
@@ -5956,6 +5971,7 @@ export default function App() {
                                     onAcknowledgeTask={handleAcknowledgeMaintenanceTask}
                                     onAcknowledgeMaintenanceItem={handleAcknowledgeMaintenanceItem}
                                     onTaskAction={handleMaintenanceTaskAction}
+                                    onRequestMaterial={handleRequestMaterial}
                                     onJumpToRoom={handleJumpToRoomFromMaintenance}
                                     focusRequest={maintenanceFocusRequest}
                                     onFocusResult={handleMaintenanceFocusResult}
