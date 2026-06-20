@@ -485,6 +485,16 @@ export default function MaintenanceView({
                                                 <div style={{ fontSize: 13, color: '#64748b' }}>
                                                     {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {t.createdAt || '-'}
                                                 </div>
+                                                {(t.note || '').trim() && (
+                                                    <div style={{ marginTop: 6, color: '#334155', fontSize: 13, lineHeight: 1.35 }}>
+                                                        {(t.note || '').trim()}
+                                                    </div>
+                                                )}
+                                                {t.status === 'waiting_material' && (t.materialNote || '').trim() && (
+                                                    <div style={{ marginTop: 6, color: '#6b21a8', fontSize: 13, fontWeight: 700 }}>
+                                                        Materiál: {(t.materialNote || '').trim()}
+                                                    </div>
+                                                )}
                                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                                     {unreadForMaintenance && (
                                                         <button className="chip" style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeTask(t.id)}>Přečteno</button>
