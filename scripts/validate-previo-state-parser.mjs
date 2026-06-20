@@ -680,6 +680,94 @@ function runStav0702SideContaminationChecks(parsed, preview) {
     return failures
 }
 
+function runStav0702FirstArrivalGuestChecks(parsed, preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '20.06.2026 07:02')
+
+    const expectedFirstArrivalGuests = [
+        { dateIso: '2026-06-20', roomNumber: '101', guest: 'Nick Brookes' },
+        { dateIso: '2026-06-20', roomNumber: '204', guest: 'Daniel Hagios' },
+        { dateIso: '2026-06-20', roomNumber: '301', guest: 'Pallavi Lahri' },
+        { dateIso: '2026-06-20', roomNumber: '303', guest: 'Dan Stuparu' },
+        { dateIso: '2026-06-21', roomNumber: '104', guest: 'Michele Giovanni Miano' },
+        { dateIso: '2026-06-22', roomNumber: '204', guest: 'Lorraine Cahalane' },
+        { dateIso: '2026-06-22', roomNumber: '304', guest: 'Norbert Habich' },
+        { dateIso: '2026-06-23', roomNumber: '304', guest: 'Filip Rychetský' },
+        { dateIso: '2026-06-24', roomNumber: '001', guest: 'Chaymae Aissaoui' }
+    ]
+
+    expectedFirstArrivalGuests.forEach((target) => {
+        const parserRow = findRow(parsed.rows, target.dateIso, target.roomNumber)
+        const planRow = findPlanRow(byDate, target.dateIso, target.roomNumber)
+
+        expect(failures, Boolean(parserRow), `Missing parser row ${target.dateIso}/${target.roomNumber} for first-arrival regression`)
+        expect(failures, Boolean(planRow), `Missing byDate row ${target.dateIso}/${target.roomNumber} for first-arrival regression`)
+
+        if (parserRow) {
+            expectEqual(
+                failures,
+                `${target.dateIso}/${target.roomNumber} parser arrival guest`,
+                parserRow.arrivalGuestName,
+                target.guest
+            )
+        }
+
+        if (planRow) {
+            expectEqual(
+                failures,
+                `${target.dateIso}/${target.roomNumber} byDate arrival guest`,
+                planRow.arrival?.guestLabel,
+                target.guest
+            )
+        }
+    })
+
+    const parser24101 = findRow(parsed.rows, '2026-06-24', '101')
+    const byDate24101 = findPlanRow(byDate, '2026-06-24', '101')
+    expect(failures, Boolean(parser24101), 'Missing parser row 2026-06-24/101 for arrival full-name regression')
+    expect(failures, Boolean(byDate24101), 'Missing byDate row 2026-06-24/101 for arrival full-name regression')
+
+    if (parser24101) {
+        expectEqual(
+            failures,
+            '24.6/101 parser arrival guest',
+            parser24101.arrivalGuestName,
+            'Anette Elvine J B Solbakken'
+        )
+        expectNumber(failures, '24.6/101 parser arrival pax', parser24101.arrivalGuestCount, 4)
+        expectTextContains(
+            failures,
+            '24.6/101 parser arrival BOX',
+            notesToString(parser24101.arrivalNotes),
+            'BOX 2'
+        )
+    }
+
+    if (byDate24101) {
+        expectEqual(
+            failures,
+            '24.6/101 byDate arrival guest',
+            byDate24101.arrival?.guestLabel,
+            'Anette Elvine J B Solbakken'
+        )
+        expectNumber(failures, '24.6/101 byDate arrival pax', byDate24101.arrival?.guestCount, 4)
+        expectTextContains(
+            failures,
+            '24.6/101 byDate arrival BOX note',
+            notesToString(byDate24101.arrival?.notes),
+            'BOX 2'
+        )
+        expectTextContains(
+            failures,
+            '24.6/101 byDate arrival BOX field',
+            byDate24101.box,
+            'BOX 2'
+        )
+    }
+
+    return failures
+}
+
 function runTotalsChecks(parsed) {
     const failures = []
     const totalsByDate = parsed.dayTotals || {}
@@ -836,6 +924,7 @@ async function main() {
     failures.push(...runConcreteRegressionChecks(parsed))
     failures.push(...runCriticalFixtureCellChecks(parsed, preview))
     failures.push(...runStav0702SideContaminationChecks(parsed, preview))
+    failures.push(...runStav0702FirstArrivalGuestChecks(parsed, preview))
     if (failures.length > 0) {
         console.error('[validate:previo-state] FAIL')
         failures.forEach((failure) => console.error(`- ${failure}`))

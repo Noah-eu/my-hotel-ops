@@ -804,15 +804,116 @@ function haveSameNotes(left, right) {
     return leftNorm.every((note, index) => note === rightNorm[index])
 }
 
+function hasMultipleNoteMentions(rawText) {
+    const noteMentions = String(rawText || '').match(/recepce\s*:/gi) || []
+    return noteMentions.length >= 2
+}
+
+function extractNameTokensFromSideText(sideText) {
+    return String(sideText || '')
+        .split(/\r?\n/)
+        .flatMap((line) => {
+            const trimmed = String(line || '').trim()
+            if (!trimmed) return []
+
+            const withoutRoomPrefix = trimmed.replace(/^\d{1,3}\s+/, '')
+            const cleaned = withoutRoomPrefix
+                .replace(/\b\d{1,2}\.\s*\d{1,2}\.?\b/g, ' ')
+                .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\b/gi, ' ')
+                .replace(/\b(?:AM|PM)\b/gi, ' ')
+                .replace(/\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/g, ' ')
+                .replace(/[()]/g, ' ')
+                .replace(/\.\.\./g, ' ')
+                .replace(/\b(?:odjezd|prijezd|datum|pokoj|poznamka|recepce|box|alfred|studio|chill|apartments)\b/gi, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+
+            if (!cleaned) return []
+            return cleaned
+                .split(' ')
+                .map((token) => token.trim())
+                .filter((token) => /^\p{L}[\p{L}'’-]*$/u.test(token))
+        })
+}
+
+function expandPrimaryGuestName(sideText, baseName) {
+    const normalizedBase = String(baseName || '').trim()
+    if (!normalizedBase) return undefined
+
+    const tokens = extractNameTokensFromSideText(sideText)
+    const baseTokens = normalizedBase.split(' ').map((token) => token.trim()).filter(Boolean)
+    if (tokens.length === 0 || baseTokens.length === 0) return normalizedBase
+
+    const baseNormTokens = baseTokens.map((token) => normalizeForMatch(token))
+    let startIndex = -1
+    for (let i = 0; i <= tokens.length - baseTokens.length; i++) {
+        const segment = tokens.slice(i, i + baseTokens.length).map((token) => normalizeForMatch(token))
+        const same = segment.every((token, index) => token === baseNormTokens[index])
+        if (same) {
+            startIndex = i
+            break
+        }
+    }
+    if (startIndex < 0) return normalizedBase
+
+    const expandedTokens = [...baseTokens]
+    let cursor = startIndex + baseTokens.length
+    const initialTokens = []
+
+    while (cursor < tokens.length && /^\p{Lu}$/u.test(tokens[cursor])) {
+        initialTokens.push(tokens[cursor])
+        cursor += 1
+    }
+
+    if (initialTokens.length > 0) {
+        expandedTokens.push(...initialTokens)
+        if (cursor < tokens.length && /^\p{Lu}[\p{L}'’-]+$/u.test(tokens[cursor])) {
+            expandedTokens.push(tokens[cursor])
+        }
+        return expandedTokens.join(' ')
+    }
+
+    if (cursor < tokens.length && /^\p{Lu}[\p{L}'’-]+$/u.test(tokens[cursor])) {
+        const possibleSurname = tokens[cursor]
+        const surnameRepeatsLater = tokens
+            .slice(cursor + 1)
+            .some((token) => normalizeForMatch(token) === normalizeForMatch(possibleSurname))
+        if (surnameRepeatsLater) {
+            expandedTokens.push(possibleSurname)
+        }
+    }
+
+    return expandedTokens.join(' ')
+}
+
 function pickDepartureGuestName(sideText) {
     const candidates = extractNameCandidates(String(sideText || '').split(/\r?\n/))
     return candidates[0]
 }
 
 function pickArrivalGuestName(sideText) {
-    const candidates = extractNameCandidates(String(sideText || '').split(/\r?\n/))
+    const source = String(sideText || '')
+    const candidates = extractNameCandidates(source.split(/\r?\n/))
     if (candidates.length === 0) return undefined
-    return candidates[candidates.length - 1]
+
+    const normalizedSource = normalizeForMatch(source).replace(/\s+/g, ' ')
+    const timeRegex = /\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g
+    let lastTimeIndex = -1
+    let timeMatch
+    while ((timeMatch = timeRegex.exec(normalizedSource)) !== null) {
+        lastTimeIndex = timeMatch.index
+    }
+
+    let selected = candidates[0]
+    if (lastTimeIndex >= 0) {
+        const firstAfterTime = candidates.find((candidate) => {
+            const candidateIndex = normalizedSource.indexOf(normalizeForMatch(candidate))
+            return candidateIndex > lastTimeIndex
+        })
+        if (firstAfterTime) selected = firstAfterTime
+    }
+
+    return expandPrimaryGuestName(source, selected)
 }
 
 function inferGuestCountNearName(rawText, guestName) {
@@ -1076,7 +1177,14 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                     arrivalNotes = []
                 }
 
-                if (arrivalTime && arrivalGuestName && distinctGuests && departureNotes.length > 0 && haveSameNotes(arrivalNotes, departureNotes)) {
+                if (
+                    arrivalTime
+                    && arrivalGuestName
+                    && distinctGuests
+                    && departureNotes.length > 0
+                    && haveSameNotes(arrivalNotes, departureNotes)
+                    && !hasMultipleNoteMentions(block.rawText)
+                ) {
                     arrivalNotes = []
                 }
 
@@ -1317,7 +1425,14 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                 arrivalNotes = []
             }
 
-            if (arrivalTime && arrivalGuestName && distinctGuests && departureNotes.length > 0 && haveSameNotes(arrivalNotes, departureNotes)) {
+            if (
+                arrivalTime
+                && arrivalGuestName
+                && distinctGuests
+                && departureNotes.length > 0
+                && haveSameNotes(arrivalNotes, departureNotes)
+                && !hasMultipleNoteMentions(rawBlock)
+            ) {
                 arrivalNotes = []
             }
 
