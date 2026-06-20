@@ -406,6 +406,70 @@ function getImportJobParsedTabDates(summary: ImportJob['previewSummary']): Parti
     return Object.keys(parsed).length > 0 ? parsed : null
 }
 
+const DEBUG_PROBE_ROW_KEYS = [
+    '2026-06-21/105',
+    '2026-06-21/201',
+    '2026-06-22/201',
+    '2026-06-22/202',
+    '2026-06-24/205',
+    '2026-06-24/303'
+]
+
+function getImportJobPreviewDiagnostics(summary: ImportJob['previewSummary']) {
+    const summaryRecord = asRecord(summary)
+    if (!summaryRecord) return null
+
+    const parserBuildId = typeof summaryRecord.parserBuildId === 'string' ? summaryRecord.parserBuildId : ''
+    const parserFileVersion = typeof summaryRecord.parserFileVersion === 'string' ? summaryRecord.parserFileVersion : ''
+    const previewGeneratedAt = typeof summaryRecord.previewGeneratedAt === 'string' ? summaryRecord.previewGeneratedAt : ''
+    const previewGeneratedBy = typeof summaryRecord.previewGeneratedBy === 'string' ? summaryRecord.previewGeneratedBy : ''
+    const sourceStoragePath = typeof summaryRecord.sourceStoragePath === 'string' ? summaryRecord.sourceStoragePath : ''
+    const previewRequestId = typeof summaryRecord.previewRequestId === 'string' ? summaryRecord.previewRequestId : ''
+    const previewFreshGenerated = summaryRecord.previewFreshGenerated === true
+
+    const debugProbeRowsRaw = asRecord(summaryRecord.debugProbeRows)
+    const debugProbeRows: Record<string, {
+        departureTime: string
+        arrivalTime: string
+        departureGuest: string
+        departureCount: number | null
+        arrivalGuest: string
+        arrivalCount: number | null
+        departureNotes: string[]
+        arrivalNotes: string[]
+    } | null> = {}
+
+    DEBUG_PROBE_ROW_KEYS.forEach((key) => {
+        const row = asRecord(debugProbeRowsRaw?.[key])
+        if (!row) {
+            debugProbeRows[key] = null
+            return
+        }
+
+        debugProbeRows[key] = {
+            departureTime: typeof row.departureTime === 'string' ? row.departureTime : '',
+            arrivalTime: typeof row.arrivalTime === 'string' ? row.arrivalTime : '',
+            departureGuest: typeof row.departureGuest === 'string' ? row.departureGuest : '',
+            departureCount: typeof row.departureCount === 'number' ? row.departureCount : null,
+            arrivalGuest: typeof row.arrivalGuest === 'string' ? row.arrivalGuest : '',
+            arrivalCount: typeof row.arrivalCount === 'number' ? row.arrivalCount : null,
+            departureNotes: normalizeNotes(row.departureNotes),
+            arrivalNotes: normalizeNotes(row.arrivalNotes)
+        }
+    })
+
+    return {
+        parserBuildId,
+        parserFileVersion,
+        previewGeneratedAt,
+        previewGeneratedBy,
+        sourceStoragePath,
+        previewRequestId,
+        previewFreshGenerated,
+        debugProbeRows
+    }
+}
+
 function buildInlineRowsFromByDate(byDate: Record<string, RoomPlan[]>): ImportJobInlinePreviewRow[] {
     const rows: ImportJobInlinePreviewRow[] = []
 
@@ -988,6 +1052,7 @@ export default function App() {
     const [activeStateImportJobId, setActiveStateImportJobId] = useState<string | null>(null)
     const [latestStateImportBackup, setLatestStateImportBackup] = useState<ImportJobBackupPayload | null>(() => saved?.latestStateImportBackup || null)
     const [generatingImportPreviewJobId, setGeneratingImportPreviewJobId] = useState<string | null>(null)
+    const [lastPreviewRegenerateResponseByJobId, setLastPreviewRegenerateResponseByJobId] = useState<Record<string, { requestId: string; receivedAt: string }>>({})
     const [openImportJobPreviewId, setOpenImportJobPreviewId] = useState<string | null>(null)
     const [expandedImportJobPreviewRows, setExpandedImportJobPreviewRows] = useState<Record<string, boolean>>({})
     const [importJobPreviewInlineErrors, setImportJobPreviewInlineErrors] = useState<Record<string, string>>({})
@@ -1763,7 +1828,21 @@ export default function App() {
 
             if (responseBody?.job) {
                 const updatedJob = responseBody.job as ImportJob
-                upsertImportJobInState(updatedJob)
+                replaceImportJobInState(updatedJob)
+
+                const responseRequestId = String(
+                    responseBody?.diagnostics?.previewRequestId
+                    || updatedJob?.previewSummary?.previewRequestId
+                    || ''
+                ).trim()
+
+                setLastPreviewRegenerateResponseByJobId((prev) => ({
+                    ...prev,
+                    [jobId]: {
+                        requestId: responseRequestId,
+                        receivedAt: new Date().toISOString()
+                    }
+                }))
             }
         } catch (error: any) {
             const timeoutHit = error?.name === 'AbortError'
@@ -1806,6 +1885,14 @@ export default function App() {
             const exists = prev.some((item) => item.id === job.id)
             if (!exists) return sortImportJobs([job, ...prev])
             return sortImportJobs(prev.map((item) => (item.id === job.id ? { ...item, ...job } : item)))
+        })
+    }
+
+    function replaceImportJobInState(job: ImportJob) {
+        setImportJobs((prev) => {
+            const exists = prev.some((item) => item.id === job.id)
+            if (!exists) return sortImportJobs([job, ...prev])
+            return sortImportJobs(prev.map((item) => (item.id === job.id ? job : item)))
         })
     }
 
@@ -4783,6 +4870,14 @@ export default function App() {
                                                     const visibleRows = inlinePreviewModel
                                                         ? (rowsExpanded ? inlinePreviewModel.rows : inlinePreviewModel.rows.slice(0, 20))
                                                         : []
+                                                    const previewDiagnostics = getImportJobPreviewDiagnostics(job.previewSummary)
+                                                    const latestPreviewResponse = lastPreviewRegenerateResponseByJobId[job.id]
+                                                    const diagnosticsUseLatestResponse = Boolean(
+                                                        latestPreviewResponse
+                                                        && previewDiagnostics?.previewRequestId
+                                                        && latestPreviewResponse.requestId
+                                                        && latestPreviewResponse.requestId === previewDiagnostics.previewRequestId
+                                                    )
 
                                                     return (
                                                         <React.Fragment key={job.id}>
@@ -4825,6 +4920,22 @@ export default function App() {
                                                                 <div className="room-meta" style={{ marginTop: 2 }}>
                                                                     Parser: {jobParserVersion || 'neznámá verze'}
                                                                 </div>
+                                                                {previewDiagnostics && (
+                                                                    <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                        Diagnostika: Build {previewDiagnostics.parserBuildId || '—'}
+                                                                        {previewDiagnostics.parserFileVersion ? ` • Parser file: ${previewDiagnostics.parserFileVersion}` : ''}
+                                                                        {previewDiagnostics.previewGeneratedAt ? ` • Vygenerováno: ${new Date(previewDiagnostics.previewGeneratedAt).toLocaleString('cs-CZ')}` : ' • Vygenerováno: —'}
+                                                                        {previewDiagnostics.previewGeneratedBy ? ` • Generátor: ${previewDiagnostics.previewGeneratedBy}` : ''}
+                                                                        {previewDiagnostics.sourceStoragePath ? ` • Source: ${previewDiagnostics.sourceStoragePath}` : ''}
+                                                                        {previewDiagnostics.previewRequestId ? ` • Request: ${previewDiagnostics.previewRequestId}` : ' • Request: —'}
+                                                                        {previewDiagnostics.previewFreshGenerated ? ' • Fresh: ano' : ' • Fresh: ne'}
+                                                                        {latestPreviewResponse
+                                                                            ? (diagnosticsUseLatestResponse
+                                                                                ? ' • UI snapshot: poslední response'
+                                                                                : ` • UI snapshot: nesouhlasí (poslední response ${new Date(latestPreviewResponse.receivedAt).toLocaleTimeString('cs-CZ')})`)
+                                                                            : ''}
+                                                                    </div>
+                                                                )}
                                                                 {autoPreviewStatus && (
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
                                                                         Automatický náhled: {importAutoPreviewStatusLabel(autoPreviewStatus.status)}
@@ -4972,6 +5083,30 @@ export default function App() {
                                                                                         {inlinePreviewError}
                                                                                     </div>
                                                                                 )}
+                                                                                {previewDiagnostics && (
+                                                                                    <div style={{ fontSize: 12, color: '#0c4a6e', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: 8 }}>
+                                                                                        <div style={{ fontWeight: 700, marginBottom: 4 }}>Debug probe rows</div>
+                                                                                        {DEBUG_PROBE_ROW_KEYS.map((key) => {
+                                                                                            const probe = previewDiagnostics.debugProbeRows[key]
+                                                                                            return (
+                                                                                                <div key={`${job.id}-debug-probe-${key}`} style={{ marginTop: 2 }}>
+                                                                                                    {key}: {probe
+                                                                                                        ? [
+                                                                                                            `odj ${probe.departureTime || '—'}`,
+                                                                                                            `příj ${probe.arrivalTime || '—'}`,
+                                                                                                            `odj.host ${probe.departureGuest || '—'}`,
+                                                                                                            `odj.pocet ${typeof probe.departureCount === 'number' ? probe.departureCount : '—'}`,
+                                                                                                            `příj.host ${probe.arrivalGuest || '—'}`,
+                                                                                                            `příj.pocet ${typeof probe.arrivalCount === 'number' ? probe.arrivalCount : '—'}`,
+                                                                                                            `odj.pozn ${(probe.departureNotes || []).length ? probe.departureNotes.join('; ') : '—'}`,
+                                                                                                            `příj.pozn ${(probe.arrivalNotes || []).length ? probe.arrivalNotes.join('; ') : '—'}`
+                                                                                                        ].join(' | ')
+                                                                                                        : 'nenalezeno'}
+                                                                                                </div>
+                                                                                            )
+                                                                                        })}
+                                                                                    </div>
+                                                                                )}
                                                                                 <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>
                                                                                     <div style={{ maxHeight: 280, overflow: 'auto' }}>
                                                                                         <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 12 }}>
@@ -5112,6 +5247,14 @@ export default function App() {
                                                             const visibleRows = inlinePreviewModel
                                                                 ? (rowsExpanded ? inlinePreviewModel.rows : inlinePreviewModel.rows.slice(0, 20))
                                                                 : []
+                                                            const previewDiagnostics = getImportJobPreviewDiagnostics(job.previewSummary)
+                                                            const latestPreviewResponse = lastPreviewRegenerateResponseByJobId[job.id]
+                                                            const diagnosticsUseLatestResponse = Boolean(
+                                                                latestPreviewResponse
+                                                                && previewDiagnostics?.previewRequestId
+                                                                && latestPreviewResponse.requestId
+                                                                && latestPreviewResponse.requestId === previewDiagnostics.previewRequestId
+                                                            )
 
                                                             return (
                                                                 <div key={job.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, background: '#fff' }}>
@@ -5148,6 +5291,22 @@ export default function App() {
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
                                                                         Parser: {jobParserVersion || 'neznámá verze'}
                                                                     </div>
+                                                                    {previewDiagnostics && (
+                                                                        <div className="room-meta" style={{ marginTop: 2 }}>
+                                                                            Diagnostika: Build {previewDiagnostics.parserBuildId || '—'}
+                                                                            {previewDiagnostics.parserFileVersion ? ` • Parser file: ${previewDiagnostics.parserFileVersion}` : ''}
+                                                                            {previewDiagnostics.previewGeneratedAt ? ` • Vygenerováno: ${new Date(previewDiagnostics.previewGeneratedAt).toLocaleString('cs-CZ')}` : ' • Vygenerováno: —'}
+                                                                            {previewDiagnostics.previewGeneratedBy ? ` • Generátor: ${previewDiagnostics.previewGeneratedBy}` : ''}
+                                                                            {previewDiagnostics.sourceStoragePath ? ` • Source: ${previewDiagnostics.sourceStoragePath}` : ''}
+                                                                            {previewDiagnostics.previewRequestId ? ` • Request: ${previewDiagnostics.previewRequestId}` : ' • Request: —'}
+                                                                            {previewDiagnostics.previewFreshGenerated ? ' • Fresh: ano' : ' • Fresh: ne'}
+                                                                            {latestPreviewResponse
+                                                                                ? (diagnosticsUseLatestResponse
+                                                                                    ? ' • UI snapshot: poslední response'
+                                                                                    : ` • UI snapshot: nesouhlasí (poslední response ${new Date(latestPreviewResponse.receivedAt).toLocaleTimeString('cs-CZ')})`)
+                                                                                : ''}
+                                                                        </div>
+                                                                    )}
                                                                     {autoPreviewStatus && (
                                                                         <div className="room-meta" style={{ marginTop: 2 }}>
                                                                             Automatický náhled: {importAutoPreviewStatusLabel(autoPreviewStatus.status)}
@@ -5288,6 +5447,30 @@ export default function App() {
                                                                                     {inlinePreviewError && (
                                                                                         <div style={{ fontSize: 12, color: '#991b1b', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 8 }}>
                                                                                             {inlinePreviewError}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {previewDiagnostics && (
+                                                                                        <div style={{ fontSize: 12, color: '#0c4a6e', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: 8 }}>
+                                                                                            <div style={{ fontWeight: 700, marginBottom: 4 }}>Debug probe rows</div>
+                                                                                            {DEBUG_PROBE_ROW_KEYS.map((key) => {
+                                                                                                const probe = previewDiagnostics.debugProbeRows[key]
+                                                                                                return (
+                                                                                                    <div key={`${job.id}-debug-probe-${key}`} style={{ marginTop: 2 }}>
+                                                                                                        {key}: {probe
+                                                                                                            ? [
+                                                                                                                `odj ${probe.departureTime || '—'}`,
+                                                                                                                `příj ${probe.arrivalTime || '—'}`,
+                                                                                                                `odj.host ${probe.departureGuest || '—'}`,
+                                                                                                                `odj.pocet ${typeof probe.departureCount === 'number' ? probe.departureCount : '—'}`,
+                                                                                                                `příj.host ${probe.arrivalGuest || '—'}`,
+                                                                                                                `příj.pocet ${typeof probe.arrivalCount === 'number' ? probe.arrivalCount : '—'}`,
+                                                                                                                `odj.pozn ${(probe.departureNotes || []).length ? probe.departureNotes.join('; ') : '—'}`,
+                                                                                                                `příj.pozn ${(probe.arrivalNotes || []).length ? probe.arrivalNotes.join('; ') : '—'}`
+                                                                                                            ].join(' | ')
+                                                                                                            : 'nenalezeno'}
+                                                                                                    </div>
+                                                                                                )
+                                                                                            })}
                                                                                         </div>
                                                                                     )}
                                                                                     <div style={{ overflowX: 'auto', border: '1px solid #dbeafe', borderRadius: 8, background: '#fff' }}>

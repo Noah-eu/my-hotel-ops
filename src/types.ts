@@ -182,6 +182,23 @@ export interface ImportJobPreviewSummary {
     byDate?: Record<string, RoomPlan[]>
     missingDateLabels?: string[]
     parserVersion?: string
+    parserBuildId?: string
+    parserFileVersion?: string
+    previewGeneratedAt?: string
+    previewGeneratedBy?: string
+    previewRequestId?: string
+    previewFreshGenerated?: boolean
+    sourceStoragePath?: string
+    debugProbeRows?: Record<string, {
+        departureTime?: string
+        arrivalTime?: string
+        departureGuest?: string
+        departureCount?: number | null
+        arrivalGuest?: string
+        arrivalCount?: number | null
+        departureNotes?: string[]
+        arrivalNotes?: string[]
+    } | null>
     safety?: ImportJobSafetySummary
     preview?: {
         days: Array<{

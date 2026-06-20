@@ -14,6 +14,14 @@ const {
 const { sanitizeForFirestore, runSanitizerSelfCheck } = require('./lib/firestore-sanitize')
 
 const DEV = process.env.NODE_ENV !== 'production'
+const PREVIEW_DEBUG_PROBE_KEYS = [
+    '2026-06-21/105',
+    '2026-06-21/201',
+    '2026-06-22/201',
+    '2026-06-22/202',
+    '2026-06-24/205',
+    '2026-06-24/303'
+]
 
 if (DEV) {
     try {
@@ -178,6 +186,50 @@ function formatDateLabel(dateIso) {
     })
 }
 
+function normalizeRoomNumberForProbe(raw) {
+    return String(raw || '').trim().replace(/^0+/, '').padStart(3, '0')
+}
+
+function resolveParserBuildId() {
+    const explicitBuildId = String(process.env.PREVIO_PREVIEW_BUILD_ID || '').trim()
+    if (explicitBuildId) return explicitBuildId
+
+    const commitRef = String(process.env.COMMIT_REF || process.env.DEPLOY_COMMIT_REF || '').trim()
+    if (commitRef) return `stav-preview-${commitRef.slice(0, 7)}`
+
+    return 'stav-preview-unknown'
+}
+
+function createPreviewRequestId() {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function buildDebugProbeRows(byDate) {
+    const probes = {}
+
+    PREVIEW_DEBUG_PROBE_KEYS.forEach((key) => {
+        const [dateIso, roomRaw] = key.split('/')
+        const roomNumber = normalizeRoomNumberForProbe(roomRaw)
+        const rows = Array.isArray(byDate?.[dateIso]) ? byDate[dateIso] : []
+        const row = rows.find((item) => normalizeRoomNumberForProbe(item?.number) === roomNumber)
+
+        probes[key] = row
+            ? {
+                departureTime: row.departureTime || '',
+                arrivalTime: row.arrivalTime || '',
+                departureGuest: row.departure?.guestLabel || '',
+                departureCount: typeof row.departure?.guestCount === 'number' ? row.departure.guestCount : null,
+                arrivalGuest: row.arrival?.guestLabel || '',
+                arrivalCount: typeof row.arrival?.guestCount === 'number' ? row.arrival.guestCount : null,
+                departureNotes: Array.isArray(row.departure?.notes) ? row.departure.notes : [],
+                arrivalNotes: Array.isArray(row.arrival?.notes) ? row.arrival.notes : []
+            }
+            : null
+    })
+
+    return probes
+}
+
 async function ensureAdminUser(db, hotelId, uid) {
     const profileSnap = await db.collection('hotels').doc(hotelId).collection('staff').doc(uid).get()
     if (!profileSnap.exists) return false
@@ -253,6 +305,11 @@ exports.handler = async (event) => {
             return json(400, { error: errorMessage })
         }
 
+        const parserBuildId = resolveParserBuildId()
+        const previewGeneratedBy = 'previo-import-preview'
+        const previewGeneratedAt = new Date().toISOString()
+        const previewRequestId = createPreviewRequestId()
+
         const [pdfBuffer] = await bucket.file(storagePath).download()
         const extracted = await extractStateTextFromPdfBuffer(pdfBuffer)
         const parsed = parsePrevioStatePdfText(extracted, new Date())
@@ -267,6 +324,7 @@ exports.handler = async (event) => {
         const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
         const missingDateLabels = missingDateIsos.map((dateIso) => formatDateLabel(dateIso))
         const byDate = buildByDateFromPreview(preview, roomCatalog)
+        const debugProbeRows = buildDebugProbeRows(byDate)
         const safety = evaluatePrevioStateImportSafety({
             preview,
             missingDateLabels,
@@ -293,7 +351,7 @@ exports.handler = async (event) => {
 
         const patch = {
             status: nextStatus,
-            parsedAt: new Date().toISOString(),
+            parsedAt: previewGeneratedAt,
             detectedDaysCount: preview.days.length,
             turnoverCount: preview.turnoverCount,
             stayoverCount: preview.stayoverCount,
@@ -304,6 +362,14 @@ exports.handler = async (event) => {
                 byDate,
                 missingDateLabels,
                 parserVersion: PREVIO_STAV_PARSER_VERSION,
+                parserBuildId,
+                parserFileVersion: PREVIO_STAV_PARSER_VERSION,
+                previewGeneratedAt,
+                previewGeneratedBy,
+                previewRequestId,
+                previewFreshGenerated: true,
+                sourceStoragePath: storagePath,
+                debugProbeRows,
                 safety,
                 preview
             },
@@ -327,6 +393,16 @@ exports.handler = async (event) => {
             ok: true,
             jobId,
             status: nextStatus,
+            diagnostics: {
+                parserBuildId,
+                parserFileVersion: PREVIO_STAV_PARSER_VERSION,
+                previewGeneratedAt,
+                previewGeneratedBy,
+                previewRequestId,
+                sourceStoragePath: storagePath,
+                freshGenerated: true,
+                debugProbeRows
+            },
             job: { id: jobId, ...(updatedSnap.data() || {}) }
         })
     } catch (error) {
