@@ -230,7 +230,8 @@ export default function DashboardToday({
     maintenanceItems,
     focusLateTaskRoomRequest,
     onFocusLateTaskRoomResult,
-    readOnly
+    readOnly,
+    unfinishedCarryOvers = {}
 }: {
     rooms: RoomPlan[]
     tasks: Task[]
