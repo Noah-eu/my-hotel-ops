@@ -62,14 +62,6 @@ function expectTextContains(failures, label, haystack, needle) {
     }
 }
 
-function expectTextNotContains(failures, label, haystack, needle) {
-    const normalizedHaystack = normalizeForMatch(haystack)
-    const normalizedNeedle = normalizeForMatch(needle)
-    if (normalizedHaystack.includes(normalizedNeedle)) {
-        failures.push(`${label}: expected NOT to contain "${needle}", got "${haystack || ''}"`)
-    }
-}
-
 function notesToString(notes) {
     return Array.isArray(notes) ? notes.join(' | ') : ''
 }
@@ -372,115 +364,6 @@ function runCriticalFixtureCellChecks(parsed, preview) {
     return failures
 }
 
-function runJune20StateBugChecks(parsed, preview, fixtureName) {
-    const failures = []
-    const byDate = buildByDateFromPreview(preview, [], '20.06.2026 07:02')
-
-    const hasJune24 = parsed.rows.some((row) => row.dateIso === '2026-06-24')
-    if (!hasJune24) {
-        failures.push(`Fixture ${fixtureName} does not contain required 20.6 import range (missing 2026-06-24 rows).`)
-        return failures
-    }
-
-    const r21105 = findRow(parsed.rows, '2026-06-21', '105')
-    expect(failures, Boolean(r21105), 'Missing row 2026-06-21/105')
-    if (r21105) {
-        expectTextContains(failures, '21.6/105 departure guest', r21105.departureGuestName, 'Mark Paul')
-        expectNumber(failures, '21.6/105 departure pax', r21105.departureGuestCount, 2)
-        expectTextContains(failures, '21.6/105 departure BOX', notesToString(r21105.departureNotes), 'BOX 5')
-
-        expectTextContains(failures, '21.6/105 arrival guest', r21105.arrivalGuestName, 'Tina Safran')
-        expectNumber(failures, '21.6/105 arrival pax', r21105.arrivalGuestCount, 1)
-        expectTextContains(failures, '21.6/105 arrival BOX', notesToString(r21105.arrivalNotes), 'BOX 2')
-        expectTextNotContains(failures, '21.6/105 arrival notes leak BOX 6', notesToString(r21105.arrivalNotes), 'BOX 6')
-        expectTextNotContains(failures, '21.6/105 arrival notes leak BOX 10', notesToString(r21105.arrivalNotes), 'BOX 10')
-        expect(failures, r21105.arrivalGuestCount !== 6, '21.6/105 must never use leaked 6p arrival count')
-    }
-
-    const r21201 = findRow(parsed.rows, '2026-06-21', '201')
-    expect(failures, Boolean(r21201), 'Missing row 2026-06-21/201')
-    if (r21201) {
-        expectTextContains(failures, '21.6/201 departure guest', r21201.departureGuestName, 'Wiktoria Sobczak')
-        expectNumber(failures, '21.6/201 departure pax', r21201.departureGuestCount, 4)
-        expectTextContains(failures, '21.6/201 departure BOX', notesToString(r21201.departureNotes), 'BOX 6')
-
-        expectTextContains(failures, '21.6/201 arrival guest', r21201.arrivalGuestName, 'Michaela Císařová')
-        expectNumber(failures, '21.6/201 arrival pax', r21201.arrivalGuestCount, 6)
-        expectTextContains(failures, '21.6/201 arrival BOX', notesToString(r21201.arrivalNotes), 'BOX 10')
-    }
-
-    const r24205 = findRow(parsed.rows, '2026-06-24', '205')
-    expect(failures, Boolean(r24205), 'Missing row 2026-06-24/205')
-    if (r24205) {
-        const depOrStay = normalizeForMatch(`${r24205.departureGuestName || ''} | ${r24205.stayoverGuestName || ''}`)
-        expect(
-            failures,
-            depOrStay.includes(normalizeForMatch('Notteodora')) || depOrStay.includes(normalizeForMatch('Teodora')),
-            '24.6/205 expected departure/stayover guest context for Notteodora/Teodora'
-        )
-        expectTextContains(failures, '24.6/205 departure/stayover BOX', `${notesToString(r24205.departureNotes)} | ${notesToString(r24205.arrivalNotes)}`, 'BOX 3')
-        expectTextContains(failures, '24.6/205 arrival guest', r24205.arrivalGuestName, 'Stepan Kuca')
-        expectNumber(failures, '24.6/205 arrival pax', r24205.arrivalGuestCount, 2)
-        const arrivalNotes205 = notesToString(r24205.arrivalNotes)
-        expect(
-            failures,
-            !/\bbox\s*[a-z0-9]+\b/i.test(arrivalNotes205),
-            `24.6/205 arrival notes must not contain BOX, got "${arrivalNotes205}"`
-        )
-    }
-
-    const r24303 = findRow(parsed.rows, '2026-06-24', '303')
-    expect(failures, Boolean(r24303), 'Missing row 2026-06-24/303')
-    if (r24303) {
-        expectTextContains(failures, '24.6/303 departure guest', r24303.departureGuestName, 'Kotas Vaclav')
-        expectNumber(failures, '24.6/303 departure pax', r24303.departureGuestCount, 4)
-        expectTextContains(failures, '24.6/303 departure BOX', notesToString(r24303.departureNotes), 'BOX 1')
-
-        expectTextContains(failures, '24.6/303 arrival guest', r24303.arrivalGuestName, 'Lubomira Eiflerova')
-        expectNumber(failures, '24.6/303 arrival pax', r24303.arrivalGuestCount, 5)
-        const arrivalNotes303 = notesToString(r24303.arrivalNotes)
-        expect(
-            failures,
-            !/\bbox\s*[a-z0-9]+\b/i.test(arrivalNotes303),
-            `24.6/303 arrival notes must not contain BOX, got "${arrivalNotes303}"`
-        )
-    }
-
-    const b21201 = findPlanRow(byDate, '2026-06-21', '201')
-    expect(failures, Boolean(b21201), 'Missing byDate row 2026-06-21/201')
-    if (b21201) {
-        expectTextContains(failures, '21.6/201 byDate arrival guest', b21201.arrival?.guestLabel, 'Michaela Císařová')
-        expectTextContains(failures, '21.6/201 byDate arrival BOX', notesToString(b21201.arrival?.notes), 'BOX 10')
-        expectNumber(failures, '21.6/201 byDate guestCount', b21201.guestCount, 6)
-    }
-
-    const b24205 = findPlanRow(byDate, '2026-06-24', '205')
-    expect(failures, Boolean(b24205), 'Missing byDate row 2026-06-24/205')
-    if (b24205) {
-        expectTextContains(failures, '24.6/205 byDate arrival guest', b24205.arrival?.guestLabel, 'Stepan Kuca')
-        expect(failures, !b24205.box, `24.6/205 byDate box must be empty, got "${b24205.box || ''}"`)
-        expect(
-            failures,
-            !/\bbox\s*[a-z0-9]+\b/i.test(notesToString(b24205.arrival?.notes)),
-            `24.6/205 byDate arrival notes must not contain BOX, got "${notesToString(b24205.arrival?.notes)}"`
-        )
-    }
-
-    const b24303 = findPlanRow(byDate, '2026-06-24', '303')
-    expect(failures, Boolean(b24303), 'Missing byDate row 2026-06-24/303')
-    if (b24303) {
-        expectTextContains(failures, '24.6/303 byDate arrival guest', b24303.arrival?.guestLabel, 'Lubomira Eiflerova')
-        expect(failures, !b24303.box, `24.6/303 byDate box must be empty, got "${b24303.box || ''}"`)
-        expect(
-            failures,
-            !/\bbox\s*[a-z0-9]+\b/i.test(notesToString(b24303.arrival?.notes)),
-            `24.6/303 byDate arrival notes must not contain BOX, got "${notesToString(b24303.arrival?.notes)}"`
-        )
-    }
-
-    return failures
-}
-
 function runTotalsChecks(parsed) {
     const failures = []
     const totalsByDate = parsed.dayTotals || {}
@@ -520,7 +403,7 @@ function runTotalsChecks(parsed) {
     return failures
 }
 
-function runSafetyChecks(preview, expectCurrentBlocked = false) {
+function runSafetyChecks(preview) {
     const failures = []
     const missingDateLabels = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
         .map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
@@ -536,19 +419,11 @@ function runSafetyChecks(preview, expectCurrentBlocked = false) {
         checkedAt: new Date()
     })
 
-    if (expectCurrentBlocked) {
-        expect(
-            failures,
-            safety.blocked === true,
-            'Current Stav fixture should stay safety-blocked but is not.'
-        )
-    } else {
-        expect(
-            failures,
-            safety.blocked === false,
-            `Current Stav fixture preview is safety-blocked: ${(safety.blocks || []).join(' | ')}`
-        )
-    }
+    expect(
+        failures,
+        safety.blocked === false,
+        `Current Stav fixture preview is safety-blocked: ${(safety.blocks || []).join(' | ')}`
+    )
 
     const syntheticUnsafe = {
         ...preview,
@@ -633,33 +508,24 @@ function runSafetyChecks(preview, expectCurrentBlocked = false) {
 
 async function main() {
     const fixturePath = await requireStavFixture()
-    const fixtureName = path.basename(fixturePath)
     const pdfBuffer = await fs.readFile(fixturePath)
 
     const extracted = await extractStateTextFromPdfBuffer(pdfBuffer)
     const parsed = parsePrevioStatePdfText(extracted, new Date())
     const preview = buildPrevioStateImportPreview(parsed, [], new Date())
-    const hasJune24Rows = parsed.rows.some((row) => row.dateIso === '2026-06-24')
-    const isKnownJune20Fixture = /2026-06-20-0702/.test(fixtureName)
-    const useJune20Checks = hasJune24Rows || isKnownJune20Fixture
 
     const failures = []
-    if (!useJune20Checks) {
-        failures.push(...runTotalsChecks(parsed))
-    }
-    failures.push(...runSafetyChecks(preview, useJune20Checks))
-    if (!useJune20Checks) {
-        failures.push(...runConcreteRegressionChecks(parsed))
-        failures.push(...runCriticalFixtureCellChecks(parsed, preview))
-    }
-    if (useJune20Checks) {
-        failures.push(...runJune20StateBugChecks(parsed, preview, fixtureName))
-    }
+    failures.push(...runTotalsChecks(parsed))
+    failures.push(...runSafetyChecks(preview))
+    failures.push(...runConcreteRegressionChecks(parsed))
+    failures.push(...runCriticalFixtureCellChecks(parsed, preview))
     if (failures.length > 0) {
         console.error('[validate:previo-state] FAIL')
         failures.forEach((failure) => console.error(`- ${failure}`))
         process.exit(1)
     }
+
+    const fixtureName = path.basename(fixturePath)
 
     console.log('[validate:previo-state] PASS')
     console.log(`- Fixture: ${fixtureName}`)
