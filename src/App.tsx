@@ -1146,8 +1146,18 @@ export default function App() {
                 .filter((dateIso): dateIso is string => Boolean(dateIso))
         )
 
+        // Only show extra imported dates that are strictly after Pozítří
+        const todayIso = new Date().toISOString().slice(0, 10)
+        const pozitriIso = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
         const extraImportedDates = Object.keys(importedRoomsByDate)
-            .filter((dateIso) => !primaryDateSet.has(dateIso))
+            .filter((dateIso) => {
+                if (primaryDateSet.has(dateIso)) return false
+                // exclude any date that is before today
+                if (dateIso < todayIso) return false
+                // include only dates strictly after Pozítří
+                return dateIso > pozitriIso
+            })
             .sort()
 
         const primaryItems = primaryTabs.map(({ tab: tabKey, label }) => ({
@@ -1168,6 +1178,17 @@ export default function App() {
 
         return [...primaryItems, ...extraItems]
     }, [importedRoomsByDate, importedTabDates, selectedImportedDateIso, tab])
+
+    // Normalize selectedImportedDateIso if it points to a past date (never allow past selection)
+    useEffect(() => {
+        if (!selectedImportedDateIso) return
+        const todayIso = new Date().toISOString().slice(0, 10)
+        if (selectedImportedDateIso < todayIso) {
+            // Reset selection back to primary tabs (Dnes) to avoid showing past data in main selector
+            setSelectedImportedDateIso(null)
+            setTab('Dnes')
+        }
+    }, [selectedImportedDateIso, importedRoomsByDate, importedTabDates])
 
     const statePreviewMissingDates = useMemo(() => (
         stateImportPreview
