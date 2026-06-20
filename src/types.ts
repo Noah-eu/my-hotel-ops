@@ -306,6 +306,7 @@ export interface SupplyRequest extends OriginMetadata {
     customQuantity?: string
     roomNumber?: string
     note?: string
+    linkedTaskId?: string
     requestedBy: string
     requestedByRole: UserRole
     createdAt: string

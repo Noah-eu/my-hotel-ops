@@ -1359,6 +1359,7 @@ export default function App() {
             && task.attentionRequired
             && task.attentionReason === 'late_today_room_task'
             && task.status !== 'read'
+            && task.status !== 'waiting_material'
             && task.status !== 'done'
             && task.status !== 'cancelled'
         ))
@@ -3471,6 +3472,7 @@ export default function App() {
                 && task.attentionRequired
                 && task.attentionReason === 'late_today_room_task'
                 && task.status !== 'read'
+                && task.status !== 'waiting_material'
                 && task.status !== 'done'
                 && task.status !== 'cancelled'
             ))
@@ -3960,9 +3962,23 @@ export default function App() {
     }
 
     function handleRequestMaterial(taskId: string, materialText: string) {
+        const material = (materialText || '').trim()
+        if (!material) return
+
+        const task = tasks.find((t) => t.id === taskId)
+        if (!task) return
+
+        const normalizedMaterial = material.toLowerCase()
+        const hasOpenDuplicateRequest = (Array.isArray(supplyRequests) ? supplyRequests : []).some((request) => {
+            if ((request?.linkedTaskId || '') !== task.id) return false
+            if (((request?.itemName || '').trim().toLowerCase()) !== normalizedMaterial) return false
+            const status = request?.status || ''
+            return status !== 'cancelled' && status !== 'handed_over'
+        })
+
         const patch: Partial<import('./types').Task> = {
             status: 'waiting_material',
-            materialNote: materialText || undefined,
+            materialNote: material || undefined,
             materialRequestedAt: new Date().toISOString(),
             materialRequestedByName: currentUser?.name || undefined
         }
@@ -3971,7 +3987,53 @@ export default function App() {
             activeStore.updateTask(taskId, patch)
         }
 
-        setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...patch } : task)))
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, ...patch } : t)))
+
+        if (hasOpenDuplicateRequest) return
+
+        // create exactly one supply request linked to the original task
+        const manualOriginMeta = buildManualOriginMeta()
+        const newRequest: SupplyRequest = {
+            id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            itemName: material,
+            category: 'maintenance',
+            quantityLevel: 'custom',
+            customQuantity: undefined,
+            roomNumber: task.roomNumber ? task.roomNumber : undefined,
+            note: `Úkol: ${task.title || 'bez názvu'} (${task.id})`,
+            requestedBy: currentUser?.name || 'Uživatel',
+            requestedByRole: currentUser?.role || 'maintenance',
+            createdAt: formatNowHHmm(new Date()),
+            status: 'new',
+            priority: task.priority,
+            linkedTaskId: task.id,
+            ...manualOriginMeta
+        }
+
+        if (runtimeMode === 'online') {
+            activeStore.createSupplyRequest({
+                id: newRequest.id,
+                itemName: newRequest.itemName,
+                category: newRequest.category,
+                quantityLevel: newRequest.quantityLevel,
+                customQuantity: newRequest.customQuantity,
+                roomNumber: newRequest.roomNumber,
+                note: newRequest.note,
+                priority: newRequest.priority,
+                requestedBy: newRequest.requestedBy,
+                requestedByRole: newRequest.requestedByRole,
+                createdAt: newRequest.createdAt,
+                source: newRequest.source,
+                createdByUid: newRequest.createdByUid,
+                createdByName: newRequest.createdByName,
+                createdByRole: newRequest.createdByRole,
+                importJobId: newRequest.importJobId,
+                importedAt: newRequest.importedAt,
+                linkedTaskId: newRequest.linkedTaskId
+            })
+        }
+
+        setSupplyRequests((prev) => [newRequest, ...prev])
     }
 
     function handleCreateMaintenanceItem(input: { roomNumber?: string; title: string; category: MaintenanceItem['category']; priority: MaintenanceItem['priority']; note?: string }) {

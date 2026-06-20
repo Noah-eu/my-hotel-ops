@@ -210,6 +210,9 @@ function taskStatusLabel(status: Task['status']) {
 }
 
 function getTaskDetailText(task: Task) {
+    if ((task.status || '') === 'waiting_material' && (task.materialNote || '').trim()) {
+        return `Čeká na materiál: ${(task.materialNote || '').trim()}`
+    }
     return task.note?.trim() || ''
 }
 
@@ -558,6 +561,7 @@ export default function DashboardToday({
                         task.attentionRequired
                         && task.attentionReason === 'late_today_room_task'
                         && task.status !== 'read'
+                        && task.status !== 'waiting_material'
                         && task.status !== 'done'
                         && task.status !== 'cancelled'
                     ))

@@ -67,8 +67,9 @@ function isUrgentItem(entry?: UnifiedMaintenanceEntry | null) {
 }
 
 function isWaitingForMaterialItem(entry?: UnifiedMaintenanceEntry | null) {
-    if (!entry || entry.kind !== 'maintenanceItem') return false
-    return (entry.item?.status || '') === 'waiting_material'
+    if (!entry) return false
+    if (entry.kind === 'maintenanceItem') return (entry.item?.status || '') === 'waiting_material'
+    return (entry.task?.status || '') === 'waiting_material'
 }
 
 function isNewItem(entry?: UnifiedMaintenanceEntry | null) {
@@ -76,11 +77,11 @@ function isNewItem(entry?: UnifiedMaintenanceEntry | null) {
 
     if (entry.kind === 'maintenanceItem') {
         const status = entry.item?.status || ''
-        return status === 'new' || (!entry.item?.maintenanceAcknowledgedAt && status !== 'accepted' && status !== 'in_progress')
+        return status === 'new' || (!entry.item?.maintenanceAcknowledgedAt && status !== 'accepted' && status !== 'in_progress' && status !== 'waiting_material')
     }
 
     const status = entry.task?.status || ''
-    return status === 'new' || status === 'read' || (!entry.task?.maintenanceAcknowledgedAt && status !== 'accepted' && status !== 'in_progress')
+    return status === 'new' || status === 'read' || (!entry.task?.maintenanceAcknowledgedAt && status !== 'accepted' && status !== 'in_progress' && status !== 'waiting_material')
 }
 
 function isTaskAssignedToMaintenance(task?: Task | null) {
@@ -459,7 +460,7 @@ export default function MaintenanceView({
                             {visibleRoomTasks
                                 .filter((task) => (task?.status || '') !== 'cancelled')
                                 .map((t) => {
-                                    const unreadForMaintenance = (t.status || '') !== 'done' && !t.maintenanceAcknowledgedAt
+                                    const unreadForMaintenance = (t.status || '') !== 'done' && (t.status || '') !== 'waiting_material' && !t.maintenanceAcknowledgedAt
                                     return (
                                         <div
                                             key={t.id}

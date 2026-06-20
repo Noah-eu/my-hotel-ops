@@ -162,6 +162,7 @@ export function createLocalOpsStore(): OpsStore {
                 customQuantity: input.customQuantity,
                 roomNumber: input.roomNumber,
                 note: input.note,
+                linkedTaskId: input.linkedTaskId,
                 requestedBy: input.requestedBy,
                 requestedByRole: input.requestedByRole,
                 createdAt: input.createdAt,

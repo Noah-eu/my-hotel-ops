@@ -57,6 +57,7 @@ export interface CreateSupplyRequestInput {
     customQuantity?: string
     roomNumber?: string
     note?: string
+    linkedTaskId?: string
     priority: SupplyRequest['priority']
     requestedBy: string
     requestedByRole: UserRole
