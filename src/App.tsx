@@ -1310,8 +1310,10 @@ export default function App() {
                 const hasArrival = Boolean(r.arrival || r.arrivalTime)
 
                 // Only consider carry-over when there was a departure and no arrival,
-                // or when an explicit checkoutException/problem exists.
-                const isCarryCandidate = (hasDeparture && !hasArrival) || Boolean(r.checkoutException) || r.status === 'problem'
+                // or when an explicit checkoutException exists.
+                // A room with `status === 'problem'` is considered a carry candidate
+                // only if it also meets the departure-without-arrival condition.
+                const isCarryCandidate = (hasDeparture && !hasArrival) || Boolean(r.checkoutException) || (r.status === 'problem' && hasDeparture && !hasArrival)
                 if (!isCarryCandidate) return
 
                 const normalized = normalizeCatalogRoomNumber(r.number || r.roomNumber || '')
