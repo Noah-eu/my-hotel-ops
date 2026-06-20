@@ -543,6 +543,87 @@ function backfillAmbiguousTurnoverFromRawBlock(params: {
     }
 }
 
+function normalizeNotesList(notes: string[]) {
+    return notes
+        .map((note) => normalizeBoxText(String(note || '').trim()))
+        .filter(Boolean)
+        .filter((note, index, all) => all.indexOf(note) === index)
+}
+
+function haveSameNotes(left: string[], right: string[]) {
+    if (left.length !== right.length) return false
+    const leftNorm = left.map((note) => normalizeForMatch(note).replace(/\s+/g, ' ').trim())
+    const rightNorm = right.map((note) => normalizeForMatch(note).replace(/\s+/g, ' ').trim())
+    return leftNorm.every((note, index) => note === rightNorm[index])
+}
+
+function pickDepartureGuestName(sideText: string) {
+    const candidates = extractNameCandidates(String(sideText || '').split(/\r?\n/))
+    return candidates[0]
+}
+
+function pickArrivalGuestName(sideText: string) {
+    const candidates = extractNameCandidates(String(sideText || '').split(/\r?\n/))
+    if (candidates.length === 0) return undefined
+    return candidates[candidates.length - 1]
+}
+
+function inferGuestCountNearName(rawText: string, guestName?: string) {
+    if (!guestName) return undefined
+
+    const source = String(rawText || '')
+    const countMatches = [...source.matchAll(/\((\d{1,2})\)|\b(\d{1,2})\s*(?:p|os|host|pax)\b/gi)]
+    if (countMatches.length === 0) return undefined
+
+    const nameIndex = source.toLowerCase().indexOf(String(guestName || '').toLowerCase())
+    if (nameIndex < 0) return undefined
+
+    const nearest = countMatches.reduce((best, match) => {
+        const matchIndex = typeof match.index === 'number' ? match.index : 0
+        const bestIndex = typeof best.index === 'number' ? best.index : 0
+        return Math.abs(matchIndex - nameIndex) < Math.abs(bestIndex - nameIndex) ? match : best
+    }, countMatches[0])
+
+    const value = Number(nearest[1] || nearest[2])
+    return Number.isFinite(value) ? value : undefined
+}
+
+function resolveArrivalGuestCountFromSide(
+    roomNumber: string,
+    arrivalText: string,
+    currentArrivalGuestCount: number | undefined,
+    departureGuestCount: number | undefined,
+    distinctGuests: boolean
+) {
+    const sideCounts = extractStandaloneGuestCounts(arrivalText)
+    if (sideCounts.length === 0) return currentArrivalGuestCount
+
+    const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(roomNumber)]
+    const cappedCandidates = typeof roomCapacity === 'number'
+        ? sideCounts.filter((count) => count <= roomCapacity)
+        : sideCounts
+    const candidates = cappedCandidates.length > 0 ? cappedCandidates : sideCounts
+
+    if (typeof currentArrivalGuestCount !== 'number') {
+        return candidates[0]
+    }
+
+    if (typeof roomCapacity === 'number' && currentArrivalGuestCount > roomCapacity) {
+        return candidates[0]
+    }
+
+    if (
+        distinctGuests
+        && typeof departureGuestCount === 'number'
+        && currentArrivalGuestCount === departureGuestCount
+        && candidates.some((count) => count !== departureGuestCount)
+    ) {
+        return candidates.find((count) => count !== departureGuestCount)
+    }
+
+    return currentArrivalGuestCount
+}
+
 function isSuspiciousNightTurnover(time?: string) {
     if (!time) return false
     const [hoursRaw] = time.split(':')
@@ -810,7 +891,8 @@ function extractNameCandidates(blockLines: string[]) {
             const firstUpper = /^\p{Lu}[\p{L}'’-]+$/u.test(first)
             const firstLower = /^\p{Ll}[\p{L}'’-]+$/u.test(first)
             const secondUpper = /^\p{Lu}[\p{L}'’-]+$/u.test(second)
-            if ((firstUpper && secondUpper) || (firstLower && secondUpper)) {
+            const secondLower = /^\p{Ll}[\p{L}'’-]+$/u.test(second)
+            if ((firstUpper && secondUpper) || (firstLower && secondUpper) || (firstLower && secondLower)) {
                 pushCandidate(`${first} ${second}`)
             }
         }
@@ -869,6 +951,28 @@ function mergeMissingFieldsFromTextFallback(primaryRows: PrevioStateParsedRow[],
         }
         if (typeof row.stayoverGuestCount !== 'number' && typeof fallback.stayoverGuestCount === 'number') {
             row.stayoverGuestCount = fallback.stayoverGuestCount
+        }
+
+        const isSameTimeTurnover = Boolean(
+            row.departureTime
+            && row.arrivalTime
+            && row.departureTime === row.arrivalTime
+        )
+        if (
+            isSameTimeTurnover
+            && namesDiffer(row.departureGuestName, row.arrivalGuestName)
+            && typeof row.departureGuestCount === 'number'
+            && typeof row.arrivalGuestCount === 'number'
+            && row.departureGuestCount === row.arrivalGuestCount
+            && typeof fallback.departureGuestCount === 'number'
+            && typeof fallback.arrivalGuestCount === 'number'
+            && fallback.departureGuestCount !== fallback.arrivalGuestCount
+        ) {
+            if (fallback.departureGuestCount === row.departureGuestCount) {
+                row.arrivalGuestCount = fallback.arrivalGuestCount
+            } else if (fallback.arrivalGuestCount === row.departureGuestCount) {
+                row.arrivalGuestCount = fallback.departureGuestCount
+            }
         }
 
         if (!row.departureGuestName && fallback.departureGuestName) row.departureGuestName = fallback.departureGuestName
@@ -938,12 +1042,6 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
         const geometryPage = parsedSource.pages?.[pageIndex]
         const columnBlocks = geometryPage ? extractStateColumnBlocks(geometryPage) : []
         if (columnBlocks.length > 0) {
-            let pendingGhostArrivalTransfer: {
-                time?: string
-                guestCount?: number
-                note?: string
-            } | null = null
-
             columnBlocks.forEach((block) => {
                 const departureInfo = extractSideTimeAndCount(block.departureText, 'departure')
                 const arrivalInfo = extractSideTimeAndCount(block.arrivalText, 'arrival')
@@ -964,69 +1062,11 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     arrivalNotes = [arrivalNotes[1], ...arrivalNotes.slice(2)]
                 }
 
-                let departureGuestName = extractNameCandidates(block.departureText.split(/\r?\n/))[0]
-                let arrivalGuestName = extractNameCandidates(block.arrivalText.split(/\r?\n/))[0]
+                let departureGuestName = pickDepartureGuestName(block.departureText)
+                let arrivalGuestName = pickArrivalGuestName(block.arrivalText)
                 let stayoverGuestName = !departureTime && !arrivalTime
                     ? (departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
                     : undefined
-
-                if (
-                    pendingGhostArrivalTransfer
-                    && !departureTime
-                    && !arrivalTime
-                    && (stayoverGuestName || departureGuestName || arrivalGuestName)
-                ) {
-                    arrivalTime = pendingGhostArrivalTransfer.time || '11:00'
-                    if (typeof pendingGhostArrivalTransfer.guestCount === 'number') {
-                        arrivalGuestCount = pendingGhostArrivalTransfer.guestCount
-                    }
-                    if (!arrivalGuestName) {
-                        arrivalGuestName = stayoverGuestName || departureGuestName || arrivalGuestName
-                    }
-                    if (pendingGhostArrivalTransfer.note) {
-                        arrivalNotes = [...arrivalNotes, pendingGhostArrivalTransfer.note]
-                            .filter((note, index, all) => all.indexOf(note) === index)
-                    }
-                    stayoverGuestName = undefined
-                    stayoverGuestCount = undefined
-                    pendingGhostArrivalTransfer = null
-                }
-
-                const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(block.room)]
-                const inferredStayoverCount = chooseStayoverGuestCount(block.room, block.departureText, block.arrivalText, block.rawText)
-                const hasGhostArrivalBleed = (
-                    !departureTime
-                    && Boolean(arrivalTime)
-                    && !arrivalGuestName
-                    && Boolean(departureGuestName)
-                    && typeof arrivalGuestCount === 'number'
-                    && typeof roomCapacity === 'number'
-                    && arrivalGuestCount > roomCapacity
-                    && typeof inferredStayoverCount === 'number'
-                )
-
-                if (hasGhostArrivalBleed) {
-                    const leakedArrivalTime = arrivalTime
-                    const leakedArrivalGuestCount = arrivalGuestCount
-                    const leakedArrivalNote = arrivalNotes.length > 1 ? arrivalNotes[arrivalNotes.length - 1] : undefined
-
-                    arrivalTime = undefined
-                    arrivalGuestCount = undefined
-                    stayoverGuestName = departureGuestName
-                    stayoverGuestCount = inferredStayoverCount
-
-                    const primaryStayoverNote = departureNotes[0] || arrivalNotes[0]
-                    departureNotes = primaryStayoverNote ? [primaryStayoverNote] : []
-                    arrivalNotes = []
-
-                    pendingGhostArrivalTransfer = {
-                        time: leakedArrivalTime,
-                        guestCount: leakedArrivalGuestCount,
-                        note: leakedArrivalNote
-                    }
-                } else {
-                    pendingGhostArrivalTransfer = null
-                }
 
                 ;({
                     departureTime,
@@ -1044,6 +1084,88 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     departureNotes,
                     arrivalNotes
                 }))
+
+                const distinctGuests = namesDiffer(departureGuestName, arrivalGuestName)
+                arrivalGuestCount = resolveArrivalGuestCountFromSide(
+                    block.room,
+                    block.arrivalText,
+                    arrivalGuestCount,
+                    departureGuestCount,
+                    distinctGuests
+                )
+
+                departureNotes = normalizeNotesList(departureNotes)
+                arrivalNotes = normalizeNotesList(arrivalNotes)
+
+                if (!arrivalTime && !arrivalGuestName) {
+                    arrivalGuestCount = undefined
+                    arrivalNotes = []
+                }
+
+                if (!departureTime && arrivalTime && !arrivalGuestName && (stayoverGuestName || departureGuestName)) {
+                    arrivalTime = undefined
+                    arrivalGuestCount = undefined
+                    arrivalNotes = []
+                }
+
+                if (!arrivalTime && arrivalGuestName) {
+                    if (!stayoverGuestName && !departureTime) {
+                        stayoverGuestName = arrivalGuestName
+                    }
+                    if (typeof stayoverGuestCount !== 'number' && !departureTime) {
+                        stayoverGuestCount = arrivalGuestCount
+                    }
+                    arrivalGuestName = undefined
+                    arrivalGuestCount = undefined
+                    arrivalNotes = []
+                }
+
+                if (!departureTime && !arrivalTime) {
+                    if (departureNotes.length === 0 && arrivalNotes.length > 0) {
+                        departureNotes = [...arrivalNotes]
+                    }
+                    if (!stayoverGuestName) {
+                        stayoverGuestName = departureGuestName || arrivalGuestName
+                    }
+                    if (typeof stayoverGuestCount !== 'number') {
+                        stayoverGuestCount = departureGuestCount ?? arrivalGuestCount
+                    }
+                    arrivalGuestName = undefined
+                    arrivalGuestCount = undefined
+                    arrivalNotes = []
+                }
+
+                if (arrivalTime && arrivalGuestName && distinctGuests && departureNotes.length > 0 && haveSameNotes(arrivalNotes, departureNotes)) {
+                    arrivalNotes = []
+                }
+
+                if (
+                    departureTime
+                    && arrivalTime
+                    && departureTime === arrivalTime
+                    && distinctGuests
+                    && typeof departureGuestCount === 'number'
+                    && typeof arrivalGuestCount === 'number'
+                    && departureGuestCount === arrivalGuestCount
+                ) {
+                    const nearArrivalNameCount = inferGuestCountNearName(block.rawText, arrivalGuestName)
+                    if (typeof nearArrivalNameCount === 'number' && nearArrivalNameCount !== departureGuestCount) {
+                        arrivalGuestCount = nearArrivalNameCount
+                    } else {
+                        const alternativeCount = extractStandaloneGuestCounts(block.rawText)
+                            .find((count) => count !== departureGuestCount)
+                        if (typeof alternativeCount === 'number') {
+                            arrivalGuestCount = alternativeCount
+                        }
+                    }
+                }
+
+                if (departureTime && arrivalTime && arrivalNotes.length > 1) {
+                    const allBoxLike = arrivalNotes.every((note) => /\bbox\b/i.test(note))
+                    if (allBoxLike) {
+                        arrivalNotes = [arrivalNotes[0]]
+                    }
+                }
 
                 const dateTokens = extractDateTokens(block.rawText)
                 const stayoverUntilRaw = (() => {
@@ -1144,12 +1266,6 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             return null
         }
 
-        let pendingGhostArrivalTransfer: {
-            time?: string
-            guestCount?: number
-            note?: string
-        } | null = null
-
         blockStarts.forEach((startIndex, blockIndex) => {
             const endIndex = blockIndex + 1 < blockStarts.length ? blockStarts[blockIndex + 1] - 1 : contentLines.length - 1
             const blockLines = contentLines.slice(startIndex, endIndex + 1)
@@ -1193,64 +1309,6 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 stayoverGuestName = guestCandidates[0]
             }
 
-            if (
-                pendingGhostArrivalTransfer
-                && !departureTime
-                && !arrivalTime
-                && (stayoverGuestName || departureGuestName || arrivalGuestName)
-            ) {
-                arrivalTime = pendingGhostArrivalTransfer.time || '11:00'
-                if (typeof pendingGhostArrivalTransfer.guestCount === 'number') {
-                    arrivalGuestCount = pendingGhostArrivalTransfer.guestCount
-                }
-                if (!arrivalGuestName) {
-                    arrivalGuestName = stayoverGuestName || departureGuestName || arrivalGuestName
-                }
-                if (pendingGhostArrivalTransfer.note) {
-                    arrivalNotes = [...arrivalNotes, pendingGhostArrivalTransfer.note]
-                        .filter((note, index, all) => all.indexOf(note) === index)
-                }
-                stayoverGuestName = undefined
-                stayoverGuestCount = undefined
-                pendingGhostArrivalTransfer = null
-            }
-
-            const roomCapacity = ROOM_CAPACITY_BY_NUMBER[normalizeRoomKey(roomInfo.room)]
-            const inferredStayoverCount = chooseStayoverGuestCount(roomInfo.room, rawBlock)
-            const hasGhostArrivalBleed = (
-                !departureTime
-                && Boolean(arrivalTime)
-                && !arrivalGuestName
-                && Boolean(departureGuestName)
-                && typeof arrivalGuestCount === 'number'
-                && typeof roomCapacity === 'number'
-                && arrivalGuestCount > roomCapacity
-                && typeof inferredStayoverCount === 'number'
-            )
-
-            if (hasGhostArrivalBleed) {
-                const leakedArrivalTime = arrivalTime
-                const leakedArrivalGuestCount = arrivalGuestCount
-                const leakedArrivalNote = arrivalNotes.length > 1 ? arrivalNotes[arrivalNotes.length - 1] : undefined
-
-                arrivalTime = undefined
-                arrivalGuestCount = undefined
-                stayoverGuestName = departureGuestName
-                stayoverGuestCount = inferredStayoverCount
-
-                const primaryStayoverNote = departureNotes[0] || arrivalNotes[0]
-                departureNotes = primaryStayoverNote ? [primaryStayoverNote] : []
-                arrivalNotes = []
-
-                pendingGhostArrivalTransfer = {
-                    time: leakedArrivalTime,
-                    guestCount: leakedArrivalGuestCount,
-                    note: leakedArrivalNote
-                }
-            } else {
-                pendingGhostArrivalTransfer = null
-            }
-
             ;({
                 departureTime,
                 arrivalTime,
@@ -1267,6 +1325,88 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 departureNotes,
                 arrivalNotes
             }))
+
+            const distinctGuests = namesDiffer(departureGuestName, arrivalGuestName)
+            arrivalGuestCount = resolveArrivalGuestCountFromSide(
+                roomInfo.room,
+                rawBlock,
+                arrivalGuestCount,
+                departureGuestCount,
+                distinctGuests
+            )
+
+            departureNotes = normalizeNotesList(departureNotes)
+            arrivalNotes = normalizeNotesList(arrivalNotes)
+
+            if (!arrivalTime && !arrivalGuestName) {
+                arrivalGuestCount = undefined
+                arrivalNotes = []
+            }
+
+            if (!departureTime && arrivalTime && !arrivalGuestName && (stayoverGuestName || departureGuestName)) {
+                arrivalTime = undefined
+                arrivalGuestCount = undefined
+                arrivalNotes = []
+            }
+
+            if (!arrivalTime && arrivalGuestName) {
+                if (!stayoverGuestName && !departureTime) {
+                    stayoverGuestName = arrivalGuestName
+                }
+                if (typeof stayoverGuestCount !== 'number' && !departureTime) {
+                    stayoverGuestCount = arrivalGuestCount
+                }
+                arrivalGuestName = undefined
+                arrivalGuestCount = undefined
+                arrivalNotes = []
+            }
+
+            if (!departureTime && !arrivalTime) {
+                if (departureNotes.length === 0 && arrivalNotes.length > 0) {
+                    departureNotes = [...arrivalNotes]
+                }
+                if (!stayoverGuestName) {
+                    stayoverGuestName = departureGuestName || arrivalGuestName
+                }
+                if (typeof stayoverGuestCount !== 'number') {
+                    stayoverGuestCount = departureGuestCount ?? arrivalGuestCount
+                }
+                arrivalGuestName = undefined
+                arrivalGuestCount = undefined
+                arrivalNotes = []
+            }
+
+            if (arrivalTime && arrivalGuestName && distinctGuests && departureNotes.length > 0 && haveSameNotes(arrivalNotes, departureNotes)) {
+                arrivalNotes = []
+            }
+
+            if (
+                departureTime
+                && arrivalTime
+                && departureTime === arrivalTime
+                && distinctGuests
+                && typeof departureGuestCount === 'number'
+                && typeof arrivalGuestCount === 'number'
+                && departureGuestCount === arrivalGuestCount
+            ) {
+                const nearArrivalNameCount = inferGuestCountNearName(rawBlock, arrivalGuestName)
+                if (typeof nearArrivalNameCount === 'number' && nearArrivalNameCount !== departureGuestCount) {
+                    arrivalGuestCount = nearArrivalNameCount
+                } else {
+                    const alternativeCount = extractStandaloneGuestCounts(rawBlock)
+                        .find((count) => count !== departureGuestCount)
+                    if (typeof alternativeCount === 'number') {
+                        arrivalGuestCount = alternativeCount
+                    }
+                }
+            }
+
+            if (departureTime && arrivalTime && arrivalNotes.length > 1) {
+                const allBoxLike = arrivalNotes.every((note) => /\bbox\b/i.test(note))
+                if (allBoxLike) {
+                    arrivalNotes = [arrivalNotes[0]]
+                }
+            }
 
             const dateTokens = extractDateTokens(afterMarker.join(' '))
             const stayoverUntilRaw = (() => {
@@ -1350,9 +1490,11 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
         })
     })
 
+    let textFallbackRows: PrevioStateParsedRow[] = []
     if (typeof source !== 'string' && parsedSource.pages?.length) {
         const textFallback = parsePrevioStatePdfText(parsedSource.rawText, referenceDate)
-        mergeMissingFieldsFromTextFallback(rows, textFallback.rows)
+        textFallbackRows = textFallback.rows
+        mergeMissingFieldsFromTextFallback(rows, textFallbackRows)
     }
 
     const sortedRows = [...rows].sort((a, b) => {
@@ -1384,6 +1526,77 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
             lastKnownGuestByRoom.set(roomKey, row.stayoverGuestName)
         }
     })
+
+    const nextDepartureCountByRoomAndGuest = new Map<string, number>()
+    for (let i = sortedRows.length - 1; i >= 0; i--) {
+        const row = sortedRows[i]
+        const roomKey = normalizeRoomKey(row.roomNumber)
+
+        if (row.arrivalGuestName) {
+            const arrivalKey = `${roomKey}__${normalizeForMatch(row.arrivalGuestName)}`
+            const knownNextDepartureCount = nextDepartureCountByRoomAndGuest.get(arrivalKey)
+            if (
+                typeof knownNextDepartureCount === 'number'
+                && (
+                    typeof row.arrivalGuestCount !== 'number'
+                    || (
+                        typeof row.departureGuestCount === 'number'
+                        && row.arrivalGuestCount === row.departureGuestCount
+                        && namesDiffer(row.departureGuestName, row.arrivalGuestName)
+                    )
+                )
+            ) {
+                row.arrivalGuestCount = knownNextDepartureCount
+            }
+        }
+
+        if (row.departureGuestName && typeof row.departureGuestCount === 'number') {
+            const departureKey = `${roomKey}__${normalizeForMatch(row.departureGuestName)}`
+            nextDepartureCountByRoomAndGuest.set(departureKey, row.departureGuestCount)
+        }
+    }
+
+    if (textFallbackRows.length > 0) {
+        const fallbackByKey = new Map<string, PrevioStateParsedRow>()
+        textFallbackRows.forEach((row) => {
+            const key = `${row.dateIso}__${normalizeRoomKey(row.roomNumber)}`
+            fallbackByKey.set(key, row)
+        })
+
+        sortedRows.forEach((row) => {
+            if (
+                !row.departureTime
+                || !row.arrivalTime
+                || row.departureTime !== row.arrivalTime
+                || !namesDiffer(row.departureGuestName, row.arrivalGuestName)
+                || typeof row.departureGuestCount !== 'number'
+                || typeof row.arrivalGuestCount !== 'number'
+                || row.departureGuestCount !== row.arrivalGuestCount
+            ) {
+                return
+            }
+
+            const key = `${row.dateIso}__${normalizeRoomKey(row.roomNumber)}`
+            const fallback = fallbackByKey.get(key)
+            if (!fallback) return
+            if (
+                typeof fallback.departureGuestCount !== 'number'
+                || typeof fallback.arrivalGuestCount !== 'number'
+                || fallback.departureGuestCount === fallback.arrivalGuestCount
+            ) {
+                return
+            }
+
+            if (fallback.departureGuestCount === row.departureGuestCount) {
+                row.arrivalGuestCount = fallback.arrivalGuestCount
+                return
+            }
+
+            if (fallback.arrivalGuestCount === row.departureGuestCount) {
+                row.arrivalGuestCount = fallback.departureGuestCount
+            }
+        })
+    }
 
     return {
         rows: sortedRows,

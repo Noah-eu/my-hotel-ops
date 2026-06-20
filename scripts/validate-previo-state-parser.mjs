@@ -38,6 +38,10 @@ function findPlanRow(byDate, dateIso, roomNumber) {
     return rows.find((row) => normalizeRoomNumber(row.number) === room)
 }
 
+function hasParsedDate(parsed, dateIso) {
+    return Array.isArray(parsed?.parsedDates) && parsed.parsedDates.includes(dateIso)
+}
+
 function expect(failures, condition, message) {
     if (!condition) failures.push(message)
 }
@@ -230,7 +234,9 @@ function runChecks(parsed) {
 function runConcreteRegressionChecks(parsed) {
     const failures = []
     const r19001 = findRow(parsed.rows, '2026-06-19', '001')
-    expect(failures, Boolean(r19001), 'Missing row 2026-06-19/001 for Manasawan regression check')
+    if (hasParsedDate(parsed, '2026-06-19')) {
+        expect(failures, Boolean(r19001), 'Missing row 2026-06-19/001 for Manasawan regression check')
+    }
     if (r19001) {
         expectEqual(failures, '19.6/001 arrival time', r19001.arrivalTime, '14:00')
         expectNumber(failures, '19.6/001 arrival pax', r19001.arrivalGuestCount, 4)
@@ -272,7 +278,9 @@ function runCriticalFixtureCellChecks(parsed, preview) {
     const byDate = buildByDateFromPreview(preview, [], '18.06.2026 20:01')
 
     const r19001 = findRow(parsed.rows, '2026-06-19', '001')
-    expect(failures, Boolean(r19001), 'Missing parser row 2026-06-19/001')
+    if (hasParsedDate(parsed, '2026-06-19')) {
+        expect(failures, Boolean(r19001), 'Missing parser row 2026-06-19/001')
+    }
     if (r19001) {
         expectEqual(failures, '19.6/001 parser departure time', r19001.departureTime, '11:00')
         expectEqual(failures, '19.6/001 parser arrival time', r19001.arrivalTime, '14:00')
@@ -292,8 +300,9 @@ function runCriticalFixtureCellChecks(parsed, preview) {
         expectEqual(failures, '20.6/001 parser departure time', r20001.departureTime, '')
         expectEqual(failures, '20.6/001 parser arrival time', r20001.arrivalTime, '')
         expectTextContains(failures, '20.6/001 parser stayover guest', r20001.stayoverGuestName || r20001.departureGuestName, 'Manasawan')
-        expectTextContains(failures, '20.6/001 parser stayover BOX', notesToString(r20001.arrivalNotes), 'BOX 4')
-        expectTextContains(failures, '20.6/001 parser stayover couch', notesToString(r20001.arrivalNotes), 'připravit gauč')
+        const stayoverNotes = notesToString([...(r20001.departureNotes || []), ...(r20001.arrivalNotes || [])])
+        expectTextContains(failures, '20.6/001 parser stayover BOX', stayoverNotes, 'BOX 4')
+        expectTextContains(failures, '20.6/001 parser stayover couch', stayoverNotes, 'připravit gauč')
     }
 
     const r21001 = findRow(parsed.rows, '2026-06-21', '001')
@@ -312,7 +321,7 @@ function runCriticalFixtureCellChecks(parsed, preview) {
     if (r22201) {
         expectEqual(failures, '22.6/201 parser departure time', r22201.departureTime, '11:00')
         expectEqual(failures, '22.6/201 parser arrival time', r22201.arrivalTime, '11:00')
-        expectNumber(failures, '22.6/201 parser departure pax', r22201.departureGuestCount, 5)
+        expectNumber(failures, '22.6/201 parser departure pax', r22201.departureGuestCount, 6)
         expectNumber(failures, '22.6/201 parser arrival pax', r22201.arrivalGuestCount, 5)
         expectTextContains(failures, '22.6/201 parser departure guest', r22201.departureGuestName, 'Michaela Císařová')
         expectTextContains(failures, '22.6/201 parser arrival guest', r22201.arrivalGuestName, 'Rozewicz Wanda')
@@ -321,7 +330,9 @@ function runCriticalFixtureCellChecks(parsed, preview) {
     }
 
     const b19001 = findPlanRow(byDate, '2026-06-19', '001')
-    expect(failures, Boolean(b19001), 'Missing byDate row 2026-06-19/001')
+    if (hasParsedDate(parsed, '2026-06-19')) {
+        expect(failures, Boolean(b19001), 'Missing byDate row 2026-06-19/001')
+    }
     if (b19001) {
         expectEqual(failures, '19.6/001 byDate departure time', b19001.departureTime, '11:00')
         expectEqual(failures, '19.6/001 byDate arrival time', b19001.arrivalTime, '14:00')
@@ -359,6 +370,311 @@ function runCriticalFixtureCellChecks(parsed, preview) {
         expectTextContains(failures, '22.6/201 byDate arrival guest', b22201.arrival?.guestLabel, 'Rozewicz Wanda')
         expectTextContains(failures, '22.6/201 byDate departure BOX', notesToString(b22201.departure?.notes), 'BOX 10')
         expectTextContains(failures, '22.6/201 byDate arrival BOX', b22201.box, 'BOX 1')
+    }
+
+    return failures
+}
+
+function runStav0702SideContaminationChecks(parsed, preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '20.06.2026 07:02')
+
+    const expectNoArrivalSignal = (row, label) => {
+        if (!row) return
+        expectEqual(failures, `${label} arrival guest`, row.arrivalGuestName, '')
+        expectEqual(failures, `${label} arrival time`, row.arrivalTime, '')
+        expect(
+            failures,
+            !Array.isArray(row.arrivalNotes) || row.arrivalNotes.length === 0,
+            `${label} arrival notes must be empty`
+        )
+    }
+
+    const p20103 = findRow(parsed.rows, '2026-06-20', '103')
+    expect(failures, Boolean(p20103), 'Missing parser row 2026-06-20/103')
+    if (p20103) {
+        expectEqual(failures, '20.6/103 parser arrival guest', p20103.arrivalGuestName, 'Shivani Mishra')
+        expectEqual(failures, '20.6/103 parser arrival time', p20103.arrivalTime, '14:00')
+        expectNumber(failures, '20.6/103 parser arrival pax', p20103.arrivalGuestCount, 3)
+        expectTextContains(failures, '20.6/103 parser arrival BOX', notesToString(p20103.arrivalNotes), 'BOX 7')
+    }
+
+    const p21105 = findRow(parsed.rows, '2026-06-21', '105')
+    expect(failures, Boolean(p21105), 'Missing parser row 2026-06-21/105')
+    if (p21105) {
+        expectTextContains(failures, '21.6/105 parser departure guest', p21105.departureGuestName, 'Mark Paul')
+        expectEqual(failures, '21.6/105 parser departure time', p21105.departureTime, '11:00')
+        expectNumber(failures, '21.6/105 parser departure pax', p21105.departureGuestCount, 2)
+        expectTextContains(failures, '21.6/105 parser departure BOX', notesToString(p21105.departureNotes), 'BOX 5')
+
+        expectEqual(failures, '21.6/105 parser arrival guest', p21105.arrivalGuestName, 'Tina Safran')
+        expectEqual(failures, '21.6/105 parser arrival time', p21105.arrivalTime, '14:00')
+        expectNumber(failures, '21.6/105 parser arrival pax', p21105.arrivalGuestCount, 1)
+        expectTextContains(failures, '21.6/105 parser arrival BOX', notesToString(p21105.arrivalNotes), 'BOX 2')
+        expect(
+            failures,
+            !normalizeForMatch(notesToString(p21105.arrivalNotes)).includes(normalizeForMatch('BOX 6')),
+            '21.6/105 parser arrival notes must not contain BOX 6'
+        )
+        expect(
+            failures,
+            !normalizeForMatch(notesToString(p21105.arrivalNotes)).includes(normalizeForMatch('BOX 10')),
+            '21.6/105 parser arrival notes must not contain BOX 10'
+        )
+    }
+
+    const p21201 = findRow(parsed.rows, '2026-06-21', '201')
+    expect(failures, Boolean(p21201), 'Missing parser row 2026-06-21/201')
+    if (p21201) {
+        expectEqual(failures, '21.6/201 parser departure guest', p21201.departureGuestName, 'Wiktoria Sobczak')
+        expectEqual(failures, '21.6/201 parser departure time', p21201.departureTime, '11:00')
+        expectNumber(failures, '21.6/201 parser departure pax', p21201.departureGuestCount, 4)
+        expectTextContains(failures, '21.6/201 parser departure BOX', notesToString(p21201.departureNotes), 'BOX 6')
+        expectEqual(failures, '21.6/201 parser arrival guest', p21201.arrivalGuestName, 'Michaela Císařová')
+        expectEqual(failures, '21.6/201 parser arrival time', p21201.arrivalTime, '14:00')
+        expectNumber(failures, '21.6/201 parser arrival pax', p21201.arrivalGuestCount, 6)
+        expectTextContains(failures, '21.6/201 parser arrival BOX', notesToString(p21201.arrivalNotes), 'BOX 10')
+    }
+
+    const p22201 = findRow(parsed.rows, '2026-06-22', '201')
+    expect(failures, Boolean(p22201), 'Missing parser row 2026-06-22/201')
+    if (p22201) {
+        expectEqual(failures, '22.6/201 parser departure guest', p22201.departureGuestName, 'Michaela Císařová')
+        expectEqual(failures, '22.6/201 parser departure time', p22201.departureTime, '11:00')
+        expectNumber(failures, '22.6/201 parser departure pax', p22201.departureGuestCount, 6)
+        expectTextContains(failures, '22.6/201 parser departure BOX', notesToString(p22201.departureNotes), 'BOX 10')
+        expectEqual(failures, '22.6/201 parser arrival guest', p22201.arrivalGuestName, 'Rozewicz Wanda')
+        expectEqual(failures, '22.6/201 parser arrival time', p22201.arrivalTime, '11:00')
+        expectNumber(failures, '22.6/201 parser arrival pax', p22201.arrivalGuestCount, 5)
+        expectTextContains(failures, '22.6/201 parser arrival BOX', notesToString(p22201.arrivalNotes), 'BOX 1')
+    }
+
+    const p22202 = findRow(parsed.rows, '2026-06-22', '202')
+    expect(failures, Boolean(p22202), 'Missing parser row 2026-06-22/202')
+    if (p22202) {
+        expectEqual(failures, '22.6/202 parser departure guest', p22202.departureGuestName, 'Joanna Rudziewicz')
+        expectEqual(failures, '22.6/202 parser departure time', p22202.departureTime, '11:00')
+        expectNumber(failures, '22.6/202 parser departure pax', p22202.departureGuestCount, 2)
+        expectTextContains(failures, '22.6/202 parser departure BOX', notesToString(p22202.departureNotes), 'BOX 8')
+        expectEqual(failures, '22.6/202 parser arrival guest', p22202.arrivalGuestName, 'Lenka Sucháňová')
+        expectEqual(failures, '22.6/202 parser arrival time', p22202.arrivalTime, '14:00')
+        expectNumber(failures, '22.6/202 parser arrival pax', p22202.arrivalGuestCount, 2)
+        expectTextContains(failures, '22.6/202 parser arrival BOX', notesToString(p22202.arrivalNotes), 'BOX 5')
+        expect(
+            failures,
+            !normalizeForMatch(p22202.arrivalGuestName || '').includes(normalizeForMatch('Marta Piękniewska')),
+            '22.6/202 parser arrival guest must not be Marta Piękniewska'
+        )
+    }
+
+    const p23104 = findRow(parsed.rows, '2026-06-23', '104')
+    expect(failures, Boolean(p23104), 'Missing parser row 2026-06-23/104')
+    if (p23104) {
+        const depContext = [p23104.stayoverGuestName, p23104.departureGuestName].filter(Boolean).join(' | ')
+        expectTextContains(failures, '23.6/104 parser departure/stayover guest', depContext, 'Michele Giovanni')
+        expectEqual(failures, '23.6/104 parser departure time', p23104.departureTime, '11:00')
+        expectNumber(failures, '23.6/104 parser departure pax', p23104.departureGuestCount, 2)
+        expectTextContains(failures, '23.6/104 parser departure BOX', notesToString(p23104.departureNotes), 'BOX 5')
+        expectTextContains(failures, '23.6/104 parser arrival guest', p23104.arrivalGuestName, 'volkan yildirim')
+        expectEqual(failures, '23.6/104 parser arrival time', p23104.arrivalTime, '14:00')
+        expectNumber(failures, '23.6/104 parser arrival pax', p23104.arrivalGuestCount, 2)
+        expectTextContains(failures, '23.6/104 parser arrival BOX', notesToString(p23104.arrivalNotes), 'BOX 3')
+        expect(
+            failures,
+            !normalizeForMatch(p23104.arrivalGuestName || '').includes(normalizeForMatch('Heather Jean')),
+            '23.6/104 parser arrival guest must not be Heather Jean'
+        )
+    }
+
+    const p24104 = findRow(parsed.rows, '2026-06-24', '104')
+    expect(failures, Boolean(p24104), 'Missing parser row 2026-06-24/104')
+    if (p24104) {
+        expect(failures, p24104.isStayover === true, '24.6/104 parser should be stayover')
+        expectTextContains(failures, '24.6/104 parser stayover guest', p24104.stayoverGuestName, 'volkan yildirim')
+        expectNumber(failures, '24.6/104 parser stayover pax', p24104.stayoverGuestCount, 2)
+        expectTextContains(failures, '24.6/104 parser stayover BOX', notesToString(p24104.departureNotes), 'BOX 3')
+        expectNoArrivalSignal(p24104, '24.6/104 parser')
+    }
+
+    const p24205 = findRow(parsed.rows, '2026-06-24', '205')
+    expect(failures, Boolean(p24205), 'Missing parser row 2026-06-24/205')
+    if (p24205) {
+        expectEqual(failures, '24.6/205 parser departure guest', p24205.departureGuestName, 'Notteodora Ltd')
+        expectEqual(failures, '24.6/205 parser departure time', p24205.departureTime, '11:00')
+        expectNumber(failures, '24.6/205 parser departure pax', p24205.departureGuestCount, 1)
+        expectTextContains(failures, '24.6/205 parser departure BOX', notesToString(p24205.departureNotes), 'BOX 3')
+        expectEqual(failures, '24.6/205 parser arrival guest', p24205.arrivalGuestName, 'Stepan Kuca')
+        expectEqual(failures, '24.6/205 parser arrival time', p24205.arrivalTime, '14:00')
+        expectNumber(failures, '24.6/205 parser arrival pax', p24205.arrivalGuestCount, 2)
+        expect(
+            failures,
+            !Array.isArray(p24205.arrivalNotes) || p24205.arrivalNotes.length === 0,
+            '24.6/205 parser arrival notes must be empty'
+        )
+    }
+
+    const p24303 = findRow(parsed.rows, '2026-06-24', '303')
+    expect(failures, Boolean(p24303), 'Missing parser row 2026-06-24/303')
+    if (p24303) {
+        expectEqual(failures, '24.6/303 parser departure guest', p24303.departureGuestName, 'Kotas Vaclav')
+        expectEqual(failures, '24.6/303 parser departure time', p24303.departureTime, '11:00')
+        expectNumber(failures, '24.6/303 parser departure pax', p24303.departureGuestCount, 4)
+        expectTextContains(failures, '24.6/303 parser departure BOX', notesToString(p24303.departureNotes), 'BOX 1')
+        expectEqual(failures, '24.6/303 parser arrival guest', p24303.arrivalGuestName, 'Lubomira Eiflerova')
+        expectEqual(failures, '24.6/303 parser arrival time', p24303.arrivalTime, '14:00')
+        expectNumber(failures, '24.6/303 parser arrival pax', p24303.arrivalGuestCount, 5)
+        expect(
+            failures,
+            !Array.isArray(p24303.arrivalNotes) || p24303.arrivalNotes.length === 0,
+            '24.6/303 parser arrival notes must be empty'
+        )
+    }
+
+    const p24204 = findRow(parsed.rows, '2026-06-24', '204')
+    expect(failures, Boolean(p24204), 'Missing parser row 2026-06-24/204')
+    if (p24204) {
+        expectEqual(failures, '24.6/204 parser departure guest', p24204.departureGuestName, 'Lorraine Cahalane')
+        expectEqual(failures, '24.6/204 parser departure time', p24204.departureTime, '11:00')
+        expectNumber(failures, '24.6/204 parser departure pax', p24204.departureGuestCount, 2)
+        expectTextContains(failures, '24.6/204 parser departure BOX', notesToString(p24204.departureNotes), 'BOX 2')
+        expectNoArrivalSignal(p24204, '24.6/204 parser')
+    }
+
+    const p24302 = findRow(parsed.rows, '2026-06-24', '302')
+    expect(failures, Boolean(p24302), 'Missing parser row 2026-06-24/302')
+    if (p24302) {
+        expectEqual(failures, '24.6/302 parser departure guest', p24302.departureGuestName, 'Monika Brizova')
+        expectEqual(failures, '24.6/302 parser departure time', p24302.departureTime, '11:00')
+        expectNumber(failures, '24.6/302 parser departure pax', p24302.departureGuestCount, 2)
+        expectTextContains(failures, '24.6/302 parser departure BOX', notesToString(p24302.departureNotes), 'BOX 4')
+        expectNoArrivalSignal(p24302, '24.6/302 parser')
+    }
+
+    const p24304 = findRow(parsed.rows, '2026-06-24', '304')
+    expect(failures, Boolean(p24304), 'Missing parser row 2026-06-24/304')
+    if (p24304) {
+        expectEqual(failures, '24.6/304 parser departure guest', p24304.departureGuestName, 'Filip Rychetský')
+        expectEqual(failures, '24.6/304 parser departure time', p24304.departureTime, '11:00')
+        expectNumber(failures, '24.6/304 parser departure pax', p24304.departureGuestCount, 2)
+        expectTextContains(failures, '24.6/304 parser departure BOX', notesToString(p24304.departureNotes), 'BOX 2')
+        expectNoArrivalSignal(p24304, '24.6/304 parser')
+    }
+
+    const b21105 = findPlanRow(byDate, '2026-06-21', '105')
+    expect(failures, Boolean(b21105), 'Missing byDate row 2026-06-21/105')
+    if (b21105) {
+        expectTextContains(failures, '21.6/105 byDate arrival guest', b21105.arrival?.guestLabel, 'Tina Safran')
+        expectNumber(failures, '21.6/105 byDate arrival pax', b21105.arrival?.guestCount, 1)
+        expectTextContains(failures, '21.6/105 byDate arrival BOX', notesToString(b21105.arrival?.notes), 'BOX 2')
+        const allArrivalNotes = notesToString(b21105.arrival?.notes)
+        expect(
+            failures,
+            !normalizeForMatch(allArrivalNotes).includes(normalizeForMatch('BOX 6')),
+            '21.6/105 byDate arrival notes must not contain BOX 6'
+        )
+        expect(
+            failures,
+            !normalizeForMatch(allArrivalNotes).includes(normalizeForMatch('BOX 10')),
+            '21.6/105 byDate arrival notes must not contain BOX 10'
+        )
+    }
+
+    const b21201 = findPlanRow(byDate, '2026-06-21', '201')
+    expect(failures, Boolean(b21201), 'Missing byDate row 2026-06-21/201')
+    if (b21201) {
+        expectTextContains(failures, '21.6/201 byDate arrival guest', b21201.arrival?.guestLabel, 'Michaela Císařová')
+        expectNumber(failures, '21.6/201 byDate arrival pax', b21201.arrival?.guestCount, 6)
+        expectTextContains(failures, '21.6/201 byDate arrival BOX', notesToString(b21201.arrival?.notes), 'BOX 10')
+    }
+
+    const b22201 = findPlanRow(byDate, '2026-06-22', '201')
+    expect(failures, Boolean(b22201), 'Missing byDate row 2026-06-22/201')
+    if (b22201) {
+        expectTextContains(failures, '22.6/201 byDate arrival guest', b22201.arrival?.guestLabel, 'Rozewicz Wanda')
+        expectNumber(failures, '22.6/201 byDate arrival pax', b22201.arrival?.guestCount, 5)
+        expectTextContains(failures, '22.6/201 byDate arrival BOX', notesToString(b22201.arrival?.notes), 'BOX 1')
+    }
+
+    const b22202 = findPlanRow(byDate, '2026-06-22', '202')
+    expect(failures, Boolean(b22202), 'Missing byDate row 2026-06-22/202')
+    if (b22202) {
+        expectEqual(failures, '22.6/202 byDate arrival guest', b22202.arrival?.guestLabel, 'Lenka Sucháňová')
+        expectTextContains(failures, '22.6/202 byDate arrival BOX', notesToString(b22202.arrival?.notes), 'BOX 5')
+    }
+
+    const b23104 = findPlanRow(byDate, '2026-06-23', '104')
+    expect(failures, Boolean(b23104), 'Missing byDate row 2026-06-23/104')
+    if (b23104) {
+        expectTextContains(failures, '23.6/104 byDate arrival guest', b23104.arrival?.guestLabel, 'volkan yildirim')
+        expectTextContains(failures, '23.6/104 byDate arrival BOX', notesToString(b23104.arrival?.notes), 'BOX 3')
+    }
+
+    const b24104 = findPlanRow(byDate, '2026-06-24', '104')
+    expect(failures, Boolean(b24104), 'Missing byDate row 2026-06-24/104')
+    if (b24104) {
+        expect(failures, b24104.occupiedConfirmed === true, '24.6/104 byDate should be occupiedConfirmed')
+        expectTextContains(failures, '24.6/104 byDate stayover guest', b24104.stayoverGuestName, 'volkan yildirim')
+        expectEqual(failures, '24.6/104 byDate arrival guest', b24104.arrival?.guestLabel || '', '')
+        expect(
+            failures,
+            !Array.isArray(b24104.arrival?.notes) || b24104.arrival.notes.length === 0,
+            '24.6/104 byDate arrival notes must be empty'
+        )
+    }
+
+    const b24205 = findPlanRow(byDate, '2026-06-24', '205')
+    expect(failures, Boolean(b24205), 'Missing byDate row 2026-06-24/205')
+    if (b24205) {
+        expectEqual(failures, '24.6/205 byDate arrival guest', b24205.arrival?.guestLabel, 'Stepan Kuca')
+        expect(
+            failures,
+            !Array.isArray(b24205.arrival?.notes) || b24205.arrival.notes.length === 0,
+            '24.6/205 byDate arrival notes must be empty'
+        )
+    }
+
+    const b24303 = findPlanRow(byDate, '2026-06-24', '303')
+    expect(failures, Boolean(b24303), 'Missing byDate row 2026-06-24/303')
+    if (b24303) {
+        expectEqual(failures, '24.6/303 byDate arrival guest', b24303.arrival?.guestLabel, 'Lubomira Eiflerova')
+        expect(
+            failures,
+            !Array.isArray(b24303.arrival?.notes) || b24303.arrival.notes.length === 0,
+            '24.6/303 byDate arrival notes must be empty'
+        )
+    }
+
+    const b24204 = findPlanRow(byDate, '2026-06-24', '204')
+    expect(failures, Boolean(b24204), 'Missing byDate row 2026-06-24/204')
+    if (b24204) {
+        expectEqual(failures, '24.6/204 byDate arrival guest', b24204.arrival?.guestLabel || '', '')
+        expect(
+            failures,
+            !Array.isArray(b24204.arrival?.notes) || b24204.arrival.notes.length === 0,
+            '24.6/204 byDate arrival notes must be empty'
+        )
+    }
+
+    const b24302 = findPlanRow(byDate, '2026-06-24', '302')
+    expect(failures, Boolean(b24302), 'Missing byDate row 2026-06-24/302')
+    if (b24302) {
+        expectEqual(failures, '24.6/302 byDate arrival guest', b24302.arrival?.guestLabel || '', '')
+        expect(
+            failures,
+            !Array.isArray(b24302.arrival?.notes) || b24302.arrival.notes.length === 0,
+            '24.6/302 byDate arrival notes must be empty'
+        )
+    }
+
+    const b24304 = findPlanRow(byDate, '2026-06-24', '304')
+    expect(failures, Boolean(b24304), 'Missing byDate row 2026-06-24/304')
+    if (b24304) {
+        expectEqual(failures, '24.6/304 byDate arrival guest', b24304.arrival?.guestLabel || '', '')
+        expect(
+            failures,
+            !Array.isArray(b24304.arrival?.notes) || b24304.arrival.notes.length === 0,
+            '24.6/304 byDate arrival notes must be empty'
+        )
     }
 
     return failures
@@ -519,6 +835,7 @@ async function main() {
     failures.push(...runSafetyChecks(preview))
     failures.push(...runConcreteRegressionChecks(parsed))
     failures.push(...runCriticalFixtureCellChecks(parsed, preview))
+    failures.push(...runStav0702SideContaminationChecks(parsed, preview))
     if (failures.length > 0) {
         console.error('[validate:previo-state] FAIL')
         failures.forEach((failure) => console.error(`- ${failure}`))
