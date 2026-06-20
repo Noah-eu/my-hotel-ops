@@ -602,7 +602,7 @@ export default function DashboardToday({
                                     ) : (
                                         <div className="mini-badge">{statusLabel(displayStatus)}</div>
                                     )}
-                                    <button className="room-action-btn" onClick={() => toggleExpandedRoom(room.id)}>{isExpanded ? '×' : '⋯'}</button>
+                                    <button className={`room-action-btn ${isExpanded ? 'active' : ''}`} onClick={() => toggleExpandedRoom(room.id)} aria-expanded={isExpanded}>{isExpanded ? '×' : '⋯'}</button>
                                     {room.assigned && <div className="mini-muted">{room.assigned}</div>}
                                     {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted mini-muted-stayover">{room.stayoverGuestName}</div>}
                                     {room.freeConfirmed && <div className="mini-muted mini-muted-free">Pokoj je dostupný při volné kapacitě.</div>}

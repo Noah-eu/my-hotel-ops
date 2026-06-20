@@ -785,13 +785,37 @@ body {
 
 .room-action-btn {
     margin-top: 8px;
-    min-height: 30px;
-    min-width: 34px;
-    border-radius: 8px;
-    border: 1px solid var(--line);
+    /* Larger touch target */
+    min-height: 44px;
+    min-width: 44px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
     background: #ffffff;
-    font-size: 16px;
+    font-size: 18px;
+    font-weight: 800;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 2px rgba(2,6,23,0.06);
+    transition: box-shadow 120ms ease, transform 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.room-action-btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+
+.room-action-btn.active {
+    background: #dbeafe; /* light blue */
+    border-color: rgba(37,99,235,0.35);
+    box-shadow: 0 4px 10px rgba(37,99,235,0.12);
+    transform: translateY(-1px);
+}
+
+.room-action-btn:hover {
+    box-shadow: 0 3px 8px rgba(2,6,23,0.08);
 }
 
 .plan-col {
