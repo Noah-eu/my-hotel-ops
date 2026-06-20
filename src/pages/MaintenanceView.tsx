@@ -148,85 +148,12 @@ export default function MaintenanceView({
 
     const visibleItems = maintenanceItems.filter(i => i.status !== 'cancelled')
 
-    // Tasks that belong to maintenance (room tasks assigned to maintenance role)
-    const maintenanceTasks = tasks.filter(t => t.assignedToRole === 'maintenance')
-
-    // Build a unified list of items so counts and filters operate over the same dataset
-    type UnifiedItem = {
-        kind: 'item' | 'task'
-        id: string
-        roomNumber?: string
-        title: string
-        priority: 'normal' | 'urgent'
-        status: string
-        createdBy?: string
-        createdAt?: string
-        reportedBy?: string
-        assignedTo?: string
-        updatedAt?: string
-        original: MaintenanceItem | Task
-    }
-
-    const unified: UnifiedItem[] = [
-        ...maintenanceItems.map((m): UnifiedItem => ({
-            kind: 'item',
-            id: m.id,
-            roomNumber: m.roomNumber,
-            title: m.title,
-            priority: m.priority,
-            status: m.status,
-            createdBy: m.reportedBy,
-            createdAt: m.createdAt,
-            reportedBy: m.reportedBy,
-            assignedTo: m.assignedTo,
-            updatedAt: m.updatedAt,
-            original: m
-        })),
-        ...maintenanceTasks.map((t): UnifiedItem => ({
-            kind: 'task',
-            id: t.id,
-            roomNumber: t.roomNumber,
-            title: t.title,
-            priority: t.priority,
-            status: t.status,
-            createdBy: t.createdBy,
-            createdAt: t.createdAt,
-            reportedBy: t.createdBy,
-            assignedTo: t.assignedToName,
-            updatedAt: (t as any).updatedAt,
-            original: t
-        }))
-    ]
-
-    function isActiveStatus(s: string) {
-        return s !== 'done' && s !== 'cancelled'
-    }
-
     const adminCounts = {
-        nove: unified.filter(u => isActiveStatus(u.status) && (u.status === 'new' || ((u.kind === 'task') && !(u.original as Task).maintenanceAcknowledgedAt))).length,
-        urgent: unified.filter(u => isActiveStatus(u.status) && u.priority === 'urgent').length,
-        waiting: unified.filter(u => isActiveStatus(u.status) && u.kind === 'item' && (u.original as MaintenanceItem).status === 'waiting_material').length,
-        done: unified.filter(u => !isActiveStatus(u.status)).length
+        nove: maintenanceItems.filter(i => i.status === 'new').length,
+        urgent: maintenanceItems.filter(i => i.priority === 'urgent' && i.status !== 'cancelled').length,
+        waiting: maintenanceItems.filter(i => i.status === 'waiting_material').length,
+        done: maintenanceItems.filter(i => i.status === 'done').length
     }
-
-    const [filter, setFilter] = useState<'active' | 'new' | 'urgent' | 'waiting' | 'done'>('active')
-
-    // Visible unified list according to filter
-    const visibleUnified = unified.filter((u) => {
-        if (filter === 'active') return isActiveStatus(u.status)
-        if (filter === 'new') return isActiveStatus(u.status) && (u.status === 'new' || (u.kind === 'task' && !(u.original as Task).maintenanceAcknowledgedAt))
-        if (filter === 'urgent') return isActiveStatus(u.status) && u.priority === 'urgent'
-        if (filter === 'waiting') return isActiveStatus(u.status) && u.kind === 'item' && (u.original as MaintenanceItem).status === 'waiting_material'
-        if (filter === 'done') return !isActiveStatus(u.status)
-        return true
-    })
-
-    const sortedUnified = [...visibleUnified].sort((a, b) => {
-        const pa = a.priority === 'urgent' ? 0 : 1
-        const pb = b.priority === 'urgent' ? 0 : 1
-        if (pa !== pb) return pa - pb
-        return (a.createdAt || '').localeCompare(b.createdAt || '')
-    })
 
     function handleCreate() {
         if (!newTitle.trim()) return
@@ -407,70 +334,68 @@ export default function MaintenanceView({
                     </div>
                 )}
 
-                <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button className={`chip ${filter === 'active' ? 'active' : ''}`} onClick={() => setFilter('active')}>Aktivní: <strong style={{ marginLeft: 6 }}>{adminCounts.nove + adminCounts.urgent - adminCounts.done}</strong></button>
-                    <button className={`chip ${filter === 'new' ? 'active' : ''}`} onClick={() => setFilter('new')}>Nové: <strong style={{ marginLeft: 6 }}>{adminCounts.nove}</strong></button>
-                    <button className={`chip ${filter === 'urgent' ? 'active' : ''}`} onClick={() => setFilter('urgent')}>Urgentní: <strong style={{ marginLeft: 6 }}>{adminCounts.urgent}</strong></button>
-                    <button className={`chip ${filter === 'waiting' ? 'active' : ''}`} onClick={() => setFilter('waiting')}>Čeká na materiál: <strong style={{ marginLeft: 6 }}>{adminCounts.waiting}</strong></button>
-                    <button className={`chip ${filter === 'done' ? 'active' : ''}`} onClick={() => setFilter('done')}>Hotovo: <strong style={{ marginLeft: 6 }}>{adminCounts.done}</strong></button>
-                </div>
-
+                <h4 style={{ margin: '8px 0' }}>Závady</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {sortedUnified.length === 0 && (
-                        <div className="room-card" style={{ color: '#475569' }}>Žádné položky pro údržbu.</div>
+                    {sortedItems.length === 0 && (
+                        <div className="room-card" style={{ color: '#475569' }}>Žádné nahlášené problémy.</div>
                     )}
-
-                    {sortedUnified.map((u) => {
-                        if (u.kind === 'item') {
-                            return renderItemCard(u.original as MaintenanceItem)
-                        }
-
-                        const t = u.original as Task
-                        const unreadForMaintenance = t.status !== 'done' && !t.maintenanceAcknowledgedAt
-                        return (
-                            <div
-                                key={t.id}
-                                data-maintenance-task-id={t.id}
-                                className="room-card"
-                                style={highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {}}
-                            >
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                    <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                        {t.roomNumber || 'Pokoj ?'} – {t.title || 'Bez názvu úkolu'}
-                                        <OriginBadge
-                                            input={{
-                                                source: t.source,
-                                                createdByUid: t.createdByUid,
-                                                createdByName: t.createdByName,
-                                                createdByRole: t.createdByRole,
-                                                createdBy: t.createdBy,
-                                                importJobId: t.importJobId,
-                                                importedAt: t.importedAt
-                                            }}
-                                        />
-                                    </div>
-                                    <div style={{ fontSize: 13, color: '#64748b' }}>
-                                        {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {t.createdAt || '-'}
-                                    </div>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                        {unreadForMaintenance && (
-                                            <button className="chip" style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeTask(t.id)}>Přečteno</button>
-                                        )}
-                                        {t.status !== 'done' && (
-                                            <button className="chip" onClick={() => onTaskAction(t.id, 'done')}>Hotovo</button>
-                                        )}
-                                        {t.status !== 'accepted' && t.status !== 'in_progress' && t.status !== 'done' && (
-                                            <button className="chip" onClick={() => onTaskAction(t.id, 'accepted')}>Převzato</button>
-                                        )}
-                                        {t.roomNumber && (
-                                            <button className="chip" onClick={() => onJumpToRoom(t.roomNumber)}>Přejít na pokoj</button>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        )
-                    })}
+                    {sortedItems.map(renderItemCard)}
                 </div>
+
+                {tasks.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                        <h4>Úkoly z pokojů</h4>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {tasks
+                                .filter((task) => task.status !== 'cancelled')
+                                .map((t) => {
+                                    const unreadForMaintenance = t.status !== 'done' && !t.maintenanceAcknowledgedAt
+                                    return (
+                                        <div
+                                            key={t.id}
+                                            data-maintenance-task-id={t.id}
+                                            className="room-card"
+                                            style={highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {}}
+                                        >
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                    {t.roomNumber || 'Pokoj ?'} – {t.title || 'Bez názvu úkolu'}
+                                                    <OriginBadge
+                                                        input={{
+                                                            source: t.source,
+                                                            createdByUid: t.createdByUid,
+                                                            createdByName: t.createdByName,
+                                                            createdByRole: t.createdByRole,
+                                                            createdBy: t.createdBy,
+                                                            importJobId: t.importJobId,
+                                                            importedAt: t.importedAt
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div style={{ fontSize: 13, color: '#64748b' }}>
+                                                    {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {t.createdAt || '-'}
+                                                </div>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                    {unreadForMaintenance && (
+                                                        <button className="chip" style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeTask(t.id)}>Přečteno</button>
+                                                    )}
+                                                    {t.status !== 'done' && (
+                                                        <button className="chip" onClick={() => onTaskAction(t.id, 'done')}>Hotovo</button>
+                                                    )}
+                                                    {t.status !== 'accepted' && t.status !== 'in_progress' && t.status !== 'done' && (
+                                                        <button className="chip" onClick={() => onTaskAction(t.id, 'accepted')}>Převzato</button>
+                                                    )}
+                                                    {t.roomNumber && (
+                                                        <button className="chip" onClick={() => onJumpToRoom(t.roomNumber)}>Přejít na pokoj</button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )
