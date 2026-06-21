@@ -521,6 +521,87 @@ function mergeMissingFieldsFromTextFallback(primaryRows, fallbackRows) {
     })
 }
 
+function addDaysIso(dateIso, days) {
+    const date = new Date(`${dateIso}T00:00:00`)
+    if (Number.isNaN(date.getTime())) return ''
+    date.setDate(date.getDate() + days)
+    return formatLocalDate(date)
+}
+
+function extractStandaloneBoxNotes(notes) {
+    return (notes || [])
+        .map((note) => normalizeBoxText(note))
+        .filter((note) => /^BOX\s+\d+$/i.test(note))
+}
+
+function extractBoxNotes(notes) {
+    return (notes || [])
+        .map((note) => normalizeBoxText(note))
+        .filter((note) => /\bBOX\s+\d+\b/i.test(note))
+}
+
+function getSingleBoxNote(notes) {
+    const boxes = extractBoxNotes(notes)
+    const unique = Array.from(new Set(boxes.map((note) => {
+        const match = note.match(/\bBOX\s+\d+\b/i)
+        return match ? normalizeBoxText(match[0]) : normalizeBoxText(note)
+    })))
+
+    return unique.length === 1 ? unique[0] : undefined
+}
+
+function repairSameGuestNextDayBoxContinuity(rows) {
+    const byKey = new Map()
+    rows.forEach((row) => {
+        byKey.set(`${row.dateIso}__${normalizeRoomKey(row.roomNumber)}`, row)
+    })
+
+    rows.forEach((arrivalRow) => {
+        const roomKey = normalizeRoomKey(arrivalRow.roomNumber)
+        const arrivalGuest = String(arrivalRow.arrivalGuestName || '').trim()
+        if (!roomKey || !arrivalGuest) return
+
+        const nextRow = byKey.get(`${addDaysIso(arrivalRow.dateIso, 1)}__${roomKey}`)
+        const departureGuest = String((nextRow && nextRow.departureGuestName) || '').trim()
+        if (!nextRow || !departureGuest) return
+        if (normalizeForMatch(arrivalGuest) !== normalizeForMatch(departureGuest)) return
+
+        const arrivalBox = getSingleBoxNote(arrivalRow.arrivalNotes || [])
+        const departureBox = getSingleBoxNote(nextRow.departureNotes || [])
+        if (arrivalBox && departureBox) return
+
+        const canUseRepeatedStandaloneBox = Boolean(
+            arrivalRow.departureGuestName
+            && arrivalRow.departureTime
+            && arrivalRow.arrivalTime
+            && nextRow.departureTime
+            && nextRow.arrivalTime
+            && nextRow.arrivalGuestName
+        )
+
+        const currentDayStandaloneBoxes = canUseRepeatedStandaloneBox
+            ? rows
+                .filter((row) => row.dateIso === arrivalRow.dateIso && normalizeRoomKey(row.roomNumber) !== roomKey)
+                .flatMap((row) => extractStandaloneBoxNotes([...(row.departureNotes || []), ...(row.arrivalNotes || [])]))
+            : []
+        const nextDayStandaloneBoxes = canUseRepeatedStandaloneBox
+            ? rows
+                .filter((row) => row.dateIso === nextRow.dateIso && normalizeRoomKey(row.roomNumber) !== roomKey)
+                .flatMap((row) => extractStandaloneBoxNotes([...(row.departureNotes || []), ...(row.arrivalNotes || [])]))
+            : []
+
+        const continuityBox = arrivalBox || departureBox || currentDayStandaloneBoxes.find((box) => nextDayStandaloneBoxes.includes(box))
+        if (!continuityBox) return
+
+        if (!arrivalBox && extractBoxNotes(arrivalRow.arrivalNotes || []).length === 0) {
+            arrivalRow.arrivalNotes = normalizeNotesList([...(arrivalRow.arrivalNotes || []), continuityBox])
+        }
+        if (!departureBox && extractBoxNotes(nextRow.departureNotes || []).length === 0) {
+            nextRow.departureNotes = normalizeNotesList([...(nextRow.departureNotes || []), continuityBox])
+        }
+    })
+}
+
 function extractDateTokens(text) {
     const tokens = new Set()
     const matches = String(text || '').matchAll(/\b(\d{1,2})\.\s*(\d{1,2})\.?\b/g)
@@ -661,31 +742,29 @@ function extractStateColumnBlocks(page) {
     const rowsByStartIndex = new Map()
     starts.forEach((start) => rowsByStartIndex.set(start.index, []))
 
-    rows.forEach((row) => {
-        let nearest = starts[0]
-        let nearestDistance = Math.abs(row.y - nearest.y)
+    starts.forEach((start, index) => {
+        const prev = index > 0 ? starts[index - 1] : null
+        const next = index + 1 < starts.length ? starts[index + 1] : null
 
-        for (let i = 1; i < starts.length; i++) {
-            const candidate = starts[i]
-            const candidateDistance = Math.abs(row.y - candidate.y)
-            if (candidateDistance < nearestDistance) {
-                nearest = candidate
-                nearestDistance = candidateDistance
-                continue
+        const topBoundary = prev ? start.y + (prev.y - start.y) * 0.6 : Number.POSITIVE_INFINITY
+        const bottomBoundary = next ? start.y - (start.y - next.y) * 0.4 : Number.NEGATIVE_INFINITY
+
+        rows.forEach((row) => {
+            if (row.y <= topBoundary && row.y > bottomBoundary) {
+                rowsByStartIndex.get(start.index)?.push(row)
             }
-
-            // In tie distance, prefer the lower marker (next room in visual flow)
-            // to avoid bleeding a boundary row into the previous room block.
-            if (candidateDistance === nearestDistance && candidate.y < nearest.y) {
-                nearest = candidate
-            }
-        }
-
-        rowsByStartIndex.get(nearest.index)?.push(row)
+        })
     })
 
     return starts.map((start) => {
-        const blockRows = [...(rowsByStartIndex.get(start.index) || [])].sort((a, b) => b.y - a.y)
+        const assignedRows = [...(rowsByStartIndex.get(start.index) || [])].sort((a, b) => b.y - a.y)
+        const firstOwnSignalAboveMarker = assignedRows
+            .filter((row) => row.y > start.y)
+            .filter((row) => isNoteLine(row.text) || detectTimes(row.text).length > 0)
+            .sort((a, b) => b.y - a.y)[0]
+        const blockRows = firstOwnSignalAboveMarker
+            ? assignedRows.filter((row) => row.y <= firstOwnSignalAboveMarker.y || findRoomInRow(row.items, roomColumnMaxX) === start.room)
+            : assignedRows
         const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX + sideSplitPadding)
         const arrivalText = collectColumnText(blockRows, splitX + sideSplitPadding)
         const hasNoteSplit = Number.isFinite(noteSplitX)
@@ -1693,6 +1772,8 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
         })
     }
 
+    repairSameGuestNextDayBoxContinuity(sortedRows)
+
     return {
         rows: sortedRows,
         warnings,
@@ -2154,6 +2235,7 @@ module.exports = {
     parsePrevioStatePdfText,
     buildPrevioStateImportPreview,
     evaluatePrevioStateImportSafety,
+    repairSameGuestNextDayBoxContinuity,
     detectMissingDatesInRange,
     buildByDateFromPreview,
     formatImportTimestamp

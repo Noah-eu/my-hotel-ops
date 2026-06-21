@@ -10,6 +10,7 @@ const {
     buildPrevioStateImportPreview,
     buildByDateFromPreview,
     evaluatePrevioStateImportSafety,
+    repairSameGuestNextDayBoxContinuity,
     detectMissingDatesInRange
 } = require('../netlify/functions/lib/previo-state-preview.js')
 
@@ -408,6 +409,11 @@ function runStav0702SideContaminationChecks(parsed, preview) {
         expectEqual(failures, '21.6/105 parser departure time', p21105.departureTime, '11:00')
         expectNumber(failures, '21.6/105 parser departure pax', p21105.departureGuestCount, 2)
         expectTextContains(failures, '21.6/105 parser departure BOX', notesToString(p21105.departureNotes), 'BOX 5')
+        expect(
+            failures,
+            !normalizeForMatch(notesToString(p21105.departureNotes)).includes(normalizeForMatch('BOX 6')),
+            '21.6/105 parser departure notes must not contain BOX 6'
+        )
 
         expectEqual(failures, '21.6/105 parser arrival guest', p21105.arrivalGuestName, 'Tina Safran')
         expectEqual(failures, '21.6/105 parser arrival time', p21105.arrivalTime, '14:00')
@@ -432,13 +438,33 @@ function runStav0702SideContaminationChecks(parsed, preview) {
         expectEqual(failures, '21.6/201 parser departure time', p21201.departureTime, '11:00')
         expectNumber(failures, '21.6/201 parser departure pax', p21201.departureGuestCount, 4)
         expectTextContains(failures, '21.6/201 parser departure BOX', notesToString(p21201.departureNotes), 'BOX 6')
-        const parserArrivalNormalized = normalizeForMatch(p21201.arrivalGuestName || '')
-        const parserArrivalValid = parserArrivalNormalized.includes(normalizeForMatch('Michaela Císařová'))
-            || parserArrivalNormalized.includes(normalizeForMatch('Wiktoria Sobczak'))
-        expect(failures, parserArrivalValid, `21.6/201 parser arrival guest unexpected: ${p21201.arrivalGuestName || ''}`)
+        expectEqual(failures, '21.6/201 parser arrival guest', p21201.arrivalGuestName, 'Michaela Císařová')
+        expect(
+            failures,
+            !normalizeForMatch(p21201.arrivalGuestName || '').includes(normalizeForMatch('Wiktoria Sobczak')),
+            '21.6/201 parser arrival guest must not be Wiktoria Sobczak'
+        )
         expectEqual(failures, '21.6/201 parser arrival time', p21201.arrivalTime, '14:00')
         expectNumber(failures, '21.6/201 parser arrival pax', p21201.arrivalGuestCount, 6)
         expectTextContains(failures, '21.6/201 parser arrival BOX', notesToString(p21201.arrivalNotes), 'BOX 10')
+    }
+
+    const p22105 = findRow(parsed.rows, '2026-06-22', '105')
+    expect(failures, Boolean(p22105), 'Missing parser row 2026-06-22/105')
+    if (p22105) {
+        const guestContext = [p22105.stayoverGuestName, p22105.departureGuestName, p22105.arrivalGuestName]
+            .filter(Boolean)
+            .join(' | ')
+        const noteText = `${notesToString(p22105.departureNotes)} | ${notesToString(p22105.arrivalNotes)}`
+
+        expect(failures, p22105.isStayover === true, '22.6/105 parser should be stayover row')
+        expectTextContains(failures, '22.6/105 parser guest context', guestContext, 'Tina Safran')
+        expectTextContains(failures, '22.6/105 parser BOX', noteText, 'BOX 2')
+        expect(
+            failures,
+            !normalizeForMatch(noteText).includes(normalizeForMatch('BOX 10')),
+            '22.6/105 parser notes must not contain BOX 10'
+        )
     }
 
     const p22201 = findRow(parsed.rows, '2026-06-22', '201')
@@ -511,11 +537,7 @@ function runStav0702SideContaminationChecks(parsed, preview) {
         expectEqual(failures, '24.6/205 parser arrival guest', p24205.arrivalGuestName, 'Stepan Kuca')
         expectEqual(failures, '24.6/205 parser arrival time', p24205.arrivalTime, '14:00')
         expectNumber(failures, '24.6/205 parser arrival pax', p24205.arrivalGuestCount, 2)
-        expect(
-            failures,
-            !Array.isArray(p24205.arrivalNotes) || p24205.arrivalNotes.length === 0,
-            '24.6/205 parser arrival notes must be empty'
-        )
+        expectTextContains(failures, '24.6/205 parser arrival BOX', notesToString(p24205.arrivalNotes), 'BOX 5')
     }
 
     const p25205 = findRow(parsed.rows, '2026-06-25', '205')
@@ -523,11 +545,7 @@ function runStav0702SideContaminationChecks(parsed, preview) {
     if (p25205) {
         expectEqual(failures, '25.6/205 parser departure guest', p25205.departureGuestName, 'Stepan Kuca')
         expectNumber(failures, '25.6/205 parser departure pax', p25205.departureGuestCount, 2)
-        expect(
-            failures,
-            !Array.isArray(p25205.departureNotes) || p25205.departureNotes.length === 0,
-            '25.6/205 parser departure notes must be empty'
-        )
+        expectTextContains(failures, '25.6/205 parser departure BOX', notesToString(p25205.departureNotes), 'BOX 5')
         expectEqual(failures, '25.6/205 parser arrival guest', p25205.arrivalGuestName, 'Nikolas Brett')
         expectNumber(failures, '25.6/205 parser arrival pax', p25205.arrivalGuestCount, 2)
         expectTextContains(failures, '25.6/205 parser arrival BOX', notesToString(p25205.arrivalNotes), 'BOX 3')
@@ -603,10 +621,12 @@ function runStav0702SideContaminationChecks(parsed, preview) {
     expect(failures, Boolean(b21201), 'Missing byDate row 2026-06-21/201')
     if (b21201) {
         const byDateArrival = b21201.arrival?.guestLabel || ''
-        const byDateArrivalNormalized = normalizeForMatch(byDateArrival)
-        const byDateArrivalValid = byDateArrivalNormalized.includes(normalizeForMatch('Michaela Císařová'))
-            || byDateArrivalNormalized.includes(normalizeForMatch('Wiktoria Sobczak'))
-        expect(failures, byDateArrivalValid, `21.6/201 byDate arrival guest unexpected: ${byDateArrival}`)
+        expectEqual(failures, '21.6/201 byDate arrival guest', byDateArrival, 'Michaela Císařová')
+        expect(
+            failures,
+            !normalizeForMatch(byDateArrival).includes(normalizeForMatch('Wiktoria Sobczak')),
+            '21.6/201 byDate arrival guest must not be Wiktoria Sobczak'
+        )
         expectNumber(failures, '21.6/201 byDate arrival pax', b21201.arrival?.guestCount, 6)
         expectTextContains(failures, '21.6/201 byDate arrival BOX', notesToString(b21201.arrival?.notes), 'BOX 10')
     }
@@ -650,22 +670,14 @@ function runStav0702SideContaminationChecks(parsed, preview) {
     expect(failures, Boolean(b24205), 'Missing byDate row 2026-06-24/205')
     if (b24205) {
         expectEqual(failures, '24.6/205 byDate arrival guest', b24205.arrival?.guestLabel, 'Stepan Kuca')
-        expect(
-            failures,
-            !Array.isArray(b24205.arrival?.notes) || b24205.arrival.notes.length === 0,
-            '24.6/205 byDate arrival notes must be empty'
-        )
+        expectTextContains(failures, '24.6/205 byDate arrival BOX', notesToString(b24205.arrival?.notes), 'BOX 5')
     }
 
     const b25205 = findPlanRow(byDate, '2026-06-25', '205')
     expect(failures, Boolean(b25205), 'Missing byDate row 2026-06-25/205')
     if (b25205) {
         expectEqual(failures, '25.6/205 byDate departure guest', b25205.departure?.guestLabel, 'Stepan Kuca')
-        expect(
-            failures,
-            !Array.isArray(b25205.departure?.notes) || b25205.departure.notes.length === 0,
-            '25.6/205 byDate departure notes must be empty'
-        )
+        expectTextContains(failures, '25.6/205 byDate departure BOX', notesToString(b25205.departure?.notes), 'BOX 5')
         expectEqual(failures, '25.6/205 byDate arrival guest', b25205.arrival?.guestLabel, 'Nikolas Brett')
         expectTextContains(failures, '25.6/205 byDate arrival BOX', notesToString(b25205.arrival?.notes), 'BOX 3')
     }
@@ -952,6 +964,67 @@ function runSafetyChecks(preview) {
     return failures
 }
 
+function runSameGuestNextDayBoxContinuityHelperChecks() {
+    const failures = []
+    const rows = [
+        {
+            dateIso: '2026-06-24',
+            roomNumber: '104',
+            arrivalTime: '14:00',
+            arrivalGuestName: 'Generic Test Guest',
+            arrivalGuestCount: 2,
+            departureNotes: [],
+            arrivalNotes: [],
+            isStayover: false,
+            warnings: []
+        },
+        {
+            dateIso: '2026-06-25',
+            roomNumber: '104',
+            departureTime: '11:00',
+            departureGuestName: 'Generic Test Guest',
+            departureGuestCount: 2,
+            departureNotes: ['BOX 7'],
+            arrivalNotes: [],
+            isStayover: false,
+            warnings: []
+        },
+        {
+            dateIso: '2026-06-25',
+            roomNumber: '105',
+            departureTime: '11:00',
+            departureGuestName: 'Different Room Guest',
+            departureGuestCount: 1,
+            departureNotes: ['BOX 9'],
+            arrivalNotes: [],
+            isStayover: false,
+            warnings: []
+        }
+    ]
+
+    repairSameGuestNextDayBoxContinuity(rows)
+
+    expectTextContains(
+        failures,
+        'synthetic 104 arrival BOX copied from next-day same guest departure',
+        notesToString(rows[0].arrivalNotes),
+        'BOX 7'
+    )
+    expectTextContains(
+        failures,
+        'synthetic 104 departure BOX remains present',
+        notesToString(rows[1].departureNotes),
+        'BOX 7'
+    )
+    expect(
+        failures,
+        !normalizeForMatch(notesToString(rows[0].arrivalNotes)).includes(normalizeForMatch('BOX 9')),
+        'synthetic continuity must not copy BOX from another room'
+    )
+
+    return failures
+}
+
 async function main() {
     const fixturePath = await requireStavFixture()
     const fixtureName = path.basename(fixturePath)
@@ -965,6 +1038,7 @@ async function main() {
     const preview = buildPrevioStateImportPreview(parsed, [], new Date())
 
     const failures = []
+    failures.push(...runSameGuestNextDayBoxContinuityHelperChecks())
     failures.push(...runTotalsChecks(parsed))
     failures.push(...runSafetyChecks(preview))
 
