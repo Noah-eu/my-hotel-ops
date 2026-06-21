@@ -1113,6 +1113,34 @@ export default function App() {
     const isAvailabilityOff = currentUser?.availability === 'dnes_nepracuji'
     const urgentOnlyAvailability = currentUser?.availability === 'jen_urgentni'
     const isAdminUser = isAdminRole(currentUser?.role)
+    const PREVIEW_ROLE_KEY = 'chill_ops_preview_role_v1'
+
+    const allowedPreviewRoles: Array<'real' | UserRole> = ['real', 'admin', 'lead', 'cleaner', 'maintenance']
+
+    const [previewRole, setPreviewRole] = useState<'real' | UserRole>(() => {
+        try {
+            if (typeof window === 'undefined') return 'real'
+            const stored = window.localStorage.getItem(PREVIEW_ROLE_KEY)
+            if (!stored) return 'real'
+            if (allowedPreviewRoles.includes(stored as any)) return stored as any
+            return 'real'
+        } catch (e) {
+            return 'real'
+        }
+    })
+
+    // effectiveRole: when admin and preview is active, use previewRole; otherwise use actual
+    const effectiveRole = useMemo(() => {
+        if (isAdminUser && previewRole && previewRole !== 'real') return previewRole as UserRole
+        return currentRole
+    }, [isAdminUser, previewRole, currentRole])
+
+    useEffect(() => {
+        if (!isAdminUser && previewRole !== 'real') {
+            setPreviewRole('real')
+            try { window.localStorage.removeItem(PREVIEW_ROLE_KEY) } catch (e) { }
+        }
+    }, [isAdminUser])
     const enableDangerousReset = isAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
     const showInstallHint = isAdminUser && !isStandalone && !installHintDismissed
 
@@ -4679,6 +4707,36 @@ export default function App() {
                     <div style={{ fontSize: 11, color: '#64748b', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px' }}>
                         {diagnostics.activeMode === 'online' ? 'Online režim' : diagnostics.activeMode === 'fallback' ? 'Fallback režim' : 'Demo režim'}
                     </div>
+                    {isAdminUser && (
+                        <div style={{ marginLeft: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <label style={{ fontSize: 12, color: '#475569' }}>Náhled jako</label>
+                            <select
+                                value={previewRole}
+                                onChange={(e) => {
+                                    const val = e.target.value
+                                    if (allowedPreviewRoles.includes(val as any)) {
+                                        setPreviewRole(val as any)
+                                        try { window.localStorage.setItem(PREVIEW_ROLE_KEY, val) } catch (er) { }
+                                    } else {
+                                        setPreviewRole('real')
+                                        try { window.localStorage.removeItem(PREVIEW_ROLE_KEY) } catch (er) { }
+                                    }
+                                }}
+                                style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #dbe7f3' }}
+                            >
+                                <option value="real">Skutečná role</option>
+                                <option value="admin">Admin</option>
+                                <option value="lead">Vedoucí úklidu</option>
+                                <option value="cleaner">Uklízečka</option>
+                                <option value="maintenance">Údržba</option>
+                            </select>
+                            {previewRole && previewRole !== 'real' && (
+                                <div style={{ fontSize: 12, color: '#b91c1c', fontWeight: 700, border: '1px solid #fecaca', padding: '4px 8px', borderRadius: 8, background: '#fff1f2' }}>
+                                    Náhled role: {previewRole === 'admin' ? 'Admin' : previewRole === 'lead' ? 'Vedoucí úklidu' : previewRole === 'cleaner' ? 'Uklízečka' : previewRole === 'maintenance' ? 'Údržba' : previewRole}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <div style={{ position: 'relative' }}>
                         <button
                             className="btn"
@@ -4872,7 +4930,7 @@ export default function App() {
                                     onAcknowledgeLateTasks={handleAcknowledgeRoomLateTasks}
                                     onReportProblem={handleReportRoomProblem}
                                     unfinishedCarryOvers={unfinishedCarryOverByRoomNumber}
-                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    role={(effectiveRole || 'cleaner') as UserRole}
                                     dayLabel={dayLabel}
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
@@ -4893,7 +4951,7 @@ export default function App() {
                             {view === 'team' && (
                                 <TeamOverview
                                     staff={staff}
-                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    role={(effectiveRole || 'cleaner') as UserRole}
                                     currentUserId={userId}
                                     onSetAvailability={setStaffAvailability}
                                 />
@@ -6045,7 +6103,7 @@ export default function App() {
                             )}
                             {view === 'maintenance' && (
                                 <MaintenanceView
-                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    role={(effectiveRole || 'cleaner') as UserRole}
                                     currentUserId={userId}
                                     maintenanceItems={maintenanceItems}
                                     tasks={maintenanceTasks}
@@ -6064,7 +6122,7 @@ export default function App() {
                             {view === 'supplies' && (
                                 <SuppliesView
                                     userName={currentUser?.name || 'Uživatel'}
-                                    role={(currentUser?.role || 'cleaner') as UserRole}
+                                    role={(effectiveRole || 'cleaner') as UserRole}
                                     requests={visibleSupplies}
                                     customChips={customSupplyChips}
                                     onCreateRequest={handleCreateSupplyRequest}
