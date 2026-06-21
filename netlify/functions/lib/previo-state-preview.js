@@ -976,6 +976,34 @@ function normalizeNotesList(notes) {
         .filter((note, index, all) => all.indexOf(note) === index)
 }
 
+function normalizeGuestNoteCandidate(value) {
+    return normalizeForMatch(value)
+        .replace(/\.\.\.+|…+/g, ' ')
+        .replace(/[^\p{L}\s'’-]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function noteMatchesGuestName(note, guestNames) {
+    const noteNorm = normalizeGuestNoteCandidate(note)
+    if (!noteNorm || /\bbox\b/i.test(note) || normalizeForMatch(note).includes('recepce')) return false
+
+    const noteTokens = noteNorm.split(' ').filter(Boolean)
+    if (noteTokens.length < 2) return false
+
+    return (guestNames || []).some((guestName) => {
+        const guestNorm = normalizeGuestNoteCandidate(String(guestName || ''))
+        if (!guestNorm) return false
+        if (noteNorm === guestNorm) return true
+        if (guestNorm.startsWith(`${noteNorm} `)) return true
+        return false
+    })
+}
+
+function removeGuestNameNotes(notes, guestNames) {
+    return (notes || []).filter((note) => !noteMatchesGuestName(note, guestNames))
+}
+
 function haveSameNotes(left, right) {
     if (!Array.isArray(left) || !Array.isArray(right)) return false
     if (left.length !== right.length) return false
@@ -1368,6 +1396,9 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                     arrivalNotes = []
                 }
 
+                departureNotes = removeGuestNameNotes(departureNotes, [departureGuestName, arrivalGuestName, stayoverGuestName])
+                arrivalNotes = removeGuestNameNotes(arrivalNotes, [departureGuestName, arrivalGuestName, stayoverGuestName])
+
                 if (
                     departureTime
                     && arrivalTime
@@ -1615,6 +1646,9 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
             ) {
                 arrivalNotes = []
             }
+
+            departureNotes = removeGuestNameNotes(departureNotes, [departureGuestName, arrivalGuestName, stayoverGuestName])
+            arrivalNotes = removeGuestNameNotes(arrivalNotes, [departureGuestName, arrivalGuestName, stayoverGuestName])
 
             if (
                 departureTime

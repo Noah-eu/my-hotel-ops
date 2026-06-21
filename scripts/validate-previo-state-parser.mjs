@@ -67,6 +67,14 @@ function expectTextContains(failures, label, haystack, needle) {
     }
 }
 
+function expectTextNotContains(failures, label, haystack, needle) {
+    const normalizedHaystack = normalizeForMatch(haystack)
+    const normalizedNeedle = normalizeForMatch(needle)
+    if (normalizedHaystack.includes(normalizedNeedle)) {
+        failures.push(`${label}: expected not to contain "${needle}", got "${haystack || ''}"`)
+    }
+}
+
 function notesToString(notes) {
     return Array.isArray(notes) ? notes.join(' | ') : ''
 }
@@ -1052,11 +1060,110 @@ function runSameGuestNextDayBoxContinuityHelperChecks() {
     return failures
 }
 
+function runFinalAdminPreviewNoteChecks(preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '21.06.2026 20:01')
+
+    const b21001 = findPlanRow(byDate, '2026-06-21', '001')
+    expect(failures, Boolean(b21001), 'Missing final byDate row 2026-06-21/001')
+    if (b21001) {
+        const departureNotes = notesToString(b21001.departure?.notes)
+        expectTextContains(failures, '21.6/001 final departure BOX', departureNotes, 'BOX 4')
+        expectTextContains(failures, '21.6/001 final departure couch note', departureNotes, 'připravit gauč')
+        expectTextNotContains(failures, '21.6/001 final departure must not include arrival guest first name', departureNotes, 'sogol')
+        expectTextNotContains(failures, '21.6/001 final departure must not include arrival guest surname', departureNotes, 'Zargarcharkh')
+    }
+
+    const b23104 = findPlanRow(byDate, '2026-06-23', '104')
+    expect(failures, Boolean(b23104), 'Missing final byDate row 2026-06-23/104')
+    if (b23104) {
+        const departureNotes = notesToString(b23104.departure?.notes)
+        expectTextContains(failures, '23.6/104 final departure BOX', departureNotes, 'BOX 5')
+        expectTextNotContains(failures, '23.6/104 final departure must not include arrival guest first name', departureNotes, 'volkan')
+        expectTextNotContains(failures, '23.6/104 final departure must not include arrival guest surname', departureNotes, 'yildirim')
+    }
+
+    const b24101 = findPlanRow(byDate, '2026-06-24', '101')
+    expect(failures, Boolean(b24101), 'Missing final byDate row 2026-06-24/101')
+    if (b24101) {
+        const departureNotes = notesToString(b24101.departure?.notes)
+        expectTextContains(failures, '24.6/101 final departure BOX', departureNotes, 'BOX 2')
+        expectTextNotContains(failures, '24.6/101 final departure must not include arrival guest first name', departureNotes, 'Anette')
+        expectTextNotContains(failures, '24.6/101 final departure must not include arrival guest middle name', departureNotes, 'Elvine')
+        expectTextNotContains(failures, '24.6/101 final departure must not include arrival guest surname', departureNotes, 'Solbakken')
+    }
+
+    const b25301 = findPlanRow(byDate, '2026-06-25', '301')
+    expect(failures, Boolean(b25301), 'Missing final byDate row 2026-06-25/301')
+    if (b25301) {
+        const departureNotes = notesToString(b25301.departure?.notes)
+        expectTextContains(failures, '25.6/301 final departure BOX', departureNotes, 'BOX 1')
+        expectTextContains(failures, '25.6/301 final departure toys note', departureNotes, 'hračky')
+        expectTextContains(failures, '25.6/301 final departure highchair note', departureNotes, 'dětská židlička')
+        expect(
+            failures,
+            !normalizeForMatch(departureNotes).endsWith(normalizeForMatch('dětská')),
+            '25.6/301 final departure notes must not end only with dětská'
+        )
+        expectTextContains(failures, '25.6/301 final arrival BOX', notesToString(b25301.arrival?.notes), 'BOX 1')
+    }
+
+    return failures
+}
+
+function runFinalAdminPreviewCoreGoldenChecks(preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '21.06.2026 20:01')
+
+    const b21105 = findPlanRow(byDate, '2026-06-21', '105')
+    expect(failures, Boolean(b21105), 'Missing final byDate row 2026-06-21/105')
+    if (b21105) {
+        expectTextContains(failures, '21.6/105 final arrival guest', b21105.arrival?.guestLabel, 'Tina Safran')
+        expectTextContains(failures, '21.6/105 final arrival BOX', notesToString(b21105.arrival?.notes), 'BOX 2')
+        expectTextNotContains(failures, '21.6/105 final arrival notes must not contain foreign BOX 6', notesToString(b21105.arrival?.notes), 'BOX 6')
+    }
+
+    const b21201 = findPlanRow(byDate, '2026-06-21', '201')
+    expect(failures, Boolean(b21201), 'Missing final byDate row 2026-06-21/201')
+    if (b21201) {
+        expectEqual(failures, '21.6/201 final arrival guest', b21201.arrival?.guestLabel, 'Michaela Císařová')
+        expectTextContains(failures, '21.6/201 final arrival BOX', notesToString(b21201.arrival?.notes), 'BOX 10')
+    }
+
+    const b22105 = findPlanRow(byDate, '2026-06-22', '105')
+    expect(failures, Boolean(b22105), 'Missing final byDate row 2026-06-22/105')
+    if (b22105) {
+        const stayoverNotes = notesToString(b22105.notes || b22105.departure?.notes || b22105.arrival?.notes)
+        expectTextContains(failures, '22.6/105 final stayover guest', b22105.stayoverGuestName || b22105.departure?.guestLabel || b22105.arrival?.guestLabel, 'Tina Safran')
+        expectTextContains(failures, '22.6/105 final stayover BOX', stayoverNotes, 'BOX 2')
+        expectTextNotContains(failures, '22.6/105 final notes must not contain foreign BOX 10', stayoverNotes, 'BOX 10')
+    }
+
+    const b24205 = findPlanRow(byDate, '2026-06-24', '205')
+    expect(failures, Boolean(b24205), 'Missing final byDate row 2026-06-24/205')
+    if (b24205) {
+        expectEqual(failures, '24.6/205 final arrival guest', b24205.arrival?.guestLabel, 'Stepan Kuca')
+        expectTextContains(failures, '24.6/205 final arrival BOX', notesToString(b24205.arrival?.notes), 'BOX 5')
+    }
+
+    const b25205 = findPlanRow(byDate, '2026-06-25', '205')
+    expect(failures, Boolean(b25205), 'Missing final byDate row 2026-06-25/205')
+    if (b25205) {
+        expectEqual(failures, '25.6/205 final departure guest', b25205.departure?.guestLabel, 'Stepan Kuca')
+        expectTextContains(failures, '25.6/205 final departure BOX', notesToString(b25205.departure?.notes), 'BOX 5')
+        expectEqual(failures, '25.6/205 final arrival guest', b25205.arrival?.guestLabel, 'Nikolas Brett')
+        expectTextContains(failures, '25.6/205 final arrival BOX', notesToString(b25205.arrival?.notes), 'BOX 3')
+    }
+
+    return failures
+}
+
 async function main() {
     const fixturePath = await requireStavFixture()
     const fixtureName = path.basename(fixturePath)
     const fixtureLower = fixtureName.toLowerCase()
     const isStav210702Fixture = fixtureLower.includes('stav-2026-06-21-0702')
+    const isStav212001Fixture = fixtureLower.includes('stav-2026-06-21-2001')
 
     const pdfBuffer = await fs.readFile(fixturePath)
 
@@ -1069,9 +1176,19 @@ async function main() {
     failures.push(...runTotalsChecks(parsed))
     failures.push(...runSafetyChecks(preview))
 
+    if (isStav210702Fixture || isStav212001Fixture) {
+        failures.push(...runFinalAdminPreviewCoreGoldenChecks(preview))
+    }
+
+    if (isStav212001Fixture) {
+        failures.push(...runFinalAdminPreviewNoteChecks(preview))
+    }
+
     if (isStav210702Fixture) {
         failures.push(...runStav0702SideContaminationChecks(parsed, preview))
         failures.push(...runStav0702FirstArrivalGuestChecks(parsed, preview))
+    } else if (isStav212001Fixture) {
+        // The current fixture has its own final Admin preview checks above.
     } else {
         failures.push(...runConcreteRegressionChecks(parsed))
         failures.push(...runCriticalFixtureCellChecks(parsed, preview))
