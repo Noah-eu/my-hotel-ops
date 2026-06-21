@@ -466,7 +466,7 @@ export default function MaintenanceView({
                                         <div
                                             key={t.id}
                                             data-maintenance-task-id={t.id}
-                                            className="room-card"
+                                            className="room-card maintenance-task-card"
                                             style={highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {}}
                                         >
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

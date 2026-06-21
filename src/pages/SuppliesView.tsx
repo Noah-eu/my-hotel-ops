@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { SupplyRequest, UserRole } from '../types'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
 
@@ -135,6 +135,78 @@ export default function SuppliesView({
     const newRequests = useMemo(() => requests.filter((r) => r.status === 'new' || r.status === 'approved'), [requests])
     const maintenanceRequests = useMemo(() => newRequests.filter((r) => !!r.linkedTaskId || (r.requestedByRole || '') === 'maintenance'), [newRequests])
     const normalNewRequests = useMemo(() => newRequests.filter((r) => !(!!r.linkedTaskId || (r.requestedByRole || '') === 'maintenance')), [newRequests])
+    const [selectedSubsection, setSelectedSubsection] = useState<'normal' | 'maintenance'>('normal')
+
+    // localStorage seen tracking
+    const STORAGE_KEY = 'supplies.seen.v1'
+    const loadSeen = () => {
+        try {
+            const raw = window.localStorage.getItem(STORAGE_KEY)
+            if (!raw) return { normal: [] as string[], maintenance: [] as string[] }
+            const parsed = JSON.parse(raw || '{}')
+            return { normal: Array.isArray(parsed.normal) ? parsed.normal : [], maintenance: Array.isArray(parsed.maintenance) ? parsed.maintenance : [] }
+        } catch (e) {
+            return { normal: [], maintenance: [] }
+        }
+    }
+
+    const saveSeen = (obj: { normal: string[]; maintenance: string[] }) => {
+        try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(obj))
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    const [seenMap, setSeenMap] = useState<{ normal: string[]; maintenance: string[] }>(() => {
+        if (typeof window === 'undefined') return { normal: [], maintenance: [] }
+        return loadSeen()
+    })
+
+    useEffect(() => {
+        // initialize selection: prefer normal if it has items
+        if (normalNewRequests.length > 0) setSelectedSubsection('normal')
+        else if (maintenanceRequests.length > 0) setSelectedSubsection('maintenance')
+    }, [normalNewRequests.length, maintenanceRequests.length])
+
+    function uniqueKeyForRequest(r: SupplyRequest) {
+        if (!r) return ''
+        if (r.id) return String(r.id)
+        return `${(r.itemName || '').trim()}::${(r.createdAt || '').trim()}::${(r.requestedBy || '').trim()}`
+    }
+
+    const normalUnseenCount = useMemo(() => {
+        const seen = new Set<string>(seenMap.normal || [])
+        return normalNewRequests.reduce((acc, r) => {
+            const k = uniqueKeyForRequest(r)
+            if (!k) return acc
+            return acc + (seen.has(k) ? 0 : 1)
+        }, 0)
+    }, [normalNewRequests, seenMap])
+
+    const maintenanceUnseenCount = useMemo(() => {
+        const seen = new Set<string>(seenMap.maintenance || [])
+        return maintenanceRequests.reduce((acc, r) => {
+            const k = uniqueKeyForRequest(r)
+            if (!k) return acc
+            return acc + (seen.has(k) ? 0 : 1)
+        }, 0)
+    }, [maintenanceRequests, seenMap])
+
+    function markSeen(section: 'normal' | 'maintenance') {
+        const current = loadSeen()
+        const targetList = section === 'normal' ? normalNewRequests : maintenanceRequests
+        const added = new Set<string>(section === 'normal' ? current.normal : current.maintenance)
+        for (const r of targetList) {
+            const k = uniqueKeyForRequest(r)
+            if (k) added.add(k)
+        }
+        const updated = { normal: current.normal, maintenance: current.maintenance }
+        if (section === 'normal') updated.normal = Array.from(added)
+        else updated.maintenance = Array.from(added)
+        setSeenMap(updated)
+        saveSeen(updated)
+    }
     const orderedRequests = useMemo(() => requests.filter((r) => r.status === 'ordered'), [requests])
     const completedRequests = useMemo(() => requests.filter((r) => r.status === 'delivered' || r.status === 'handed_over'), [requests])
     const cancelledRequests = useMemo(() => requests.filter((r) => r.status === 'cancelled'), [requests])
@@ -353,60 +425,85 @@ export default function SuppliesView({
                 </div>
             )}
 
-            {maintenanceRequests.length > 0 && (
-                <div className="section">
-                    <h3>Materiál pro údržbu</h3>
-                    <div className="room-list">
-                        {maintenanceRequests.map((request) => (
-                            <div
-                                key={request.id}
-                                className={`room-card maintenance-supply-card`}
-                                style={{ borderLeft: request.priority === 'urgent' ? '6px solid #dc2626' : '6px solid #0ea5a4', alignItems: 'flex-start' }}
-                            >
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                    <div className="room-meta">{request.roomNumber ? `Pokoj ${request.roomNumber}` : 'Zdroj: Údržba'} • {quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
-                                    <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
-                                    {request.linkedTaskId && <div className="room-meta" style={{ marginTop: 6 }}>Úkol: {request.linkedTaskId}</div>}
-                                    {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
-                                    {canCancel(role, userName, request) && (
-                                        <div style={{ marginTop: 8 }}>
-                                            <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
-                                        </div>
-                                    )}
-                                </div>
-                                {request.priority === 'urgent' && <div className="status red">URGENT</div>}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
             <div className="section">
-                <h3>Nové požadavky</h3>
-                <div className="room-list">
-                    {normalNewRequests.length === 0 && <div className="room-card">Bez nových požadavků</div>}
-                    {normalNewRequests.map((request) => (
-                        <div
-                            key={request.id}
-                            className="room-card"
-                            style={{ borderLeft: request.priority === 'urgent' ? '6px solid #dc2626' : '6px solid #0ea5a4', alignItems: 'flex-start' }}
-                        >
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
-                                <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
-                                {/* room number is intentionally hidden in supplies UI */}
-                                {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
-                                {canCancel(role, userName, request) && (
-                                    <div style={{ marginTop: 8 }}>
-                                        <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                        className={`chip ${selectedSubsection === 'normal' ? 'active' : ''}`}
+                        onClick={() => { setSelectedSubsection('normal'); markSeen('normal') }}
+                        style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
+                    >
+                        Úklid / běžné nákupy
+                        {normalUnseenCount > 0 && <span className="chip-badge">{normalUnseenCount}</span>}
+                    </button>
+
+                    <button
+                        className={`chip ${selectedSubsection === 'maintenance' ? 'active' : ''}`}
+                        onClick={() => { setSelectedSubsection('maintenance'); markSeen('maintenance') }}
+                        style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
+                    >
+                        Materiál pro údržbu
+                        {maintenanceUnseenCount > 0 && <span className="chip-badge">{maintenanceUnseenCount}</span>}
+                    </button>
+                </div>
+
+                <div style={{ marginTop: 10 }}>
+                    {selectedSubsection === 'maintenance' ? (
+                        <div>
+                            <h3>Materiál pro údržbu</h3>
+                            <div className="room-list">
+                                {maintenanceRequests.length === 0 && <div className="room-card">Žádný materiál pro údržbu</div>}
+                                {maintenanceRequests.map((request) => (
+                                    <div
+                                        key={request.id || `${request.itemName}-${request.createdAt}`}
+                                        className={`room-card maintenance-supply-card`}
+                                        style={{ borderLeft: request.priority === 'urgent' ? '6px solid #dc2626' : '6px solid #0ea5a4', alignItems: 'flex-start' }}
+                                    >
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontWeight: 800 }}>{request.itemName}</div>
+                                            <div className="room-meta">{request.roomNumber ? `Pokoj ${request.roomNumber}` : 'Zdroj: Údržba'} • {quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                            <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
+                                            {request.linkedTaskId && <div className="room-meta" style={{ marginTop: 6 }}>Úkol: {request.linkedTaskId}</div>}
+                                            {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
+                                            {canCancel(role, userName, request) && (
+                                                <div style={{ marginTop: 8 }}>
+                                                    <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {request.priority === 'urgent' && <div className="status red">URGENT</div>}
                                     </div>
-                                )}
+                                ))}
                             </div>
-                            {request.priority === 'urgent' && <div className="status red">URGENT</div>}
                         </div>
-                    ))}
+                    ) : (
+                        <div>
+                            <h3>Nové požadavky</h3>
+                            <div className="room-list">
+                                {normalNewRequests.length === 0 && <div className="room-card">Bez nových požadavků</div>}
+                                {normalNewRequests.map((request) => (
+                                    <div
+                                        key={request.id || `${request.itemName}-${request.createdAt}`}
+                                        className="room-card"
+                                        style={{ borderLeft: request.priority === 'urgent' ? '6px solid #dc2626' : '6px solid #0ea5a4', alignItems: 'flex-start' }}
+                                    >
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontWeight: 800 }}>{request.itemName}</div>
+                                            <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                            <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
+                                            {/* room number is intentionally hidden in supplies UI */}
+                                            {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
+                                            {canCancel(role, userName, request) && (
+                                                <div style={{ marginTop: 8 }}>
+                                                    <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {request.priority === 'urgent' && <div className="status red">URGENT</div>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
