@@ -4258,19 +4258,20 @@ export default function App() {
         setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
     }
 
-    function handleSaveCustomSupplyChip(name: string) {
+    function handleSaveCustomSupplyChip(name: string, section: 'uklid' | 'vybaveni' | 'ostatni') {
         const cleaned = name.trim()
         if (!cleaned) return
+        const key = `${section}::${cleaned}`
         setCustomSupplyChips((prev) => {
-            const exists = prev.some((chip) => chip.toLowerCase() === cleaned.toLowerCase())
+            const exists = prev.some((chip) => chip.toLowerCase() === key.toLowerCase())
             if (exists) return prev
-            const next = [...prev, cleaned]
+            const next = [...prev, key]
             if (runtimeMode === 'online') {
                 try {
-                    // persist to shared meta doc
+                    // persist to shared meta doc (store section-prefixed strings)
                     ; (activeStore as any).persistMetaState({ customSupplyChips: next })
                 } catch (e) {
-                    console.warn('[persistMetaState] write failed', e)
+                    // fail silently
                 }
             }
             return next

@@ -466,8 +466,8 @@ export default function MaintenanceView({
                                     const unreadForMaintenance = (t.status || '') !== 'done' && (t.status || '') !== 'waiting_material' && !t.maintenanceAcknowledgedAt
                                     const taskColor = t.status === 'done' ? '#16a34a'
                                         : t.status === 'waiting_material' ? '#7e22ce'
-                                        : t.status === 'in_progress' ? '#ea580c'
-                                        : (t.priority === 'urgent' ? '#dc2626' : '#0ea5a4')
+                                            : t.status === 'in_progress' ? '#ea580c'
+                                                : (t.priority === 'urgent' ? '#dc2626' : '#0ea5a4')
 
                                     return (
                                         <div

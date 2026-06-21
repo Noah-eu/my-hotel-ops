@@ -16,7 +16,7 @@ type Props = {
         note?: string
         priority: SupplyRequest['priority']
     }) => void
-    onSaveCustomChip: (name: string) => void
+    onSaveCustomChip: (name: string, section: 'uklid' | 'vybaveni' | 'ostatni') => void
     onCancelRequest: (requestId: string) => void
 }
 
@@ -164,7 +164,12 @@ export default function SuppliesView({
     })
 
     useEffect(() => {
-        // initialize selection: prefer normal if it has items
+        // initialize selection: maintenance role sees maintenance by default
+        if (isMaintenanceRole(role)) {
+            setSelectedSubsection('maintenance')
+            return
+        }
+        // otherwise prefer normal if it has items
         if (normalNewRequests.length > 0) setSelectedSubsection('normal')
         else if (maintenanceRequests.length > 0) setSelectedSubsection('maintenance')
     }, [normalNewRequests.length, maintenanceRequests.length])
@@ -211,10 +216,25 @@ export default function SuppliesView({
     const completedRequests = useMemo(() => requests.filter((r) => r.status === 'delivered' || r.status === 'handed_over'), [requests])
     const cancelledRequests = useMemo(() => requests.filter((r) => r.status === 'cancelled'), [requests])
 
-    const shouldShowCleaningChips = isAdminRole(role) || isCleaningLeadRole(role)
+    const shouldShowCleaningChips = (isAdminRole(role) || isCleaningLeadRole(role)) && !isMaintenanceRole(role)
     const shouldShowMaintenanceForm = isMaintenanceRole(role)
 
-    const visibleCustomChips = useMemo(() => customChips || [], [customChips])
+    // parse customChips which may be legacy strings or prefixed with section like 'uklid::Jar'
+    const parsedCustomChips = useMemo(() => {
+        const arr = customChips || []
+        return arr.map((c) => {
+            if (!c) return { name: '', section: 'uklid' as const }
+            const parts = String(c).split('::')
+            if (parts.length === 2) {
+                const sec = parts[0] as 'uklid' | 'vybaveni' | 'ostatni'
+                const name = parts[1]
+                return { name, section: (['uklid', 'vybaveni', 'ostatni'].includes(sec) ? sec : 'uklid') as 'uklid' | 'vybaveni' | 'ostatni' }
+            }
+            // legacy: no section stored; infer category
+            const inferred = itemToUiCategory(c)
+            return { name: c, section: inferred }
+        }).filter(p => p.name && p.name.trim())
+    }, [customChips])
 
     function setFeedbackText(text: string) {
         setFeedback(text)
@@ -261,7 +281,7 @@ export default function SuppliesView({
         })
 
         if (saveCustomChip) {
-            onSaveCustomChip(itemName)
+            onSaveCustomChip(itemName, selectedCategory)
         }
 
         setCustomItem('')
@@ -307,20 +327,22 @@ export default function SuppliesView({
             {shouldShowCleaningChips && (
                 <>
                     <div className="section">
-                        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                            <button
-                                className={`btn ${selectedCategory === 'uklid' ? 'active' : ''}`}
-                                onClick={() => setSelectedCategory('uklid')}
-                            >Úklid</button>
-                            <button
-                                className={`btn ${selectedCategory === 'vybaveni' ? 'active' : ''}`}
-                                onClick={() => setSelectedCategory('vybaveni')}
-                            >Vybavení</button>
-                            <button
-                                className={`btn ${selectedCategory === 'ostatni' ? 'active' : ''}`}
-                                onClick={() => setSelectedCategory('ostatni')}
-                            >Ostatní</button>
-                        </div>
+                        {!isMaintenanceRole(role) && (
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                                <button
+                                    className={`btn ${selectedCategory === 'uklid' ? 'active' : ''}`}
+                                    onClick={() => setSelectedCategory('uklid')}
+                                >Úklid</button>
+                                <button
+                                    className={`btn ${selectedCategory === 'vybaveni' ? 'active' : ''}`}
+                                    onClick={() => setSelectedCategory('vybaveni')}
+                                >Vybavení</button>
+                                <button
+                                    className={`btn ${selectedCategory === 'ostatni' ? 'active' : ''}`}
+                                    onClick={() => setSelectedCategory('ostatni')}
+                                >Ostatní</button>
+                            </div>
+                        )}
 
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             {(selectedCategory === 'uklid' ? uklidChips : selectedCategory === 'vybaveni' ? vybaveniChips : ostatniChips).map((chip) => (
@@ -328,18 +350,18 @@ export default function SuppliesView({
                             ))}
 
                             {/* include custom chips that map to this category */}
-                            {visibleCustomChips.filter(c => itemToUiCategory(c) === selectedCategory).map((chip) => (
-                                <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                            {parsedCustomChips.filter(p => p.section === selectedCategory).map((p) => (
+                                <button key={`${p.section}::${p.name}`} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(p.name)}>{p.name}</button>
                             ))}
                         </div>
 
                         {/* Vlastní row for custom chips that don't map to selected category */}
-                        {visibleCustomChips.filter(c => itemToUiCategory(c) !== selectedCategory).length > 0 && (
+                        {parsedCustomChips.filter(p => p.section !== selectedCategory).length > 0 && (
                             <div style={{ marginTop: 8 }}>
                                 <div style={{ fontSize: 13, color: '#334155', marginBottom: 6 }}>Vlastní</div>
                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                    {visibleCustomChips.filter(c => itemToUiCategory(c) !== selectedCategory).map((chip) => (
-                                        <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
+                                    {parsedCustomChips.filter(p => p.section !== selectedCategory).map((p) => (
+                                        <button key={`${p.section}::${p.name}`} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(p.name)}>{p.name}</button>
                                     ))}
                                 </div>
                             </div>
@@ -427,14 +449,16 @@ export default function SuppliesView({
 
             <div className="section">
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <button
-                        className={`chip ${selectedSubsection === 'normal' ? 'active' : ''}`}
-                        onClick={() => { setSelectedSubsection('normal'); markSeen('normal') }}
-                        style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
-                    >
-                        Úklid / běžné nákupy
-                        {normalUnseenCount > 0 && <span className="chip-badge">{normalUnseenCount}</span>}
-                    </button>
+                    {!isMaintenanceRole(role) && (
+                        <button
+                            className={`chip ${selectedSubsection === 'normal' ? 'active' : ''}`}
+                            onClick={() => { setSelectedSubsection('normal'); markSeen('normal') }}
+                            style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
+                        >
+                            Úklid / běžné nákupy
+                            {normalUnseenCount > 0 && <span className="chip-badge">{normalUnseenCount}</span>}
+                        </button>
+                    )}
 
                     <button
                         className={`chip ${selectedSubsection === 'maintenance' ? 'active' : ''}`}
