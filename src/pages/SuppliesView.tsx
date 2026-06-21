@@ -133,6 +133,8 @@ export default function SuppliesView({
     const [maintenanceNote, setMaintenanceNote] = useState('')
 
     const newRequests = useMemo(() => requests.filter((r) => r.status === 'new' || r.status === 'approved'), [requests])
+    const maintenanceRequests = useMemo(() => newRequests.filter((r) => !!r.linkedTaskId || (r.requestedByRole || '') === 'maintenance'), [newRequests])
+    const normalNewRequests = useMemo(() => newRequests.filter((r) => !(!!r.linkedTaskId || (r.requestedByRole || '') === 'maintenance')), [newRequests])
     const orderedRequests = useMemo(() => requests.filter((r) => r.status === 'ordered'), [requests])
     const completedRequests = useMemo(() => requests.filter((r) => r.status === 'delivered' || r.status === 'handed_over'), [requests])
     const cancelledRequests = useMemo(() => requests.filter((r) => r.status === 'cancelled'), [requests])
@@ -351,11 +353,40 @@ export default function SuppliesView({
                 </div>
             )}
 
+            {maintenanceRequests.length > 0 && (
+                <div className="section">
+                    <h3>Materiál pro údržbu</h3>
+                    <div className="room-list">
+                        {maintenanceRequests.map((request) => (
+                            <div
+                                key={request.id}
+                                className={`room-card maintenance-supply-card`}
+                                style={{ borderLeft: request.priority === 'urgent' ? '6px solid #dc2626' : '6px solid #0ea5a4', alignItems: 'flex-start' }}
+                            >
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 800 }}>{request.itemName}</div>
+                                    <div className="room-meta">{request.roomNumber ? `Pokoj ${request.roomNumber}` : 'Zdroj: Údržba'} • {quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                    <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
+                                    {request.linkedTaskId && <div className="room-meta" style={{ marginTop: 6 }}>Úkol: {request.linkedTaskId}</div>}
+                                    {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
+                                    {canCancel(role, userName, request) && (
+                                        <div style={{ marginTop: 8 }}>
+                                            <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
+                                        </div>
+                                    )}
+                                </div>
+                                {request.priority === 'urgent' && <div className="status red">URGENT</div>}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             <div className="section">
                 <h3>Nové požadavky</h3>
                 <div className="room-list">
-                    {newRequests.length === 0 && <div className="room-card">Bez nových požadavků</div>}
-                    {newRequests.map((request) => (
+                    {normalNewRequests.length === 0 && <div className="room-card">Bez nových požadavků</div>}
+                    {normalNewRequests.map((request) => (
                         <div
                             key={request.id}
                             className="room-card"

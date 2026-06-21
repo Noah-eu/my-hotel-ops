@@ -373,6 +373,7 @@ export default function MaintenanceView({
                     {materialOpenItemId === m.id && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: 8, border: '1px solid #e2e8f0', borderRadius: 8, background: '#faf5ff' }}>
                             <input
+                                className="material-input"
                                 placeholder="Např. silikon, sifon, žárovka…"
                                 value={materialInput[m.id] || ''}
                                 onChange={(e) => setMaterialInput((prev) => ({ ...prev, [m.id]: e.target.value }))}
@@ -516,6 +517,7 @@ export default function MaintenanceView({
                                                 {materialOpenTaskId === t.id && (
                                                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingTop: 6 }}>
                                                         <input
+                                                            className="material-input"
                                                             placeholder="Co chybí? Např. silikon, žárovka"
                                                             value={materialInput[t.id] || ''}
                                                             onChange={(e) => setMaterialInput((prev) => ({ ...prev, [t.id]: e.target.value }))}
