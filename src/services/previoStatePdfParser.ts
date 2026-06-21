@@ -262,6 +262,8 @@ type StateColumnBlock = {
     room: string
     departureText: string
     arrivalText: string
+    departureNoteText: string
+    arrivalNoteText: string
     rawText: string
 }
 
@@ -314,6 +316,28 @@ function detectSplitX(items: PrevioPdfExtract['pages'][number]['items']) {
     return xs[Math.floor(xs.length / 2)]
 }
 
+function detectNoteSplitX(items: PrevioPdfExtract['pages'][number]['items'], fallbackSplitX: number) {
+    const byLabel = (label: string) => items
+        .filter((item) => normalizeForMatch(item.text) === label)
+        .map((item) => item.x)
+        .sort((a, b) => a - b)
+
+    const odjezd = byLabel('odjezd')
+    const prijezd = byLabel('prijezd')
+    if (odjezd.length >= 2 && prijezd.length >= 2) {
+        const split = (odjezd[1] + prijezd[1]) / 2
+        if (Number.isFinite(split) && split > fallbackSplitX + 80) return split
+    }
+
+    const poznamka = byLabel('poznamka')
+    if (poznamka.length >= 1) {
+        const split = poznamka[0]
+        if (Number.isFinite(split) && split > fallbackSplitX + 80) return split
+    }
+
+    return Number.POSITIVE_INFINITY
+}
+
 function detectRoomColumnMaxX(items: PrevioPdfExtract['pages'][number]['items'], splitX: number) {
     const pokojHeader = items
         .filter((item) => normalizeForMatch(item.text) === 'pokoj')
@@ -346,6 +370,7 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
     if (!page?.items?.length) return []
 
     const splitX = detectSplitX(page.items)
+    const noteSplitX = detectNoteSplitX(page.items, splitX)
     const roomColumnMaxX = detectRoomColumnMaxX(page.items, splitX)
     const sideSplitPadding = 12
 
@@ -404,12 +429,21 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
         const blockRows = [...(rowsByStartIndex.get(start.index) || [])].sort((a, b) => b.y - a.y)
         const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX + sideSplitPadding)
         const arrivalText = collectColumnText(blockRows, splitX + sideSplitPadding)
+        const hasNoteSplit = Number.isFinite(noteSplitX)
+        const departureNoteText = hasNoteSplit
+            ? collectColumnText(blockRows, splitX + sideSplitPadding, noteSplitX)
+            : ''
+        const arrivalNoteText = hasNoteSplit
+            ? collectColumnText(blockRows, noteSplitX)
+            : ''
         const rawText = blockRows.map((row) => row.text).join('\n')
 
         return {
             room: start.room,
             departureText,
             arrivalText,
+            departureNoteText,
+            arrivalNoteText,
             rawText
         }
     })
@@ -523,14 +557,21 @@ function backfillAmbiguousTurnoverFromRawBlock(params: {
     }
 
     if (rawNoteGroups.length > 0) {
-        if (departureTime && departureNotes.length === 0 && rawNoteGroups[0]) {
-            departureNotes = [rawNoteGroups[0]]
-        }
-        if (arrivalTime && arrivalNotes.length === 0) {
-            if (departureTime && rawNoteGroups[1]) {
-                arrivalNotes = [rawNoteGroups[1]]
-            } else if (!departureTime && rawNoteGroups[0]) {
-                arrivalNotes = [rawNoteGroups[0]]
+        // Conservative fallback: only infer raw note groups when both sides are empty.
+        // This prevents cross-side note leakage (e.g. arrival BOX being moved to departure).
+        const hadDepartureNotes = departureNotes.length > 0
+        const hadArrivalNotes = arrivalNotes.length > 0
+
+        if (!hadDepartureNotes && !hadArrivalNotes) {
+            if (departureTime && rawNoteGroups[0]) {
+                departureNotes = [rawNoteGroups[0]]
+            }
+            if (arrivalTime) {
+                if (departureTime && rawNoteGroups[1]) {
+                    arrivalNotes = [rawNoteGroups[1]]
+                } else if (!departureTime && rawNoteGroups[0]) {
+                    arrivalNotes = [rawNoteGroups[0]]
+                }
             }
         }
     }
@@ -1080,11 +1121,14 @@ function mergeMissingFieldsFromTextFallback(primaryRows: PrevioStateParsedRow[],
         if (!row.arrivalGuestName && fallback.arrivalGuestName) row.arrivalGuestName = fallback.arrivalGuestName
         if (!row.stayoverGuestName && fallback.stayoverGuestName) row.stayoverGuestName = fallback.stayoverGuestName
 
-        if ((!row.departureNotes || row.departureNotes.length === 0) && fallback.departureNotes?.length) {
-            row.departureNotes = [...fallback.departureNotes]
-        }
-        if ((!row.arrivalNotes || row.arrivalNotes.length === 0) && fallback.arrivalNotes?.length) {
-            row.arrivalNotes = [...fallback.arrivalNotes]
+        const hasPrimaryNotes = (row.departureNotes?.length || 0) > 0 || (row.arrivalNotes?.length || 0) > 0
+        if (!hasPrimaryNotes) {
+            if (fallback.departureNotes?.length) {
+                row.departureNotes = [...fallback.departureNotes]
+            }
+            if (fallback.arrivalNotes?.length) {
+                row.arrivalNotes = [...fallback.arrivalNotes]
+            }
         }
 
         if (!row.stayoverUntil && fallback.stayoverUntil) row.stayoverUntil = fallback.stayoverUntil
@@ -1156,12 +1200,12 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     : undefined
 
                 let departureNotes = extractSideNotes(block.departureText)
-                let arrivalNotes = extractSideNotes(block.arrivalText)
-
-                if (departureNotes.length === 0 && arrivalNotes.length >= 2 && departureTime && arrivalTime) {
-                    departureNotes = [arrivalNotes[0]]
-                    arrivalNotes = [arrivalNotes[1], ...arrivalNotes.slice(2)]
+                const departureNotesFromArrivalSide = extractSideNotes(block.departureNoteText)
+                if (departureNotes.length === 0) {
+                    departureNotes = departureNotesFromArrivalSide
                 }
+
+                let arrivalNotes = extractSideNotes(block.arrivalNoteText || block.arrivalText)
 
                 let departureGuestName = pickDepartureGuestName(block.departureText)
                 let arrivalGuestName = pickArrivalGuestName(block.arrivalText)

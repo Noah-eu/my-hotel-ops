@@ -505,11 +505,15 @@ function mergeMissingFieldsFromTextFallback(primaryRows, fallbackRows) {
         if (!row.arrivalGuestName && fallback.arrivalGuestName) row.arrivalGuestName = fallback.arrivalGuestName
         if (!row.stayoverGuestName && fallback.stayoverGuestName) row.stayoverGuestName = fallback.stayoverGuestName
 
-        if ((!row.departureNotes || row.departureNotes.length === 0) && fallback.departureNotes && fallback.departureNotes.length > 0) {
-            row.departureNotes = [...fallback.departureNotes]
-        }
-        if ((!row.arrivalNotes || row.arrivalNotes.length === 0) && fallback.arrivalNotes && fallback.arrivalNotes.length > 0) {
-            row.arrivalNotes = [...fallback.arrivalNotes]
+        const hasPrimaryNotes = (row.departureNotes && row.departureNotes.length > 0)
+            || (row.arrivalNotes && row.arrivalNotes.length > 0)
+        if (!hasPrimaryNotes) {
+            if (fallback.departureNotes && fallback.departureNotes.length > 0) {
+                row.departureNotes = [...fallback.departureNotes]
+            }
+            if (fallback.arrivalNotes && fallback.arrivalNotes.length > 0) {
+                row.arrivalNotes = [...fallback.arrivalNotes]
+            }
         }
 
         if (!row.stayoverUntil && fallback.stayoverUntil) row.stayoverUntil = fallback.stayoverUntil
@@ -571,6 +575,28 @@ function detectSplitX(items) {
     return xs[Math.floor(xs.length / 2)]
 }
 
+function detectNoteSplitX(items, fallbackSplitX) {
+    const byLabel = (label) => items
+        .filter((item) => normalizeForMatch(item.text) === label)
+        .map((item) => item.x)
+        .sort((a, b) => a - b)
+
+    const odjezd = byLabel('odjezd')
+    const prijezd = byLabel('prijezd')
+    if (odjezd.length >= 2 && prijezd.length >= 2) {
+        const split = (odjezd[1] + prijezd[1]) / 2
+        if (Number.isFinite(split) && split > fallbackSplitX + 80) return split
+    }
+
+    const poznamka = byLabel('poznamka')
+    if (poznamka.length >= 1) {
+        const split = poznamka[0]
+        if (Number.isFinite(split) && split > fallbackSplitX + 80) return split
+    }
+
+    return Number.POSITIVE_INFINITY
+}
+
 function detectRoomColumnMaxX(items, splitX) {
     const pokojHeader = items
         .filter((item) => normalizeForMatch(item.text) === 'pokoj')
@@ -603,6 +629,7 @@ function extractStateColumnBlocks(page) {
     if (!page || !page.items || page.items.length === 0) return []
 
     const splitX = detectSplitX(page.items)
+    const noteSplitX = detectNoteSplitX(page.items, splitX)
     const roomColumnMaxX = detectRoomColumnMaxX(page.items, splitX)
     const sideSplitPadding = 12
 
@@ -661,12 +688,21 @@ function extractStateColumnBlocks(page) {
         const blockRows = [...(rowsByStartIndex.get(start.index) || [])].sort((a, b) => b.y - a.y)
         const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX + sideSplitPadding)
         const arrivalText = collectColumnText(blockRows, splitX + sideSplitPadding)
+        const hasNoteSplit = Number.isFinite(noteSplitX)
+        const departureNoteText = hasNoteSplit
+            ? collectColumnText(blockRows, splitX + sideSplitPadding, noteSplitX)
+            : ''
+        const arrivalNoteText = hasNoteSplit
+            ? collectColumnText(blockRows, noteSplitX)
+            : ''
         const rawText = blockRows.map((row) => row.text).join('\n')
 
         return {
             room: start.room,
             departureText,
             arrivalText,
+            departureNoteText,
+            arrivalNoteText,
             rawText
         }
     })
@@ -769,14 +805,21 @@ function backfillAmbiguousTurnoverFromRawBlock({
     }
 
     if (rawNoteGroups.length > 0) {
-        if (departureTime && (!departureNotes || departureNotes.length === 0) && rawNoteGroups[0]) {
-            departureNotes = [rawNoteGroups[0]]
-        }
-        if (arrivalTime && (!arrivalNotes || arrivalNotes.length === 0)) {
-            if (departureTime && rawNoteGroups[1]) {
-                arrivalNotes = [rawNoteGroups[1]]
-            } else if (!departureTime && rawNoteGroups[0]) {
-                arrivalNotes = [rawNoteGroups[0]]
+        // Conservative fallback: only infer raw note groups when both sides are empty.
+        // This prevents cross-side note leakage (e.g. arrival BOX being moved to departure).
+        const hadDepartureNotes = Array.isArray(departureNotes) && departureNotes.length > 0
+        const hadArrivalNotes = Array.isArray(arrivalNotes) && arrivalNotes.length > 0
+
+        if (!hadDepartureNotes && !hadArrivalNotes) {
+            if (departureTime && rawNoteGroups[0]) {
+                departureNotes = [rawNoteGroups[0]]
+            }
+            if (arrivalTime) {
+                if (departureTime && rawNoteGroups[1]) {
+                    arrivalNotes = [rawNoteGroups[1]]
+                } else if (!departureTime && rawNoteGroups[0]) {
+                    arrivalNotes = [rawNoteGroups[0]]
+                }
             }
         }
     }
@@ -1097,12 +1140,12 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                     : undefined
 
                 let departureNotes = extractSideNotes(block.departureText)
-                let arrivalNotes = extractSideNotes(block.arrivalText)
-
-                if (departureNotes.length === 0 && arrivalNotes.length >= 2 && departureTime && arrivalTime) {
-                    departureNotes = [arrivalNotes[0]]
-                    arrivalNotes = [arrivalNotes[1], ...arrivalNotes.slice(2)]
+                const departureNotesFromArrivalSide = extractSideNotes(block.departureNoteText)
+                if (departureNotes.length === 0) {
+                    departureNotes = departureNotesFromArrivalSide
                 }
+
+                let arrivalNotes = extractSideNotes(block.arrivalNoteText || block.arrivalText)
 
                 let departureGuestName = pickDepartureGuestName(block.departureText)
                 let arrivalGuestName = pickArrivalGuestName(block.arrivalText)
