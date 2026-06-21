@@ -448,7 +448,7 @@ export default function MaintenanceView({
                     </div>
                 )}
 
-                <h4 style={{ margin: '8px 0' }}>Závady</h4>
+                <h4 className="section-heading">Závady</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {sortedItems.length === 0 && visibleRoomTasks.length === 0 && (
                         <div className="room-card" style={{ color: '#475569' }}>Žádné nahlášené problémy.</div>
@@ -458,7 +458,7 @@ export default function MaintenanceView({
 
                 {maintenanceRoomTasks.length > 0 && (
                     <div style={{ marginTop: 12 }}>
-                        <h4>Úkoly z pokojů</h4>
+                        <h4 className="section-heading">Úkoly z pokojů</h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {visibleRoomTasks
                                 .filter((task) => (task?.status || '') !== 'cancelled')
