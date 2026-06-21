@@ -27,6 +27,8 @@ const PRIMARY_TABS: Array<{ tab: OpsTab; label: string; offset: number }> = [
     { tab: 'Pozitri', label: 'Pozítří', offset: 2 }
 ]
 
+const MAX_VISIBLE_IMPORTED_DAYS = 7
+
 type SheetCellState = 'turnover' | 'turnover-incomplete' | 'departure' | 'departure-incomplete' | 'arrival' | 'arrival-incomplete' | 'occupied' | 'free' | 'unknown'
 
 type SheetCellModel = {
@@ -266,27 +268,47 @@ export default function RoomSheetView({
         return next
     }, [importedRoomsByDate, roomsByDay, tabDateEntries])
 
+    const visibleDateIsos = useMemo(() => {
+        const todayIso = isoForOffset(0)
+
+        return Object.entries(importedRoomsByDate)
+            .filter(([dateIso, rooms]) => dateIso >= todayIso && Array.isArray(rooms) && rooms.length > 0)
+            .map(([dateIso]) => dateIso)
+            .sort()
+            .slice(0, MAX_VISIBLE_IMPORTED_DAYS)
+    }, [importedRoomsByDate])
+
+    const hasVisibleImportedDates = visibleDateIsos.length > 0
+
+    const visibleRoomsByDate = useMemo(() => {
+        if (!hasVisibleImportedDates) return {}
+
+        return visibleDateIsos.reduce<Record<string, RoomPlan[]>>((acc, dateIso) => {
+            acc[dateIso] = roomsByDate[dateIso] || []
+            return acc
+        }, {})
+    }, [hasVisibleImportedDates, roomsByDate, visibleDateIsos])
+
     const dateColumns = useMemo(() => {
         const tabLabelByDate = new Map<string, string>()
         tabDateEntries.forEach(({ dateIso, label }) => {
             if (!tabLabelByDate.has(dateIso)) tabLabelByDate.set(dateIso, label)
         })
 
-        return Object.keys(roomsByDate)
-            .sort()
+        return visibleDateIsos
             .map((dateIso) => ({
                 dateIso,
                 label: formatColumnDate(dateIso),
                 tabLabel: tabLabelByDate.get(dateIso)
             }))
-    }, [roomsByDate, tabDateEntries])
+    }, [tabDateEntries, visibleDateIsos])
 
     const roomNumbers = useMemo(() => {
         const normalizedActive = activeRoomNumbers
             .map((number) => normalizeRoomNumber(number))
             .filter(Boolean)
 
-        const fromImportedData = Object.values(roomsByDate)
+        const fromImportedData = Object.values(visibleRoomsByDate)
             .flatMap((rooms) => rooms.map((room) => normalizeRoomNumber(room.number)))
             .filter(Boolean)
 
@@ -297,12 +319,12 @@ export default function RoomSheetView({
         ]
 
         return ordered.filter((roomNumber, index, all) => all.indexOf(roomNumber) === index)
-    }, [activeRoomNumbers, roomsByDate])
+    }, [activeRoomNumbers, visibleRoomsByDate])
 
     const lookupByDate = useMemo(() => {
         const next: Record<string, Map<string, RoomPlan>> = {}
 
-        Object.entries(roomsByDate).forEach(([dateIso, rooms]) => {
+        Object.entries(visibleRoomsByDate).forEach(([dateIso, rooms]) => {
             const byRoom = new Map<string, RoomPlan>()
             rooms.forEach((room) => {
                 const roomNumber = normalizeRoomNumber(room.number)
@@ -313,7 +335,7 @@ export default function RoomSheetView({
         })
 
         return next
-    }, [roomsByDate])
+    }, [visibleRoomsByDate])
 
     const spanOverlays = useMemo(() => {
         const overlays: Record<string, Map<string, Partial<RoomPlan>>> = {}
@@ -364,64 +386,70 @@ export default function RoomSheetView({
             <h3>Plachta</h3>
             <div className="room-meta sheet-note">Plachta je orientační přehled z posledního potvrzeného Stav importu.</div>
 
-            <div className="sheet-wrap">
-                <div className="sheet-scroll" role="region" aria-label="Přehled pokojů napříč importovanými dny">
-                    <table className="sheet-table">
-                        <thead>
-                            <tr>
-                                <th className="sheet-head-room">Pokoj</th>
-                                {dateColumns.map((column) => (
-                                    <th key={`sheet-head-${column.dateIso}`} className="sheet-head-date">
-                                        <div className="sheet-head-date-main">{column.label}</div>
-                                        {column.tabLabel && <div className="sheet-head-date-tag">{column.tabLabel}</div>}
-                                    </th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {roomNumbers.map((roomNumber) => {
-                                let previousState: SheetCellState = 'unknown'
-                                let previousStayoverKey = ''
-
-                                return (
-                                    <tr key={`sheet-row-${roomNumber}`}>
-                                        <th scope="row" className="sheet-room-cell">{roomNumber}</th>
-                                        {dateColumns.map((column) => {
-                                            const baseRoom = lookupByDate[column.dateIso]?.get(roomNumber)
-                                            const importedRoom = (importedRoomsByDate && importedRoomsByDate[column.dateIso])
-                                                ? (importedRoomsByDate[column.dateIso].find((r) => normalizeRoomNumber(r.number) === roomNumber) as RoomPlan | undefined)
-                                                : undefined
-                                            const overlay = spanOverlays[column.dateIso]?.get(roomNumber)
-                                            const effectiveRoom = overlay ? { ...(baseRoom || {}), ...overlay } as RoomPlan : baseRoom
-                                            const cell = buildCellModel(effectiveRoom)
-                                            
-                                            const keepStayoverColor = Boolean(
-                                                cell.state === 'occupied'
-                                                && previousState === 'occupied'
-                                                && cell.stayoverKey
-                                                && cell.stayoverKey === previousStayoverKey
-                                            )
-
-                                            previousState = cell.state
-                                            previousStayoverKey = cell.stayoverKey || ''
-
-                                            return (
-                                                <td
-                                                    key={`sheet-cell-${roomNumber}-${column.dateIso}`}
-                                                    className={`sheet-cell sheet-cell-${cell.state}${keepStayoverColor ? ' sheet-cell-stayover-cont' : ''}`}
-                                                >
-                                                    <div className="sheet-cell-main">{cell.main}</div>
-                                                    {cell.detail && <div className="sheet-cell-detail">{cell.detail}</div>}
-                                                </td>
-                                            )
-                                        })}
-                                    </tr>
-                                )
-                            })}
-                        </tbody>
-                    </table>
+            {!hasVisibleImportedDates && (
+                <div className="room-card" style={{ marginTop: 12, borderLeft: '6px solid #dc2626' }}>
+                    <div className="room-number">Chybí aktuální data</div>
+                    <div className="room-meta">Plachta nemá aktuální potvrzená data od dneška. Zkontrolujte import v Adminu.</div>
                 </div>
-            </div>
+            )}
+
+            {hasVisibleImportedDates && (
+                <div className="sheet-wrap">
+                    <div className="sheet-scroll" role="region" aria-label="Přehled pokojů napříč importovanými dny">
+                        <table className="sheet-table">
+                            <thead>
+                                <tr>
+                                    <th className="sheet-head-room">Pokoj</th>
+                                    {dateColumns.map((column) => (
+                                        <th key={`sheet-head-${column.dateIso}`} className="sheet-head-date">
+                                            <div className="sheet-head-date-main">{column.label}</div>
+                                            {column.tabLabel && <div className="sheet-head-date-tag">{column.tabLabel}</div>}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {roomNumbers.map((roomNumber) => {
+                                    let previousState: SheetCellState = 'unknown'
+                                    let previousStayoverKey = ''
+
+                                    return (
+                                        <tr key={`sheet-row-${roomNumber}`}>
+                                            <th scope="row" className="sheet-room-cell">{roomNumber}</th>
+                                            {dateColumns.map((column) => {
+                                                const baseRoom = lookupByDate[column.dateIso]?.get(roomNumber)
+                                                const overlay = spanOverlays[column.dateIso]?.get(roomNumber)
+                                                const effectiveRoom = overlay ? { ...(baseRoom || {}), ...overlay } as RoomPlan : baseRoom
+                                                const cell = buildCellModel(effectiveRoom)
+
+                                                const keepStayoverColor = Boolean(
+                                                    cell.state === 'occupied'
+                                                    && previousState === 'occupied'
+                                                    && cell.stayoverKey
+                                                    && cell.stayoverKey === previousStayoverKey
+                                                )
+
+                                                previousState = cell.state
+                                                previousStayoverKey = cell.stayoverKey || ''
+
+                                                return (
+                                                    <td
+                                                        key={`sheet-cell-${roomNumber}-${column.dateIso}`}
+                                                        className={`sheet-cell sheet-cell-${cell.state}${keepStayoverColor ? ' sheet-cell-stayover-cont' : ''}`}
+                                                    >
+                                                        <div className="sheet-cell-main">{cell.main}</div>
+                                                        {cell.detail && <div className="sheet-cell-detail">{cell.detail}</div>}
+                                                    </td>
+                                                )
+                                            })}
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
