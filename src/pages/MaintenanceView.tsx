@@ -464,12 +464,21 @@ export default function MaintenanceView({
                                 .filter((task) => (task?.status || '') !== 'cancelled')
                                 .map((t) => {
                                     const unreadForMaintenance = (t.status || '') !== 'done' && (t.status || '') !== 'waiting_material' && !t.maintenanceAcknowledgedAt
+                                    const taskColor = t.status === 'done' ? '#16a34a'
+                                        : t.status === 'waiting_material' ? '#7e22ce'
+                                        : t.status === 'in_progress' ? '#ea580c'
+                                        : (t.priority === 'urgent' ? '#dc2626' : '#0ea5a4')
+
                                     return (
                                         <div
                                             key={t.id}
                                             data-maintenance-task-id={t.id}
-                                            className="room-card maintenance-task-card"
-                                            style={highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {}}
+                                            className="room-card"
+                                            style={{
+                                                borderLeft: `6px solid ${taskColor}`,
+                                                padding: 12,
+                                                ...(highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {})
+                                            }}
                                         >
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                                 <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
