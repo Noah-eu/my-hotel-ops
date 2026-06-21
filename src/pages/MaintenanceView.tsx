@@ -166,6 +166,24 @@ export default function MaintenanceView({
         }
     }
 
+    function formatCreatedAt(ts?: string | null) {
+        if (!ts) return '-'
+        const parsed = new Date(ts)
+        if (!isNaN(parsed.getTime())) {
+            return parsed.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+        }
+        // fallback: if it's like HH:MM, attach today's date
+        if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(ts)) {
+            const today = new Date()
+            const parts = ts.split(':')
+            const hh = Number(parts[0]) || 0
+            const mm = Number(parts[1]) || 0
+            today.setHours(hh, mm, 0, 0)
+            return today.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+        }
+        return ts
+    }
+
     useEffect(() => {
         if (!focusRequest) return
 
@@ -204,11 +222,6 @@ export default function MaintenanceView({
         }
     }, [focusRequest])
 
-    const safeMaintenanceItems = Array.isArray(maintenanceItems) ? maintenanceItems : []
-    const safeTasks = Array.isArray(tasks) ? tasks : []
-
-    const visibleItems = safeMaintenanceItems.filter(i => (i?.status || '') !== 'cancelled')
-
     function handleCreate() {
         if (!newTitle.trim()) return
         onCreateMaintenance({ roomNumber: newRoom.trim() || undefined, title: newTitle, category: newCategory, priority: newPriority, note: newNote })
@@ -219,6 +232,10 @@ export default function MaintenanceView({
         setNewCategory('other')
         setCreating(false)
     }
+
+    // Safe wrappers for incoming props to avoid runtime undefined errors
+    const visibleItems = useMemo(() => maintenanceItems || [], [maintenanceItems])
+    const safeTasks = useMemo(() => tasks || [], [tasks])
 
     const maintenanceVisibleToUser = isAdmin
         ? visibleItems
@@ -334,7 +351,7 @@ export default function MaintenanceView({
                     {m.note && <div style={{ fontSize: 14, color: '#334155' }}>{m.note}</div>}
                     {m.materialNeeded && <div style={{ fontSize: 14, color: '#6b21a8', fontWeight: 600 }}>Materiál: {m.materialNeeded}</div>}
                     <div style={{ fontSize: 12, color: '#64748b' }}>
-                        Nahlásil: {m.reportedBy || 'Neznámý'} • Vytvořeno: {m.createdAt || '-'}
+                        Nahlásil: {m.reportedBy || 'Neznámý'} • Vytvořeno: {formatCreatedAt(m.createdAt)}
                         {m.assignedTo ? ` • Řeší: ${m.assignedTo}` : ''}
                         {m.updatedAt ? ` • Aktualizace: ${m.updatedAt}` : ''}
                     </div>
@@ -353,7 +370,7 @@ export default function MaintenanceView({
                         {canActAsMaintenance && m.status !== 'in_progress' && (
                             <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'in_progress' })}>Probíhá</button>
                         )}
-                        {canActAsMaintenance && (
+                        {(isAdmin || isLead || canActAsMaintenance) && (
                             <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'done' })}>Hotovo</button>
                         )}
 
@@ -416,30 +433,15 @@ export default function MaintenanceView({
                             <button className="action-large" onClick={() => setCreating(true)}>Nová závada</button>
                         ) : (
                             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                <input placeholder="Pokoj nebo místo" value={newRoom} onChange={(e) => setNewRoom(e.target.value)} />
-                                <input placeholder="Co je za problém" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                    <select value={newCategory} onChange={(e) => setNewCategory(e.target.value as MaintenanceItem['category'])}>
-                                        <option value="water">Voda</option>
-                                        <option value="drain">Odpad</option>
-                                        <option value="electricity">Elektrika</option>
-                                        <option value="lock">Zámek</option>
-                                        <option value="safe">Sejf</option>
-                                        <option value="tv_wifi">TV / WiFi</option>
-                                        <option value="heating">Topení</option>
-                                        <option value="furniture">Nábytek</option>
-                                        <option value="appliance">Spotřebič</option>
-                                        <option value="other">Jiné</option>
-                                    </select>
-                                    <div style={{ display: 'flex', gap: 6 }}>
-                                        <button className={`btn ${newPriority === 'normal' ? 'active' : ''}`} onClick={() => setNewPriority('normal')}>Normální</button>
-                                        <button className={`btn ${newPriority === 'urgent' ? 'active' : ''}`} onClick={() => setNewPriority('urgent')}>Urgentní</button>
-                                    </div>
-                                </div>
-                                <input placeholder="Poznámka (volitelné)" value={newNote} onChange={(e) => setNewNote(e.target.value)} />
+                                <textarea
+                                    className="new-issue-textarea"
+                                    placeholder="Co je potřeba opravit?"
+                                    value={newTitle}
+                                    onChange={(e) => setNewTitle(e.target.value)}
+                                />
                                 <div style={{ display: 'flex', gap: 8 }}>
                                     <button className="action-large" onClick={handleCreate}>Vytvořit závadu</button>
-                                    <button className="btn" onClick={() => setCreating(false)}>Zrušit</button>
+                                    <button className="btn" onClick={() => { setCreating(false); setNewTitle('') }}>Zrušit</button>
                                 </div>
                             </div>
                         )}
@@ -485,7 +487,7 @@ export default function MaintenanceView({
                                                     />
                                                 </div>
                                                 <div style={{ fontSize: 13, color: '#64748b' }}>
-                                                    {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {t.createdAt || '-'}
+                                                    {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {formatCreatedAt(t.createdAt)}
                                                 </div>
                                                 {(t.note || '').trim() && (
                                                     <div style={{ marginTop: 6, color: '#334155', fontSize: 13, lineHeight: 1.35 }}>

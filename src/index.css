@@ -243,6 +243,16 @@ body {
     font-size: 15px;
 }
 
+.new-issue-textarea {
+    width: 100%;
+    min-height: 56px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #dbe7f3;
+    font-size: 15px;
+    resize: vertical;
+}
+
 .maintenance-supply-card {
     background: #fbfdff;
     border: 1px solid rgba(99, 102, 241, 0.06);

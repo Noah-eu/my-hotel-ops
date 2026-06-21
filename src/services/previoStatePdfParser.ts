@@ -1213,22 +1213,22 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                     ? (departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
                     : undefined
 
-                ;({
-                    departureTime,
-                    arrivalTime,
-                    departureNotes,
-                    arrivalNotes
-                } = backfillAmbiguousTurnoverFromRawBlock({
-                    rawText: block.rawText,
-                    departureTime,
-                    arrivalTime,
-                    departureGuestName,
-                    arrivalGuestName,
-                    departureGuestCount,
-                    arrivalGuestCount,
-                    departureNotes,
-                    arrivalNotes
-                }))
+                    ; ({
+                        departureTime,
+                        arrivalTime,
+                        departureNotes,
+                        arrivalNotes
+                    } = backfillAmbiguousTurnoverFromRawBlock({
+                        rawText: block.rawText,
+                        departureTime,
+                        arrivalTime,
+                        departureGuestName,
+                        arrivalGuestName,
+                        departureGuestCount,
+                        arrivalGuestCount,
+                        departureNotes,
+                        arrivalNotes
+                    }))
 
                 const distinctGuests = namesDiffer(departureGuestName, arrivalGuestName)
                 arrivalGuestCount = resolveArrivalGuestCountFromSide(
@@ -1461,7 +1461,7 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 stayoverGuestName = guestCandidates[0]
             }
 
-            ;({
+            ; ({
                 departureTime,
                 arrivalTime,
                 departureNotes,
@@ -1600,28 +1600,28 @@ export function parsePrevioStatePdfText(source: PrevioStatePdfSource, referenceD
                 blockWarnings.push('AM/PM: podezřelý noční čas v obratu, zkontrolujte mapování sloupců')
             }
 
-                // If arrival has a guest name but missing guest count, try to infer from nearby standalone counts in rawBlock
-                if (arrivalGuestName && typeof arrivalGuestCount !== 'number') {
-                    try {
-                        const raw = String(rawBlock || '')
-                        const re = /\((\d{1,2})\)|\b(\d{1,2})\s*(?:p|os|host|pax)\b/gi
-                        const matches = [...raw.matchAll(re)].map((m) => ({ index: typeof m.index === 'number' ? m.index : 0, value: Number(m[1] || m[2]) }))
-                        if (matches.length > 0) {
-                            const nameIdx = raw.toLowerCase().indexOf(arrivalGuestName.toLowerCase())
-                            let chosen = matches[0]
-                            if (nameIdx >= 0) {
-                                chosen = matches.reduce((acc, m) => (Math.abs((m.index || 0) - nameIdx) < Math.abs((acc.index || 0) - nameIdx) ? m : acc), matches[0])
-                            } else {
-                                chosen = matches[matches.length - 1]
-                            }
-                            if (typeof chosen.value === 'number' && Number.isFinite(chosen.value)) arrivalGuestCount = chosen.value
+            // If arrival has a guest name but missing guest count, try to infer from nearby standalone counts in rawBlock
+            if (arrivalGuestName && typeof arrivalGuestCount !== 'number') {
+                try {
+                    const raw = String(rawBlock || '')
+                    const re = /\((\d{1,2})\)|\b(\d{1,2})\s*(?:p|os|host|pax)\b/gi
+                    const matches = [...raw.matchAll(re)].map((m) => ({ index: typeof m.index === 'number' ? m.index : 0, value: Number(m[1] || m[2]) }))
+                    if (matches.length > 0) {
+                        const nameIdx = raw.toLowerCase().indexOf(arrivalGuestName.toLowerCase())
+                        let chosen = matches[0]
+                        if (nameIdx >= 0) {
+                            chosen = matches.reduce((acc, m) => (Math.abs((m.index || 0) - nameIdx) < Math.abs((acc.index || 0) - nameIdx) ? m : acc), matches[0])
+                        } else {
+                            chosen = matches[matches.length - 1]
                         }
-                    } catch (e) {
-                        // ignore
+                        if (typeof chosen.value === 'number' && Number.isFinite(chosen.value)) arrivalGuestCount = chosen.value
                     }
+                } catch (e) {
+                    // ignore
                 }
+            }
 
-                rows.push({
+            rows.push({
                 dateIso: pageDateIso,
                 roomNumber: roomInfo.room,
                 departureTime,
