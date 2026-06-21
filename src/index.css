@@ -285,11 +285,11 @@ body {
 
 .maintenance-task-card {
     background: #ffffff;
-    border: 1px solid rgba(59, 130, 246, 0.14);
+    border: 2px solid rgba(59, 130, 246, 0.22);
     box-shadow: 0 10px 24px rgba(2, 6, 23, 0.08);
     border-radius: 12px;
     padding: 14px;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
 }
 
 .action-large {
