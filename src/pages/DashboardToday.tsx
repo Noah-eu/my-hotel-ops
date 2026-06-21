@@ -613,7 +613,9 @@ export default function DashboardToday({
                                     {(() => {
                                         const normalized = normalizeRoomNumber(room.number)
                                         const carryDate = unfinishedCarryOvers && unfinishedCarryOvers[normalized]
-                                        if (carryDate && room.status !== 'hotovo') {
+                                        const hasDepartureToday = Boolean(room.departure || room.departureTime)
+                                        // do not show carry-over badge for occupied stayover rooms without a departure
+                                        if (carryDate && room.status !== 'hotovo' && !(room.occupiedConfirmed && !hasDepartureToday)) {
                                             const d = new Date(`${carryDate}T00:00:00`)
                                             const label = `Nedokončeno z ${d.getDate()}.${d.getMonth() + 1}.`
                                             return (

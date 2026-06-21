@@ -1329,7 +1329,18 @@ export default function App() {
         Object.values(roomsByDay.Dnes || []).forEach((r) => {
             const normalized = normalizeCatalogRoomNumber(r.number || '')
             if (!normalized) return
-            if (r.carryOverResolvedAt || r.status === 'hotovo') delete map[normalized]
+            // If today's room is explicitly marked resolved or already hotovo, remove carry-over
+            if (r.carryOverResolvedAt || r.status === 'hotovo') {
+                delete map[normalized]
+                return
+            }
+
+            // If today's room is occupied/stayover without a departure, it's not actionable for carry-over
+            const hasDepartureToday = Boolean(r.departure || r.departureTime)
+            if (r.occupiedConfirmed && !hasDepartureToday) {
+                delete map[normalized]
+                return
+            }
         })
 
         return map
