@@ -217,6 +217,70 @@ function splitNoteGroups(rawText: string) {
         .filter(Boolean)
 }
 
+function looksLikeStandaloneGuestNameLine(line: string) {
+    const trimmed = String(line || '').trim()
+    if (!trimmed) return false
+    return /^(\p{Lu}[\p{L}'’-]+)(\s+\p{Lu}[\p{L}'’-]+){0,3}$/u.test(trimmed)
+}
+
+function isSafeNoteContinuationLine(line: string) {
+    const trimmed = String(line || '').trim()
+    if (!trimmed) return false
+    if (isNoteLine(trimmed)) return false
+    if (detectRoomToken(trimmed)) return false
+    if (isCapacityLine(trimmed)) return false
+    if (isAlfredWindow(trimmed)) return false
+    if (detectTimes(trimmed).length > 0) return false
+    if (/\b\d{1,2}\.\s*\d{1,2}\.?\b/.test(trimmed)) return false
+    if (/^\(?\d{1,2}\)?$/.test(trimmed)) return false
+    if (looksLikeStandaloneGuestNameLine(trimmed)) return false
+    return /\p{L}/u.test(trimmed)
+}
+
+function isSkippableNoteInterruptionLine(line: string) {
+    const trimmed = String(line || '').trim()
+    if (!trimmed) return false
+    if (isAlfredWindow(trimmed)) return true
+    if (detectTimes(trimmed).length > 0) return true
+    if (/\b\d{1,2}\.\s*\d{1,2}\.?\b/.test(trimmed)) return true
+    if (/^\(?\d{1,2}\)?$/.test(trimmed)) return true
+    return false
+}
+
+function extractNoteSourceLines(text: string) {
+    const noteLines: string[] = []
+    let currentNote = ''
+
+    String(text || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line) => {
+            if (isNoteLine(line)) {
+                if (currentNote) noteLines.push(currentNote)
+                currentNote = line
+                return
+            }
+
+            if (currentNote && isSafeNoteContinuationLine(line)) {
+                currentNote = `${currentNote} ${line}`.replace(/\s+/g, ' ').trim()
+                return
+            }
+
+            if (currentNote && isSkippableNoteInterruptionLine(line)) {
+                return
+            }
+
+            if (currentNote) {
+                noteLines.push(currentNote)
+                currentNote = ''
+            }
+        })
+
+    if (currentNote) noteLines.push(currentNote)
+    return noteLines
+}
+
 function isNoteLine(line: string) {
     const normalized = normalizeForMatch(line)
     return normalized.includes('recepce') || /\bbox\b/i.test(line) || /\bb\s*ox\b/i.test(line)
@@ -448,10 +512,7 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
 }
 
 function extractSideNotes(sideText: string) {
-    const noteSource = sideText
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => isNoteLine(line))
+    const noteSource = extractNoteSourceLines(sideText)
         .join(' ')
 
     return splitNoteGroups(noteSource)
@@ -513,10 +574,7 @@ function namesDiffer(left?: string, right?: string) {
 }
 
 function extractRawNoteGroups(rawText: string) {
-    const noteSource = String(rawText || '')
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => isNoteLine(line))
+    const noteSource = extractNoteSourceLines(String(rawText || ''))
         .join(' ')
 
     return splitNoteGroups(noteSource)

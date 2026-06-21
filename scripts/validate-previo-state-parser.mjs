@@ -551,6 +551,22 @@ function runStav0702SideContaminationChecks(parsed, preview) {
         expectTextContains(failures, '25.6/205 parser arrival BOX', notesToString(p25205.arrivalNotes), 'BOX 3')
     }
 
+    const p25301 = findRow(parsed.rows, '2026-06-25', '301')
+    expect(failures, Boolean(p25301), 'Missing parser row 2026-06-25/301')
+    if (p25301) {
+        const departureNotes = notesToString(p25301.departureNotes)
+        expectEqual(failures, '25.6/301 parser departure guest', p25301.departureGuestName, 'Pallavi Lahri')
+        expectTextContains(failures, '25.6/301 parser departure BOX', departureNotes, 'BOX 1')
+        expectTextContains(failures, '25.6/301 parser departure toys note', departureNotes, 'hračky')
+        expectTextContains(failures, '25.6/301 parser departure highchair note', departureNotes, 'dětská židlička')
+        expect(
+            failures,
+            normalizeForMatch(departureNotes) !== normalizeForMatch('Recepce: BOX 1, hračky, dětská'),
+            '25.6/301 parser departure notes must not be truncated to only dětská'
+        )
+        expectTextContains(failures, '25.6/301 parser arrival BOX', notesToString(p25301.arrivalNotes), 'BOX 1')
+    }
+
     const p24303 = findRow(parsed.rows, '2026-06-24', '303')
     expect(failures, Boolean(p24303), 'Missing parser row 2026-06-24/303')
     if (p24303) {
@@ -680,6 +696,17 @@ function runStav0702SideContaminationChecks(parsed, preview) {
         expectTextContains(failures, '25.6/205 byDate departure BOX', notesToString(b25205.departure?.notes), 'BOX 5')
         expectEqual(failures, '25.6/205 byDate arrival guest', b25205.arrival?.guestLabel, 'Nikolas Brett')
         expectTextContains(failures, '25.6/205 byDate arrival BOX', notesToString(b25205.arrival?.notes), 'BOX 3')
+    }
+
+    const b25301 = findPlanRow(byDate, '2026-06-25', '301')
+    expect(failures, Boolean(b25301), 'Missing byDate row 2026-06-25/301')
+    if (b25301) {
+        const departureNotes = notesToString(b25301.departure?.notes)
+        expectTextContains(failures, '25.6/301 byDate departure guest', b25301.departure?.guestLabel, 'Pallavi Lahri')
+        expectTextContains(failures, '25.6/301 byDate departure BOX', departureNotes, 'BOX 1')
+        expectTextContains(failures, '25.6/301 byDate departure toys note', departureNotes, 'hračky')
+        expectTextContains(failures, '25.6/301 byDate departure highchair note', departureNotes, 'dětská židlička')
+        expectTextContains(failures, '25.6/301 byDate arrival BOX', notesToString(b25301.arrival?.notes), 'BOX 1')
     }
 
     const b24303 = findPlanRow(byDate, '2026-06-24', '303')
