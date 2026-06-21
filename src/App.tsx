@@ -1335,11 +1335,22 @@ export default function App() {
                 return
             }
 
-            // If today's room is occupied/stayover without a departure, it's not actionable for carry-over
-            const hasDepartureToday = Boolean(r.departure || r.departureTime)
-            if (r.occupiedConfirmed && !hasDepartureToday) {
-                delete map[normalized]
-                return
+            // Use shared helper to decide eligibility for carry-over rendering
+            // Import dynamically to avoid circular imports at module scope
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const { isTodayRoomEligibleForCarryOver } = require('./lib/roomHelpers')
+                if (!isTodayRoomEligibleForCarryOver(r)) {
+                    delete map[normalized]
+                    return
+                }
+            } catch (e) {
+                // fallback conservative behavior: if helper can't be loaded, remove when occupied
+                const hasDepartureToday = Boolean(r.departure || r.departureTime)
+                if (r.occupiedConfirmed || hasDepartureToday || r.arrival || r.arrivalTime) {
+                    delete map[normalized]
+                    return
+                }
             }
         })
 

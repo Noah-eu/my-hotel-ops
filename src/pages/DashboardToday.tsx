@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { MaintenanceItem, RoomPlan, Task, UserRole } from '../types'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from '../lib/roles'
+import { isTodayRoomEligibleForCarryOver } from '../lib/roomHelpers'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -613,9 +614,8 @@ export default function DashboardToday({
                                     {(() => {
                                         const normalized = normalizeRoomNumber(room.number)
                                         const carryDate = unfinishedCarryOvers && unfinishedCarryOvers[normalized]
-                                        const hasDepartureToday = Boolean(room.departure || room.departureTime)
-                                        // do not show carry-over badge for occupied stayover rooms without a departure
-                                        if (carryDate && room.status !== 'hotovo' && !(room.occupiedConfirmed && !hasDepartureToday)) {
+                                        // show carry-over only when today's room is eligible (no departure, no arrival, not occupied)
+                                        if (carryDate && room.status !== 'hotovo' && isTodayRoomEligibleForCarryOver(room)) {
                                             const d = new Date(`${carryDate}T00:00:00`)
                                             const label = `Nedokončeno z ${d.getDate()}.${d.getMonth() + 1}.`
                                             return (
