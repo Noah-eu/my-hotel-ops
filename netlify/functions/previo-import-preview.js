@@ -485,3 +485,8 @@ exports.handler = async (event) => {
         return json(unauthorized ? 401 : 500, { error: safeMessage })
     }
 }
+
+exports._test = {
+    resolveImportKind,
+    parseImportBuffer
+}

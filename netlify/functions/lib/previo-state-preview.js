@@ -1,3 +1,5 @@
+const XLSX = require('xlsx')
+
 const PDF_PAGE_BREAK = '[[[PREVIO_PAGE_BREAK]]]'
 const PREVIO_STAV_PARSER_VERSION = 'stav-parser-v3-real-pdf-fixture'
 
@@ -1491,7 +1493,6 @@ function createSpreadsheetDebugLine(dateIso, roomNumber, rowCells) {
 }
 
 function extractStateDataFromXlsxBuffer(xlsxBuffer) {
-    const XLSX = require('xlsx')
     const workbook = XLSX.read(xlsxBuffer, { type: 'buffer', cellDates: true, raw: false })
 
     const fallbackYear = new Date().getFullYear()
