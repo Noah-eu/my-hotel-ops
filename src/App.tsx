@@ -46,10 +46,12 @@ import {
 import {
     buildPrevioStateImportPreview,
     evaluatePrevioStateImportSafety,
+    extractStateDataFromXlsxFile,
     extractStateTextFromPdfFile,
     MASTER_ROOM_NUMBERS,
     PREVIO_STAV_PARSER_VERSION,
     parsePrevioStatePdfText,
+    parsePrevioStateXlsxData,
     type PrevioStateImportPreview,
     type PrevioStateParseResult
 } from './services/previoStatePdfParser'
@@ -1814,12 +1816,19 @@ export default function App() {
         }
     }
 
-    async function handlePrevioStatePdfSelected(file: File | null) {
+    async function handlePrevioStateImportSelected(file: File | null) {
         if (!file) return
-        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-        if (!isPdf) {
+        const lowerName = file.name.toLowerCase()
+        const isPdf = file.type === 'application/pdf' || lowerName.endsWith('.pdf')
+        const isSpreadsheet = (
+            lowerName.endsWith('.xlsx')
+            || lowerName.endsWith('.xls')
+            || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            || file.type === 'application/vnd.ms-excel'
+        )
+        if (!isPdf && !isSpreadsheet) {
             setStateImportPdfStatus('error')
-            setStateImportPdfError('Soubor musí být ve formátu PDF.')
+            setStateImportPdfError('Soubor musí být ve formátu XLS/XLSX nebo PDF.')
             setStateImportPreview(null)
             setStateImportRawText('')
             setStateImportParseResult(null)
@@ -1834,8 +1843,19 @@ export default function App() {
         setStateImportParseResult(null)
 
         try {
-            const extracted = await extractStateTextFromPdfFile(file)
-            const parsed = parsePrevioStatePdfText(extracted, new Date())
+            let parsed: PrevioStateParseResult
+            let rawText = ''
+
+            if (isSpreadsheet) {
+                const extracted = await extractStateDataFromXlsxFile(file)
+                parsed = parsePrevioStateXlsxData(extracted, new Date())
+                rawText = extracted.rawText
+            } else {
+                const extracted = await extractStateTextFromPdfFile(file)
+                parsed = parsePrevioStatePdfText(extracted, new Date())
+                rawText = extracted.rawText
+            }
+
             const preview = buildPrevioStateImportPreview(parsed, activeRooms, new Date())
             const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
             const missingDateLabels = missingDateIsos.map((dateIso) => new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', {
@@ -1882,12 +1902,12 @@ export default function App() {
             }
 
             setStateImportPreview(preview)
-            setStateImportRawText(extracted.rawText)
+            setStateImportRawText(rawText)
             setStateImportParseResult(parsed)
             setStateImportPdfStatus('loaded')
         } catch (error: any) {
             setStateImportPdfStatus('error')
-            setStateImportPdfError(error?.message || 'PDF Stav se nepodařilo načíst.')
+            setStateImportPdfError(error?.message || 'Import Stav se nepodařilo načíst.')
             setStateImportPreview(null)
             setStateImportRawText('')
             setStateImportParseResult(null)
@@ -5784,19 +5804,19 @@ export default function App() {
                                                 {showManualPrevioImportSection && (
                                                     <>
                                                         <div className="room-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, border: '1px solid #bae6fd', background: '#f0f9ff' }}>
-                                                            <label style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Nahrát PDF Stav</label>
-                                                            <div className="room-meta" style={{ color: '#0c4a6e' }}>Doporučeno – obsahuje příjezdy, odjezdy i probíhající pobyty.</div>
+                                                            <label style={{ fontSize: 13, color: '#0c4a6e', fontWeight: 800 }}>Nahrát Stav (preferováno XLS/XLSX, fallback PDF)</label>
+                                                            <div className="room-meta" style={{ color: '#0c4a6e' }}>XLS/XLSX je preferovaná cesta pro denní přehled, PDF zůstává jako fallback.</div>
                                                             <input
                                                                 type="file"
-                                                                accept="application/pdf,.pdf"
+                                                                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/pdf,.pdf"
                                                                 onChange={(e) => {
                                                                     const nextFile = e.target.files?.[0] || null
-                                                                    void handlePrevioStatePdfSelected(nextFile)
+                                                                    void handlePrevioStateImportSelected(nextFile)
                                                                 }}
                                                             />
-                                                            {stateImportPdfStatus === 'loading' && <div className="room-meta">Načítám PDF Stav...</div>}
-                                                            {stateImportPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>PDF Stav načteno</div>}
-                                                            {stateImportPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{stateImportPdfError || 'PDF Stav se nepodařilo načíst.'}</div>}
+                                                            {stateImportPdfStatus === 'loading' && <div className="room-meta">Načítám import Stav...</div>}
+                                                            {stateImportPdfStatus === 'loaded' && <div className="room-meta" style={{ color: '#166534' }}>Import Stav načten</div>}
+                                                            {stateImportPdfStatus === 'error' && <div className="room-meta" style={{ color: '#b91c1c' }}>{stateImportPdfError || 'Import Stav se nepodařilo načíst.'}</div>}
                                                         </div>
 
                                                         {stateImportPreviewForUi && (
@@ -5841,7 +5861,7 @@ export default function App() {
 
                                                                 {stateImportRawText && (
                                                                     <details>
-                                                                        <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text Stav z PDF</summary>
+                                                                        <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Debug text Stav (PDF/XLSX)</summary>
                                                                         <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
                                                                             <button className="btn" onClick={() => void handleCopyStateImportDebugText()}>Kopírovat</button>
                                                                             <button className="btn" onClick={handleDownloadStateImportDebugText}>Stáhnout TXT</button>

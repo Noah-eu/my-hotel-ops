@@ -85,6 +85,24 @@ type PrevioStateImportSafetyInput = {
 
 type PrevioStatePdfSource = string | PrevioPdfExtract
 
+type PrevioStateSpreadsheetRow = {
+    rowNumber: number
+    cells: string[]
+}
+
+type PrevioStateSpreadsheetSheet = {
+    name: string
+    dateIso: string
+    rows: PrevioStateSpreadsheetRow[]
+    totals?: { arrivals?: number; departures?: number; stayovers?: number }
+    complete: boolean
+}
+
+export type PrevioStateSpreadsheetExtract = {
+    rawText: string
+    sheets: PrevioStateSpreadsheetSheet[]
+}
+
 function normalizeForMatch(value: string) {
     return value
         .normalize('NFD')
@@ -2052,6 +2070,348 @@ function dayDiff(baseDate: Date, comparedDate: Date) {
     const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate())
     const end = new Date(comparedDate.getFullYear(), comparedDate.getMonth(), comparedDate.getDate())
     return Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000))
+}
+
+function normalizeSpreadsheetCell(value: unknown) {
+    if (value === null || value === undefined) return ''
+    if (value instanceof Date && Number.isFinite(value.getTime())) {
+        return `${value.getDate()}. ${value.getMonth() + 1}. ${value.getFullYear()}`
+    }
+    return String(value).replace(/\u00a0/g, ' ').trim()
+}
+
+function parseSpreadsheetDateIso(value: string, fallbackYear: number) {
+    const raw = normalizeSpreadsheetCell(value)
+    if (!raw) return null
+
+    const isoMatch = raw.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/)
+    if (isoMatch) {
+        const isoDate = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]))
+        return Number.isNaN(isoDate.getTime()) ? null : formatLocalDate(isoDate)
+    }
+
+    const fullMatch = raw.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\b/)
+    if (fullMatch) {
+        const parsed = new Date(Number(fullMatch[3]), Number(fullMatch[2]) - 1, Number(fullMatch[1]))
+        return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed)
+    }
+
+    const shortMatch = raw.match(/\b(\d{1,2})\.\s*(\d{1,2})\.?\b/)
+    if (shortMatch) {
+        const parsed = new Date(fallbackYear, Number(shortMatch[2]) - 1, Number(shortMatch[1]))
+        return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed)
+    }
+
+    return null
+}
+
+function parseSpreadsheetNumber(value: string) {
+    const normalized = normalizeSpreadsheetCell(value)
+    if (!normalized) return undefined
+    const asNumber = Number(normalized.replace(',', '.'))
+    return Number.isFinite(asNumber) ? asNumber : undefined
+}
+
+function sanitizeGuestLabel(raw: string) {
+    return raw
+        .replace(/\(\s*alfred\s*\)/gi, ' ')
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/gi, ' ')
+        .replace(/\((\d{1,2})\)/g, ' ')
+        .replace(/[;|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^,\s*|,\s*$/g, '')
+        .trim()
+}
+
+function pickTimeFromGuestCell(rawCell: string, side: 'departure' | 'arrival') {
+    const windowMatch = rawCell.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\b/i)
+    if (windowMatch) {
+        return normalizeTimeWithMeridiem(windowMatch[1], windowMatch[2], windowMatch[3])
+    }
+
+    const singleMatch = rawCell.match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\b/i)
+    if (singleMatch) {
+        return normalizeTimeWithMeridiem(singleMatch[1], singleMatch[2], singleMatch[3])
+    }
+
+    const detected = detectTimes(rawCell)
+    if (detected.length === 0) {
+        return side === 'departure' ? '11:00' : '14:00'
+    }
+
+    if (side === 'departure') {
+        const morning = detected.find((time) => toMinutes(time) <= 12 * 60)
+        return morning || detected[0]
+    }
+
+    return detected[0]
+}
+
+function parseGuestCell(rawCell: string, side: 'departure' | 'arrival' | 'stayover') {
+    const text = normalizeSpreadsheetCell(rawCell)
+    if (!text) {
+        return {
+            hasSignal: false,
+            guestName: undefined,
+            guestCount: undefined,
+            time: undefined as string | undefined,
+            hadAmPm: false
+        }
+    }
+
+    const countMatch = text.match(/\((\d{1,2})\)/)
+    const fallbackCountMatch = text.match(/\b(\d{1,2})\s*(?:p|os|host|pax)\b/i)
+
+    const sanitizedName = sanitizeGuestLabel(text)
+    const hasNameLikeValue = /\p{L}/u.test(sanitizedName)
+    const nameTokens = sanitizedName
+        .split(/\s*,\s*/)
+        .map((token) => token.trim())
+        .filter(Boolean)
+
+    let guestCount = countMatch ? Number(countMatch[1]) : undefined
+    if (typeof guestCount !== 'number' && fallbackCountMatch) {
+        guestCount = Number(fallbackCountMatch[1])
+    }
+    if (typeof guestCount !== 'number' && nameTokens.length > 1) {
+        guestCount = nameTokens.length
+    }
+
+    const guestName = hasNameLikeValue ? sanitizedName : undefined
+    const hasSignal = Boolean(guestName || typeof guestCount === 'number')
+
+    return {
+        hasSignal,
+        guestName,
+        guestCount,
+        time: side === 'stayover' || !hasSignal ? undefined : pickTimeFromGuestCell(text, side),
+        hadAmPm: /\b(?:AM|PM)\b/i.test(text)
+    }
+}
+
+function parseSpreadsheetNotes(rawCell: string) {
+    const source = normalizeSpreadsheetCell(rawCell)
+        .replace(/(?:\.\.\.+|…+)$/g, '')
+        .trim()
+    if (!source) return []
+
+    const groups = splitNoteGroups(source)
+    const normalized = groups
+        .map((item) => normalizeBoxText(item))
+        .map((item) => item.trim())
+        .filter(Boolean)
+
+    return Array.from(new Set(normalized))
+}
+
+function createSpreadsheetDebugLine(dateIso: string, roomNumber: string, rowCells: string[]) {
+    const safe = (index: number) => normalizeSpreadsheetCell(rowCells[index] || '')
+    return [
+        dateIso,
+        roomNumber,
+        `prijezd:${safe(0)}`,
+        `odjezdHost:${safe(2)}`,
+        `prijezdHost:${safe(3)}`,
+        `pobyt:${safe(4)}`,
+        `odjezdDatum:${safe(5)}`,
+        `pozOdjezd:${safe(6)}`,
+        `pozPrijezd:${safe(7)}`,
+        `pozPobyt:${safe(8)}`
+    ].join(' | ')
+}
+
+async function resolveXlsxModule() {
+    const loaded = await import('xlsx')
+    const maybeDefault = (loaded as any).default
+    return (maybeDefault && maybeDefault.utils && maybeDefault.read)
+        ? maybeDefault
+        : loaded
+}
+
+function parsePrevioStateSpreadsheetExtract(source: PrevioStateSpreadsheetExtract, referenceDate = new Date()): PrevioStateParseResult {
+    const warnings: string[] = []
+    const parsedDates: string[] = []
+    const completeDates = new Set<string>()
+    const dayTotals: Record<string, { arrivals?: number; departures?: number; stayovers?: number }> = {}
+    const rows: PrevioStateParsedRow[] = []
+    let amPmEvidence = false
+
+    source.sheets
+        .slice()
+        .sort((a, b) => a.dateIso.localeCompare(b.dateIso))
+        .forEach((sheet) => {
+            const dateIso = sheet.dateIso
+            if (!parsedDates.includes(dateIso)) parsedDates.push(dateIso)
+
+            let totalsFound = false
+
+            sheet.rows.forEach((rawRow) => {
+                const row = rawRow.cells.map((cell) => normalizeSpreadsheetCell(cell))
+                const firstColNormalized = normalizeForMatch(row[0] || '')
+
+                const totalsRowNumbers = [
+                    parseSpreadsheetNumber(row[0] || ''),
+                    parseSpreadsheetNumber(row[1] || ''),
+                    parseSpreadsheetNumber(row[2] || '')
+                ]
+                if (
+                    totalsRowNumbers.every((value) => typeof value === 'number')
+                    && totalsRowNumbers.some((value) => Number(value) > 0)
+                    && !normalizeForMatch(row[3] || '')
+                ) {
+                    dayTotals[dateIso] = {
+                        arrivals: totalsRowNumbers[0],
+                        departures: totalsRowNumbers[1],
+                        stayovers: totalsRowNumbers[2]
+                    }
+                    totalsFound = true
+                    return
+                }
+
+                if (firstColNormalized.includes('prijizdejici') || firstColNormalized.includes('prijezdejici')) {
+                    return
+                }
+
+                const roomToken = normalizeRoomKey(row[1] || '')
+                if (!MASTER_ROOM_SET.has(roomToken)) return
+
+                const departureInfo = parseGuestCell(row[2] || '', 'departure')
+                const arrivalInfo = parseGuestCell(row[3] || '', 'arrival')
+                const stayoverInfo = parseGuestCell(row[4] || '', 'stayover')
+                amPmEvidence = amPmEvidence || departureInfo.hadAmPm || arrivalInfo.hadAmPm || stayoverInfo.hadAmPm
+
+                let departureNotes = parseSpreadsheetNotes(row[6] || '')
+                let arrivalNotes = parseSpreadsheetNotes(row[7] || '')
+                const stayoverNotes = parseSpreadsheetNotes(row[8] || '')
+
+                let departureTime = departureInfo.hasSignal ? departureInfo.time : undefined
+                let arrivalTime = arrivalInfo.hasSignal ? arrivalInfo.time : undefined
+
+                const stayoverMode = !departureTime && !arrivalTime && stayoverInfo.hasSignal
+                if (!departureTime && !arrivalTime && !stayoverMode && !departureInfo.hasSignal && !arrivalInfo.hasSignal) {
+                    return
+                }
+
+                if (stayoverMode) {
+                    const mergedStayoverNotes = stayoverNotes.length > 0
+                        ? stayoverNotes
+                        : departureNotes.length > 0
+                            ? departureNotes
+                            : arrivalNotes
+                    departureNotes = mergedStayoverNotes
+                    arrivalNotes = []
+                }
+
+                const stayoverUntil = stayoverMode
+                    ? parseSpreadsheetDateIso(row[5] || '', Number(dateIso.slice(0, 4)) || referenceDate.getFullYear()) || undefined
+                    : undefined
+
+                const parsedRow: PrevioStateParsedRow = {
+                    dateIso,
+                    roomNumber: roomToken,
+                    departureTime,
+                    arrivalTime,
+                    departureGuestCount: departureInfo.guestCount,
+                    arrivalGuestCount: arrivalInfo.guestCount,
+                    departureGuestName: departureInfo.guestName,
+                    arrivalGuestName: arrivalInfo.guestName,
+                    stayoverGuestName: stayoverMode ? stayoverInfo.guestName : undefined,
+                    stayoverGuestCount: stayoverMode ? stayoverInfo.guestCount : undefined,
+                    stayoverUntil,
+                    departureNotes,
+                    arrivalNotes,
+                    isStayover: !departureTime && !arrivalTime,
+                    warnings: []
+                }
+
+                if (parsedRow.departureTime && !parsedRow.departureGuestName && typeof parsedRow.departureGuestCount !== 'number') {
+                    parsedRow.warnings.push('Odjezd má čas, ale chybí jméno hosta.')
+                }
+                if (parsedRow.arrivalTime && !parsedRow.arrivalGuestName && typeof parsedRow.arrivalGuestCount !== 'number') {
+                    parsedRow.warnings.push('Příjezd má čas, ale chybí jméno hosta.')
+                }
+
+                rows.push(parsedRow)
+            })
+
+            if (totalsFound) {
+                completeDates.add(dateIso)
+            } else if (rows.some((row) => row.dateIso === dateIso)) {
+                completeDates.add(dateIso)
+            }
+        })
+
+    const sortedRows = rows.sort((a, b) => {
+        const byDate = a.dateIso.localeCompare(b.dateIso)
+        if (byDate !== 0) return byDate
+        return Number(a.roomNumber) - Number(b.roomNumber)
+    })
+
+    repairSameGuestNextDayBoxContinuity(sortedRows)
+
+    return {
+        rows: sortedRows,
+        warnings,
+        parsedDates: parsedDates.sort(),
+        rawTextLength: source.rawText.length,
+        lineCount: source.rawText.split(/\r?\n/).filter(Boolean).length,
+        completeDates: Array.from(completeDates).sort(),
+        amPmEvidence,
+        dayTotals
+    }
+}
+
+export async function extractStateDataFromXlsxFile(file: File): Promise<PrevioStateSpreadsheetExtract> {
+    const XLSX = await resolveXlsxModule()
+    const buffer = await file.arrayBuffer()
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true, raw: false })
+
+    const fallbackYear = new Date().getFullYear()
+    const sheets: PrevioStateSpreadsheetSheet[] = []
+    const rawLines: string[] = []
+
+    workbook.SheetNames.forEach((sheetName: string) => {
+        const worksheet = workbook.Sheets[sheetName]
+        if (!worksheet) return
+
+        const rowMatrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as unknown[][]
+        const normalizedRows = rowMatrix.map((row) => (
+            Array.isArray(row)
+                ? row.map((cell) => normalizeSpreadsheetCell(cell))
+                : []
+        ))
+
+        const firstDateCell = normalizedRows.find((row) => normalizeSpreadsheetCell(row[0] || '').length > 0)?.[0] || ''
+        const dateIso = parseSpreadsheetDateIso(sheetName, fallbackYear)
+            || parseSpreadsheetDateIso(firstDateCell, fallbackYear)
+            || formatLocalDate(new Date())
+
+        sheets.push({
+            name: sheetName,
+            dateIso,
+            rows: normalizedRows.map((cells, index) => ({
+                rowNumber: index + 1,
+                cells
+            })),
+            complete: true
+        })
+
+        rawLines.push(`### ${sheetName} (${dateIso})`)
+        normalizedRows.forEach((row) => {
+            const roomToken = normalizeRoomKey(row[1] || '')
+            if (!MASTER_ROOM_SET.has(roomToken)) return
+            rawLines.push(createSpreadsheetDebugLine(dateIso, roomToken, row))
+        })
+    })
+
+    return {
+        rawText: rawLines.join('\n'),
+        sheets
+    }
+}
+
+export function parsePrevioStateXlsxData(source: PrevioStateSpreadsheetExtract, referenceDate = new Date()): PrevioStateParseResult {
+    return parsePrevioStateSpreadsheetExtract(source, referenceDate)
 }
 
 export async function extractStateTextFromPdfFile(file: File) {

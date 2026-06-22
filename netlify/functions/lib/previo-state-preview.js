@@ -1342,6 +1342,349 @@ async function extractStateTextFromPdfBuffer(pdfBuffer) {
     }
 }
 
+function normalizeSpreadsheetCell(value) {
+    if (value === null || value === undefined) return ''
+    if (value instanceof Date && Number.isFinite(value.getTime())) {
+        return `${value.getDate()}. ${value.getMonth() + 1}. ${value.getFullYear()}`
+    }
+    return String(value).replace(/\u00a0/g, ' ').trim()
+}
+
+function parseSpreadsheetDateIso(value, fallbackYear) {
+    const raw = normalizeSpreadsheetCell(value)
+    if (!raw) return null
+
+    const isoMatch = raw.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/)
+    if (isoMatch) {
+        const isoDate = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]))
+        return Number.isNaN(isoDate.getTime()) ? null : formatLocalDate(isoDate)
+    }
+
+    const fullMatch = raw.match(/\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\b/)
+    if (fullMatch) {
+        const parsed = new Date(Number(fullMatch[3]), Number(fullMatch[2]) - 1, Number(fullMatch[1]))
+        return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed)
+    }
+
+    const shortMatch = raw.match(/\b(\d{1,2})\.\s*(\d{1,2})\.?\b/)
+    if (shortMatch) {
+        const parsed = new Date(Number(fallbackYear), Number(shortMatch[2]) - 1, Number(shortMatch[1]))
+        return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed)
+    }
+
+    return null
+}
+
+function parseSpreadsheetNumber(value) {
+    const normalized = normalizeSpreadsheetCell(value)
+    if (!normalized) return undefined
+    const asNumber = Number(normalized.replace(',', '.'))
+    return Number.isFinite(asNumber) ? asNumber : undefined
+}
+
+function sanitizeSpreadsheetGuestLabel(raw) {
+    return String(raw || '')
+        .replace(/\(\s*alfred\s*\)/gi, ' ')
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*\-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/gi, ' ')
+        .replace(/\((\d{1,2})\)/g, ' ')
+        .replace(/[;|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^,\s*|,\s*$/g, '')
+        .trim()
+}
+
+function pickSpreadsheetTime(rawCell, side) {
+    const windowMatch = String(rawCell || '').match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\s*\-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\b/i)
+    if (windowMatch) {
+        return normalizeTimeWithMeridiem(windowMatch[1], windowMatch[2], windowMatch[3])
+    }
+
+    const singleMatch = String(rawCell || '').match(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\b/i)
+    if (singleMatch) {
+        return normalizeTimeWithMeridiem(singleMatch[1], singleMatch[2], singleMatch[3])
+    }
+
+    const detected = detectTimes(String(rawCell || ''))
+    if (detected.length === 0) {
+        return side === 'departure' ? '11:00' : '14:00'
+    }
+
+    if (side === 'departure') {
+        const morning = detected.find((time) => toMinutes(time) <= 12 * 60)
+        return morning || detected[0]
+    }
+
+    return detected[0]
+}
+
+function parseSpreadsheetGuestCell(rawCell, side) {
+    const text = normalizeSpreadsheetCell(rawCell)
+    if (!text) {
+        return {
+            hasSignal: false,
+            guestName: undefined,
+            guestCount: undefined,
+            time: undefined,
+            hadAmPm: false
+        }
+    }
+
+    const countMatch = text.match(/\((\d{1,2})\)/)
+    const fallbackCountMatch = text.match(/\b(\d{1,2})\s*(?:p|os|host|pax)\b/i)
+
+    const sanitizedName = sanitizeSpreadsheetGuestLabel(text)
+    const hasNameLikeValue = /\p{L}/u.test(sanitizedName)
+    const nameTokens = sanitizedName
+        .split(/\s*,\s*/)
+        .map((token) => token.trim())
+        .filter(Boolean)
+
+    let guestCount = countMatch ? Number(countMatch[1]) : undefined
+    if (typeof guestCount !== 'number' && fallbackCountMatch) {
+        guestCount = Number(fallbackCountMatch[1])
+    }
+    if (typeof guestCount !== 'number' && nameTokens.length > 1) {
+        guestCount = nameTokens.length
+    }
+
+    const guestName = hasNameLikeValue ? sanitizedName : undefined
+    const hasSignal = Boolean(guestName || typeof guestCount === 'number')
+
+    return {
+        hasSignal,
+        guestName,
+        guestCount,
+        time: side === 'stayover' || !hasSignal ? undefined : pickSpreadsheetTime(text, side),
+        hadAmPm: /\b(?:AM|PM)\b/i.test(text)
+    }
+}
+
+function parseSpreadsheetNotes(rawCell) {
+    const source = normalizeSpreadsheetCell(rawCell)
+        .replace(/(?:\.\.\.+|…+)$/g, '')
+        .trim()
+    if (!source) return []
+
+    const groups = splitNoteGroups(source)
+    const normalized = groups
+        .map((item) => normalizeBoxText(item))
+        .map((item) => item.trim())
+        .filter(Boolean)
+
+    return Array.from(new Set(normalized))
+}
+
+function createSpreadsheetDebugLine(dateIso, roomNumber, rowCells) {
+    const safe = (index) => normalizeSpreadsheetCell((rowCells || [])[index] || '')
+    return [
+        dateIso,
+        roomNumber,
+        `prijezd:${safe(0)}`,
+        `odjezdHost:${safe(2)}`,
+        `prijezdHost:${safe(3)}`,
+        `pobyt:${safe(4)}`,
+        `odjezdDatum:${safe(5)}`,
+        `pozOdjezd:${safe(6)}`,
+        `pozPrijezd:${safe(7)}`,
+        `pozPobyt:${safe(8)}`
+    ].join(' | ')
+}
+
+function extractStateDataFromXlsxBuffer(xlsxBuffer) {
+    const XLSX = require('xlsx')
+    const workbook = XLSX.read(xlsxBuffer, { type: 'buffer', cellDates: true, raw: false })
+
+    const fallbackYear = new Date().getFullYear()
+    const sheets = []
+    const rawLines = []
+
+    workbook.SheetNames.forEach((sheetName) => {
+        const worksheet = workbook.Sheets[sheetName]
+        if (!worksheet) return
+
+        const rowMatrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' })
+        const normalizedRows = rowMatrix.map((row) => (
+            Array.isArray(row)
+                ? row.map((cell) => normalizeSpreadsheetCell(cell))
+                : []
+        ))
+
+        const firstDateCell = (normalizedRows.find((row) => normalizeSpreadsheetCell((row || [])[0] || '').length > 0) || [])[0] || ''
+        const dateIso = parseSpreadsheetDateIso(sheetName, fallbackYear)
+            || parseSpreadsheetDateIso(firstDateCell, fallbackYear)
+            || formatLocalDate(new Date())
+
+        const totalsBySheet = {}
+        let complete = false
+
+        normalizedRows.forEach((row) => {
+            const totalsRowNumbers = [
+                parseSpreadsheetNumber((row || [])[0] || ''),
+                parseSpreadsheetNumber((row || [])[1] || ''),
+                parseSpreadsheetNumber((row || [])[2] || '')
+            ]
+            if (
+                totalsRowNumbers.every((value) => typeof value === 'number')
+                && totalsRowNumbers.some((value) => Number(value) > 0)
+                && !normalizeForMatch((row || [])[3] || '')
+            ) {
+                totalsBySheet.arrivals = totalsRowNumbers[0]
+                totalsBySheet.departures = totalsRowNumbers[1]
+                totalsBySheet.stayovers = totalsRowNumbers[2]
+                complete = true
+            }
+        })
+
+        sheets.push({
+            name: sheetName,
+            dateIso,
+            rows: normalizedRows.map((cells, index) => ({
+                rowNumber: index + 1,
+                cells
+            })),
+            totals: totalsBySheet,
+            complete
+        })
+
+        rawLines.push(`### ${sheetName} (${dateIso})`)
+        normalizedRows.forEach((row) => {
+            const roomToken = normalizeRoomKey((row || [])[1] || '')
+            if (!MASTER_ROOM_SET.has(roomToken)) return
+            rawLines.push(createSpreadsheetDebugLine(dateIso, roomToken, row))
+        })
+    })
+
+    return {
+        rawText: rawLines.join('\n'),
+        sheets
+    }
+}
+
+function parsePrevioStateXlsxData(source, referenceDate = new Date()) {
+    const warnings = []
+    const parsedDates = []
+    const completeDates = new Set()
+    const dayTotals = {}
+    const rows = []
+    let amPmEvidence = false
+
+    ;(source.sheets || [])
+        .slice()
+        .sort((a, b) => String(a.dateIso || '').localeCompare(String(b.dateIso || '')))
+        .forEach((sheet) => {
+            const dateIso = String(sheet.dateIso || '')
+            if (!dateIso) return
+            if (!parsedDates.includes(dateIso)) parsedDates.push(dateIso)
+
+            if (sheet.totals && (
+                typeof sheet.totals.arrivals === 'number'
+                || typeof sheet.totals.departures === 'number'
+                || typeof sheet.totals.stayovers === 'number'
+            )) {
+                dayTotals[dateIso] = {
+                    arrivals: sheet.totals.arrivals,
+                    departures: sheet.totals.departures,
+                    stayovers: sheet.totals.stayovers
+                }
+            }
+
+            ;(sheet.rows || []).forEach((rowEntry) => {
+                const row = (rowEntry && Array.isArray(rowEntry.cells))
+                    ? rowEntry.cells.map((cell) => normalizeSpreadsheetCell(cell))
+                    : []
+
+                const firstColNormalized = normalizeForMatch((row || [])[0] || '')
+                if (firstColNormalized.includes('prijizdejici') || firstColNormalized.includes('prijezdejici')) {
+                    return
+                }
+
+                const roomToken = normalizeRoomKey((row || [])[1] || '')
+                if (!MASTER_ROOM_SET.has(roomToken)) return
+
+                const departureInfo = parseSpreadsheetGuestCell((row || [])[2] || '', 'departure')
+                const arrivalInfo = parseSpreadsheetGuestCell((row || [])[3] || '', 'arrival')
+                const stayoverInfo = parseSpreadsheetGuestCell((row || [])[4] || '', 'stayover')
+                amPmEvidence = amPmEvidence || departureInfo.hadAmPm || arrivalInfo.hadAmPm || stayoverInfo.hadAmPm
+
+                let departureNotes = parseSpreadsheetNotes((row || [])[6] || '')
+                let arrivalNotes = parseSpreadsheetNotes((row || [])[7] || '')
+                const stayoverNotes = parseSpreadsheetNotes((row || [])[8] || '')
+
+                const departureTime = departureInfo.hasSignal ? departureInfo.time : undefined
+                const arrivalTime = arrivalInfo.hasSignal ? arrivalInfo.time : undefined
+
+                const stayoverMode = !departureTime && !arrivalTime && stayoverInfo.hasSignal
+                if (!departureTime && !arrivalTime && !stayoverMode && !departureInfo.hasSignal && !arrivalInfo.hasSignal) {
+                    return
+                }
+
+                if (stayoverMode) {
+                    const mergedStayoverNotes = stayoverNotes.length > 0
+                        ? stayoverNotes
+                        : departureNotes.length > 0
+                            ? departureNotes
+                            : arrivalNotes
+                    departureNotes = mergedStayoverNotes
+                    arrivalNotes = []
+                }
+
+                const stayoverUntil = stayoverMode
+                    ? parseSpreadsheetDateIso((row || [])[5] || '', Number(String(dateIso).slice(0, 4)) || referenceDate.getFullYear()) || undefined
+                    : undefined
+
+                const parsedRow = {
+                    dateIso,
+                    roomNumber: roomToken,
+                    departureTime,
+                    arrivalTime,
+                    departureGuestCount: departureInfo.guestCount,
+                    arrivalGuestCount: arrivalInfo.guestCount,
+                    departureGuestName: departureInfo.guestName,
+                    arrivalGuestName: arrivalInfo.guestName,
+                    stayoverGuestName: stayoverMode ? stayoverInfo.guestName : undefined,
+                    stayoverGuestCount: stayoverMode ? stayoverInfo.guestCount : undefined,
+                    stayoverUntil,
+                    departureNotes,
+                    arrivalNotes,
+                    isStayover: !departureTime && !arrivalTime,
+                    warnings: []
+                }
+
+                if (parsedRow.departureTime && !parsedRow.departureGuestName && typeof parsedRow.departureGuestCount !== 'number') {
+                    parsedRow.warnings.push('Odjezd má čas, ale chybí jméno hosta.')
+                }
+                if (parsedRow.arrivalTime && !parsedRow.arrivalGuestName && typeof parsedRow.arrivalGuestCount !== 'number') {
+                    parsedRow.warnings.push('Příjezd má čas, ale chybí jméno hosta.')
+                }
+
+                rows.push(parsedRow)
+            })
+
+            if (sheet.complete || rows.some((row) => row.dateIso === dateIso)) {
+                completeDates.add(dateIso)
+            }
+        })
+
+    const sortedRows = rows.sort((a, b) => {
+        const byDate = String(a.dateIso || '').localeCompare(String(b.dateIso || ''))
+        if (byDate !== 0) return byDate
+        return Number(a.roomNumber || 0) - Number(b.roomNumber || 0)
+    })
+
+    repairSameGuestNextDayBoxContinuity(sortedRows)
+
+    return {
+        rows: sortedRows,
+        warnings,
+        parsedDates: parsedDates.sort(),
+        rawTextLength: String(source.rawText || '').length,
+        lineCount: String(source.rawText || '').split(/\r?\n/).filter(Boolean).length,
+        completeDates: Array.from(completeDates).sort(),
+        amPmEvidence,
+        dayTotals
+    }
+}
+
 function parsePrevioStatePdfText(source, referenceDate = new Date()) {
     const parsedSource = typeof source === 'string'
         ? { rawText: String(source || ''), pages: [] }
@@ -2428,7 +2771,9 @@ module.exports = {
     PREVIO_STAV_PARSER_VERSION,
     MASTER_ROOM_NUMBERS,
     extractStateTextFromPdfBuffer,
+    extractStateDataFromXlsxBuffer,
     parsePrevioStatePdfText,
+    parsePrevioStateXlsxData,
     buildPrevioStateImportPreview,
     evaluatePrevioStateImportSafety,
     repairSameGuestNextDayBoxContinuity,
