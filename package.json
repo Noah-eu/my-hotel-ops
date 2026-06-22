@@ -7,6 +7,7 @@
         "build": "vite build",
         "preview": "vite preview",
         "validate:auto-confirm-mode": "node scripts/validate-auto-confirm-mode.mjs",
+        "validate:previo-gmail-importer": "node scripts/validate-previo-gmail-importer.mjs",
         "validate:previo": "node scripts/validate-previo-parser.mjs",
         "validate:previo-state": "node scripts/validate-previo-state-parser.mjs",
         "validate:previo-state-xls": "node scripts/validate-previo-state-xls-parser.mjs",

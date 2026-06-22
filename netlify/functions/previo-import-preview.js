@@ -4,7 +4,9 @@ const { getFirestore } = require('firebase-admin/firestore')
 const { getStorage } = require('firebase-admin/storage')
 const {
     PREVIO_STAV_PARSER_VERSION,
+    extractStateDataFromXlsxBuffer,
     extractStateTextFromPdfBuffer,
+    parsePrevioStateXlsxData,
     parsePrevioStatePdfText,
     buildPrevioStateImportPreview,
     evaluatePrevioStateImportSafety,
@@ -88,6 +90,51 @@ function getBearerToken(headers) {
     return match ? match[1].trim() : null
 }
 
+function looksLikePdf(fileName, contentType) {
+    const lowerName = (fileName || '').toLowerCase()
+    const lowerContentType = (contentType || '').toLowerCase()
+    return lowerContentType === 'application/pdf' || lowerName.endsWith('.pdf')
+}
+
+function resolveImportKind(fileName, contentType, storagePath) {
+    const lowerName = (fileName || '').toLowerCase()
+    const lowerContentType = (contentType || '').toLowerCase()
+    const lowerStoragePath = (storagePath || '').toLowerCase()
+
+    if (
+        lowerContentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        || lowerName.endsWith('.xlsx')
+        || lowerStoragePath.endsWith('.xlsx')
+    ) {
+        return 'xlsx'
+    }
+
+    if (
+        lowerContentType === 'application/vnd.ms-excel'
+        || lowerName.endsWith('.xls')
+        || lowerStoragePath.endsWith('.xls')
+    ) {
+        return 'xls'
+    }
+
+    if (looksLikePdf(fileName || storagePath, contentType)) {
+        return 'pdf'
+    }
+
+    return null
+}
+
+async function parseImportBuffer({ buffer, fileName, contentType, storagePath, referenceDate }) {
+    const importKind = resolveImportKind(fileName, contentType, storagePath)
+    if (importKind === 'xlsx' || importKind === 'xls') {
+        const extracted = extractStateDataFromXlsxBuffer(buffer)
+        return parsePrevioStateXlsxData(extracted, referenceDate)
+    }
+
+    const extracted = await extractStateTextFromPdfBuffer(buffer)
+    return parsePrevioStatePdfText(extracted, referenceDate)
+}
+
 function safeErrorMessage(error) {
     const code = String(error?.code || '')
     const message = String(error?.message || '')
@@ -96,10 +143,10 @@ function safeErrorMessage(error) {
         return 'Neplatné přihlášení. Přihlaste se prosím znovu.'
     }
     if (code.includes('storage/object-not-found') || message.includes('No such object')) {
-        return 'Zdrojové PDF ve Storage nebylo nalezeno.'
+        return 'Zdrojový soubor ve Storage nebyl nalezen.'
     }
     if (code.includes('storage/unauthorized') || message.toLowerCase().includes('permission denied')) {
-        return 'Server nemá oprávnění číst zdrojové PDF ve Storage.'
+        return 'Server nemá oprávnění číst zdrojový soubor ve Storage.'
     }
     if (message) {
         return message.slice(0, 300)
@@ -273,7 +320,7 @@ exports.handler = async (event) => {
         bucket = firebase.bucket
 
         if (!bucket) {
-            throw new Error('PDF storage not configured')
+            throw new Error('Import storage not configured')
         }
 
         const decoded = await firebase.auth.verifyIdToken(bearerToken)
@@ -294,8 +341,10 @@ exports.handler = async (event) => {
 
         const jobData = jobSnap.data() || {}
         const storagePath = String(jobData.storagePath || '').trim()
+        const fileName = String(jobData.fileName || '').trim()
+        const contentType = String(jobData.contentType || '').trim()
         if (!storagePath) {
-            const errorMessage = 'Import job nemá storagePath se zdrojovým PDF.'
+            const errorMessage = 'Import job nemá storagePath se zdrojovým souborem.'
             const failedPatch = sanitizePatchForWrite({
                 status: 'failed',
                 parsedAt: new Date().toISOString(),
@@ -310,9 +359,14 @@ exports.handler = async (event) => {
         const previewGeneratedAt = new Date().toISOString()
         const previewRequestId = createPreviewRequestId()
 
-        const [pdfBuffer] = await bucket.file(storagePath).download()
-        const extracted = await extractStateTextFromPdfBuffer(pdfBuffer)
-        const parsed = parsePrevioStatePdfText(extracted, new Date())
+        const [sourceBuffer] = await bucket.file(storagePath).download()
+        const parsed = await parseImportBuffer({
+            buffer: sourceBuffer,
+            fileName,
+            contentType,
+            storagePath,
+            referenceDate: new Date()
+        })
 
         const roomsSnap = await db.collection('hotels').doc(hotelId).collection('rooms').get()
         const roomCatalog = roomsSnap.docs

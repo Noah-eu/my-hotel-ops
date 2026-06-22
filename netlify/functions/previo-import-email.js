@@ -3,7 +3,9 @@ const { getFirestore } = require('firebase-admin/firestore')
 const { getStorage } = require('firebase-admin/storage')
 const {
     PREVIO_STAV_PARSER_VERSION,
+    extractStateDataFromXlsxBuffer,
     extractStateTextFromPdfBuffer,
+    parsePrevioStateXlsxData,
     parsePrevioStatePdfText,
     buildPrevioStateImportPreview,
     evaluatePrevioStateImportSafety,
@@ -12,7 +14,7 @@ const {
 } = require('./lib/previo-state-preview')
 const { sanitizeForFirestore, runSanitizerSelfCheck } = require('./lib/firestore-sanitize')
 
-const MAX_PDF_BYTES = 10 * 1024 * 1024
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024
 const DEV = process.env.NODE_ENV !== 'production'
 
 if (DEV) {
@@ -80,36 +82,61 @@ function looksLikePdf(fileName, contentType) {
     return lowerContentType === 'application/pdf' || lowerName.endsWith('.pdf')
 }
 
+function looksLikeSpreadsheet(fileName, contentType) {
+    const lowerName = (fileName || '').toLowerCase()
+    const lowerContentType = (contentType || '').toLowerCase()
+    return lowerContentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        || lowerContentType === 'application/vnd.ms-excel'
+        || lowerName.endsWith('.xlsx')
+        || lowerName.endsWith('.xls')
+}
+
+function resolveImportKind(fileName, contentType) {
+    const lowerName = (fileName || '').toLowerCase()
+    const lowerContentType = (contentType || '').toLowerCase()
+
+    if (lowerContentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || lowerName.endsWith('.xlsx')) {
+        return 'xlsx'
+    }
+    if (lowerContentType === 'application/vnd.ms-excel' || lowerName.endsWith('.xls')) {
+        return 'xls'
+    }
+    if (looksLikePdf(fileName, contentType)) {
+        return 'pdf'
+    }
+    return null
+}
+
 function normalizeBase64(base64Value) {
     const raw = (base64Value || '').trim()
     if (!raw) return ''
-    const dataUrlMatch = raw.match(/^data:application\/pdf;base64,(.+)$/i)
+    const dataUrlMatch = raw.match(/^data:[^;]+;base64,(.+)$/i)
     const stripped = dataUrlMatch ? dataUrlMatch[1] : raw
     return stripped.replace(/\s+/g, '')
 }
 
-function decodePdfBase64(base64Value) {
+function decodeImportBase64(base64Value) {
     const normalized = normalizeBase64(base64Value)
     if (!normalized) {
-        return { error: 'Missing pdfBase64 payload.' }
+        return { error: 'Missing fileBase64 payload.' }
     }
     if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) {
-        return { error: 'Invalid pdfBase64 payload.' }
+        return { error: 'Invalid fileBase64 payload.' }
     }
 
     let buffer
     try {
         buffer = Buffer.from(normalized, 'base64')
     } catch {
-        return { error: 'Invalid pdfBase64 payload.' }
+        return { error: 'Invalid fileBase64 payload.' }
     }
 
     if (!buffer || buffer.length === 0) {
-        return { error: 'Invalid pdfBase64 payload.' }
+        return { error: 'Invalid fileBase64 payload.' }
     }
 
-    if (buffer.length > MAX_PDF_BYTES) {
-        return { error: 'PDF payload too large. Max 10 MB.', tooLarge: true }
+    if (buffer.length > MAX_IMPORT_BYTES) {
+        return { error: 'Import payload too large. Max 10 MB.', tooLarge: true }
     }
 
     return { buffer }
@@ -118,12 +145,42 @@ function decodePdfBase64(base64Value) {
 function normalizeContentType(contentType, fileName) {
     const value = typeof contentType === 'string' ? contentType.trim().toLowerCase() : ''
     if (value === 'application/pdf') return 'application/pdf'
+    if (value === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
+    if (value === 'application/vnd.ms-excel') return 'application/vnd.ms-excel'
+    if (looksLikeSpreadsheet(fileName, value)) {
+        return (fileName || '').toLowerCase().endsWith('.xls')
+            ? 'application/vnd.ms-excel'
+            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
     if (looksLikePdf(fileName, value)) return 'application/pdf'
     return null
 }
 
-function buildStoragePath(hotelId, jobId) {
-    return `hotels/${hotelId}/importJobs/${jobId}/source.pdf`
+function buildStoragePath(hotelId, jobId, importKind) {
+    const extension = importKind === 'xlsx'
+        ? 'xlsx'
+        : importKind === 'xls'
+            ? 'xls'
+            : 'pdf'
+    return `hotels/${hotelId}/importJobs/${jobId}/source.${extension}`
+}
+
+function getSourceFileLabel(importKind) {
+    if (importKind === 'xlsx' || importKind === 'xls') return 'XLS Stav'
+    return 'PDF Stav'
+}
+
+function parseImportBuffer({ buffer, fileName, contentType, referenceDate }) {
+    const importKind = resolveImportKind(fileName, contentType)
+    if (importKind === 'xlsx' || importKind === 'xls') {
+        const extracted = extractStateDataFromXlsxBuffer(buffer)
+        return parsePrevioStateXlsxData(extracted, referenceDate)
+    }
+
+    const extracted = extractStateTextFromPdfBuffer(buffer)
+    return extracted.then((pdfExtracted) => parsePrevioStatePdfText(pdfExtracted, referenceDate))
 }
 
 function serializeError(error, fallbackMessage) {
@@ -212,10 +269,10 @@ function safeErrorMessage(error) {
     const message = String(error?.message || '')
 
     if (code.includes('storage/object-not-found') || message.includes('No such object')) {
-        return 'Zdrojove PDF ve Storage nebylo nalezeno.'
+        return 'Zdrojovy soubor ve Storage nebyl nalezen.'
     }
     if (code.includes('storage/unauthorized') || message.toLowerCase().includes('permission denied')) {
-        return 'Server nema opravneni cist zdrojove PDF ve Storage.'
+        return 'Server nema opravneni cist zdrojovy soubor ve Storage.'
     }
     if (message) return message.slice(0, 300)
     return 'Generovani nahledu selhalo.'
@@ -248,14 +305,15 @@ exports.handler = async (event) => {
 
     const fileName = (payload.fileName || '').trim() || 'previo-stav.pdf'
     const contentType = normalizeContentType(payload.contentType, fileName)
+    const importKind = resolveImportKind(fileName, contentType)
 
-    if (!contentType) {
-        return json(400, { error: 'Only PDF payloads are accepted.' })
+    if (!contentType || !importKind) {
+        return json(400, { error: 'Only PDF, XLS, and XLSX payloads are accepted.' })
     }
 
-    const decodedPdf = decodePdfBase64(payload.pdfBase64)
-    if (decodedPdf.error) {
-        return json(decodedPdf.tooLarge ? 413 : 400, { error: decodedPdf.error })
+    const decodedFile = decodeImportBase64(payload.fileBase64 || payload.pdfBase64)
+    if (decodedFile.error) {
+        return json(decodedFile.tooLarge ? 413 : 400, { error: decodedFile.error })
     }
 
     const hotelId = process.env.PREVIO_IMPORT_HOTEL_ID || 'chill-apartments'
@@ -263,17 +321,17 @@ exports.handler = async (event) => {
     try {
         const { db, bucket, bucketName } = getFirebaseContext()
         if (!bucket || !bucketName) {
-            return json(500, { error: 'PDF storage not configured' })
+            return json(500, { error: 'Import storage not configured' })
         }
 
         const jobRef = db.collection('hotels').doc(hotelId).collection('importJobs').doc()
         const nowIso = new Date().toISOString()
-        const sizeBytes = decodedPdf.buffer.byteLength
-        const storagePath = buildStoragePath(hotelId, jobRef.id)
+        const sizeBytes = decodedFile.buffer.byteLength
+        const storagePath = buildStoragePath(hotelId, jobRef.id, importKind)
         const autoConfirmMode = resolveAutoConfirmMode()
         const autoConfirmDryRun = autoConfirmMode !== 'enabled'
 
-        await bucket.file(storagePath).save(decodedPdf.buffer, {
+        await bucket.file(storagePath).save(decodedFile.buffer, {
             resumable: false,
             contentType,
             metadata: {
@@ -303,11 +361,11 @@ exports.handler = async (event) => {
             turnoverCount: null,
             stayoverCount: null,
             freeCount: null,
-            warnings: ['PDF z e-mailu je uložené. Náhled bude dostupný po serverovém zpracování.'],
+            warnings: [`${getSourceFileLabel(importKind)} z e-mailu je uložený. Náhled bude dostupný po serverovém zpracování.`],
             error: null,
             storagePath,
             previewSummary: null,
-            parserVersion: 'email-ingest-v3',
+            parserVersion: 'email-ingest-v4',
             automation: {
                 autoPreview: {
                     status: 'pending',
@@ -327,9 +385,13 @@ exports.handler = async (event) => {
         }, 'importJob.initialPatch'))
 
         try {
-            const [pdfBuffer] = await bucket.file(storagePath).download()
-            const extracted = await extractStateTextFromPdfBuffer(pdfBuffer)
-            const parsed = parsePrevioStatePdfText(extracted, new Date())
+            const [sourceBuffer] = await bucket.file(storagePath).download()
+            const parsed = await parseImportBuffer({
+                buffer: sourceBuffer,
+                fileName,
+                contentType,
+                referenceDate: new Date()
+            })
 
             const roomsSnap = await db.collection('hotels').doc(hotelId).collection('rooms').get()
             const roomCatalog = roomsSnap.docs

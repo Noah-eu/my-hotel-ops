@@ -1,13 +1,13 @@
 # Previo E-mail Automation Plan
 
 ## Cíl
-Bezpečně automatizovat příjem Previo Stav PDF přes e-mail, ale import potvrzovat ručně v aplikaci.
+Bezpečně automatizovat příjem Previo Stav PDF/XLS/XLSX přes e-mail, ale import potvrzovat ručně v aplikaci.
 
 ## Průběh v1 (bez auto-confirm)
-1. Previo pošle Stav PDF do dedikované schránky.
+1. Previo pošle Stav report do dedikované schránky.
 2. Gmail filtr označí zprávu štítkem (např. `previo-stav`).
 3. Google Apps Script periodicky čte nepřečtené zprávy s tímto štítkem.
-4. Script najde PDF přílohu se slovem `Stav` v názvu.
+4. Script najde přílohu se slovem `Stav` v názvu a preferuje `.xlsx` / `.xls` před `.pdf`.
 5. Script odešle request na endpoint (`/api/previo-import-email` nebo Netlify function) s hlavičkou `X-Import-Secret`.
 6. Endpoint vytvoří Firestore `importJob` se stavem `received` a automaticky vygeneruje náhled (`parsed/needs_review`).
 7. Dry-run auto-confirm vyhodnotí, zda by byl import automaticky potvrzen (bez aplikace změn).
@@ -20,19 +20,19 @@ Bezpečně automatizovat příjem Previo Stav PDF přes e-mail, ale import potvr
 
 ```json
 {
-	"fileName": "previo-state-2026-06-16-20.pdf",
-	"contentType": "application/pdf",
+	"fileName": "previo-state-2026-06-16-20.xlsx",
+	"contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	"source": "email",
-	"pdfBase64": "<base64 PDF content>"
+	"fileBase64": "<base64 file content>"
 }
 ```
 
 Pravidla validace:
 - Header `X-Import-Secret` je povinný.
 - Chybějící nebo špatný secret => `401`.
-- Chybějící `pdfBase64` => `400`.
-- Nepdf payload (ani `contentType=application/pdf`, ani `.pdf` název) => `400`.
-- Maximální velikost dekódovaného PDF: 10 MB (`413`).
+- Chybějící `fileBase64` => `400`.
+- Nepodporovaný payload mimo `.pdf`, `.xls`, `.xlsx` => `400`.
+- Maximální velikost dekódovaného zdrojového souboru: 10 MB (`413`).
 
 ## Firestore model
 Kolekce: `hotels/chill-apartments/importJobs/{jobId}`
