@@ -1111,6 +1111,64 @@ function runFinalAdminPreviewNoteChecks(preview) {
     return failures
 }
 
+function runStav220702StabilizationChecks(parsed, preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '22.06.2026 07:02')
+
+    const r25202 = findRow(parsed.rows, '2026-06-25', '202')
+    expect(failures, Boolean(r25202), 'Missing parsed row 2026-06-25/202')
+    if (r25202) {
+        expectEqual(failures, '25.6/202 parsed departure guest', r25202.departureGuestName, 'Lenka Sucháňová')
+        expectEqual(failures, '25.6/202 parsed arrival guest', r25202.arrivalGuestName, 'Nity G')
+        expectTextContains(failures, '25.6/202 parsed departure BOX', notesToString(r25202.departureNotes), 'BOX 5')
+        expectTextNotContains(failures, '25.6/202 parsed departure notes must not include arrival guest', notesToString(r25202.departureNotes), 'Nity G')
+        expectTextNotContains(failures, '25.6/202 parsed arrival notes must not include arrival guest', notesToString(r25202.arrivalNotes), 'Nity G')
+    }
+
+    const b25202 = findPlanRow(byDate, '2026-06-25', '202')
+    expect(failures, Boolean(b25202), 'Missing final byDate row 2026-06-25/202')
+    if (b25202) {
+        expectEqual(failures, '25.6/202 final departure guest', b25202.departure?.guestLabel, 'Lenka Sucháňová')
+        expectEqual(failures, '25.6/202 final arrival guest', b25202.arrival?.guestLabel, 'Nity G')
+        expectTextContains(failures, '25.6/202 final departure BOX', notesToString(b25202.departure?.notes), 'BOX 5')
+        expectTextNotContains(failures, '25.6/202 final departure notes must not include arrival guest', notesToString(b25202.departure?.notes), 'Nity G')
+        expectTextNotContains(failures, '25.6/202 final arrival notes must not include guest name as note', notesToString(b25202.arrival?.notes), 'Nity G')
+    }
+
+    const b26202 = findPlanRow(byDate, '2026-06-26', '202')
+    expect(failures, Boolean(b26202), 'Missing final byDate row 2026-06-26/202')
+    if (b26202) {
+        expect(failures, Boolean(b26202.occupiedConfirmed), '26.6/202 final row must stay occupied')
+        expectEqual(failures, '26.6/202 final stayover guest', b26202.stayoverGuestName, 'Nity G')
+    }
+
+    const b25203 = findPlanRow(byDate, '2026-06-25', '203')
+    expect(failures, Boolean(b25203), 'Missing final byDate row 2026-06-25/203')
+    if (b25203) {
+        expectEqual(failures, '25.6/203 final departure guest', b25203.departure?.guestLabel, 'Sherimkulov Serdar')
+        expect(failures, !b25203.arrival?.guestLabel, `25.6/203 final arrival must remain empty, got "${b25203.arrival?.guestLabel || ''}"`)
+        expectTextNotContains(failures, '25.6/203 final row must not contain De Moet', `${b25203.arrival?.guestLabel || ''} ${notesToString(b25203.arrival?.notes)}`, 'De Moet')
+    }
+
+    const b25204 = findPlanRow(byDate, '2026-06-25', '204')
+    expect(failures, Boolean(b25204), 'Missing final byDate row 2026-06-25/204')
+    if (b25204) {
+        expectEqual(failures, '25.6/204 final arrival guest', b25204.arrival?.guestLabel, 'De Moet')
+        expectTextNotContains(failures, '25.6/204 final arrival notes must not include guest name', notesToString(b25204.arrival?.notes), 'De Moet')
+    }
+
+    const b25301 = findPlanRow(byDate, '2026-06-25', '301')
+    expect(failures, Boolean(b25301), 'Missing final byDate row 2026-06-25/301')
+    if (b25301) {
+        const departureNotes = notesToString(b25301.departure?.notes)
+        expectTextContains(failures, '25.6/301 final departure BOX', departureNotes, 'BOX 1')
+        expectTextContains(failures, '25.6/301 final departure highchair note', departureNotes, 'dětská židlička')
+        expectTextContains(failures, '25.6/301 final arrival BOX', notesToString(b25301.arrival?.notes), 'BOX 1')
+    }
+
+    return failures
+}
+
 function runFinalAdminPreviewCoreGoldenChecks(preview) {
     const failures = []
     const byDate = buildByDateFromPreview(preview, [], '21.06.2026 20:01')
@@ -1164,6 +1222,7 @@ async function main() {
     const fixtureLower = fixtureName.toLowerCase()
     const isStav210702Fixture = fixtureLower.includes('stav-2026-06-21-0702')
     const isStav212001Fixture = fixtureLower.includes('stav-2026-06-21-2001')
+    const isStav220702Fixture = fixtureLower.includes('stav-2026-06-22-0702')
 
     const pdfBuffer = await fs.readFile(fixturePath)
 
@@ -1189,6 +1248,8 @@ async function main() {
         failures.push(...runStav0702FirstArrivalGuestChecks(parsed, preview))
     } else if (isStav212001Fixture) {
         // The current fixture has its own final Admin preview checks above.
+    } else if (isStav220702Fixture) {
+        failures.push(...runStav220702StabilizationChecks(parsed, preview))
     } else {
         failures.push(...runConcreteRegressionChecks(parsed))
         failures.push(...runCriticalFixtureCellChecks(parsed, preview))

@@ -402,6 +402,17 @@ function detectNoteSplitX(items: PrevioPdfExtract['pages'][number]['items'], fal
     return Number.POSITIVE_INFINITY
 }
 
+function detectNoteContentStartX(items: PrevioPdfExtract['pages'][number]['items'], fallbackSplitX: number, fallbackNoteSplitX: number) {
+    const noteContentXs = items
+        .filter((item) => item.x > fallbackSplitX + 80)
+        .filter((item) => isNoteLine(item.text) || /\bbox\b/i.test(item.text))
+        .map((item) => item.x)
+        .sort((a, b) => a - b)
+
+    if (noteContentXs.length >= 2) return noteContentXs[0]
+    return fallbackNoteSplitX
+}
+
 function detectRoomColumnMaxX(items: PrevioPdfExtract['pages'][number]['items'], splitX: number) {
     const pokojHeader = items
         .filter((item) => normalizeForMatch(item.text) === 'pokoj')
@@ -435,6 +446,7 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
 
     const splitX = detectSplitX(page.items)
     const noteSplitX = detectNoteSplitX(page.items, splitX)
+    const noteContentStartX = detectNoteContentStartX(page.items, splitX, noteSplitX)
     const roomColumnMaxX = detectRoomColumnMaxX(page.items, splitX)
     const sideSplitPadding = 12
 
@@ -490,8 +502,12 @@ function extractStateColumnBlocks(page: PrevioPdfExtract['pages'][number]): Stat
             ? assignedRows.filter((row) => row.y <= firstOwnSignalAboveMarker.y || findRoomInRow(row.items, roomColumnMaxX) === start.room)
             : assignedRows
         const departureText = collectColumnText(blockRows, roomColumnMaxX + 1, splitX + sideSplitPadding)
-        const arrivalText = collectColumnText(blockRows, splitX + sideSplitPadding)
         const hasNoteSplit = Number.isFinite(noteSplitX)
+        const arrivalText = collectColumnText(
+            blockRows,
+            splitX + sideSplitPadding,
+            Number.isFinite(noteContentStartX) ? noteContentStartX : Number.POSITIVE_INFINITY
+        )
         const departureNoteText = hasNoteSplit
             ? collectColumnText(blockRows, splitX + sideSplitPadding, noteSplitX)
             : ''
@@ -655,6 +671,27 @@ function normalizeGuestNoteCandidate(value: string) {
         .trim()
 }
 
+function escapeRegExp(value: string) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function stripTrailingGuestNameFromNote(note: string, guestNames: Array<string | undefined>) {
+    let cleaned = String(note || '').trim()
+    if (!cleaned) return cleaned
+
+    guestNames.forEach((guestName) => {
+        const name = String(guestName || '').trim()
+        if (!name) return
+        const namePattern = name
+            .split(/\s+/)
+            .map(escapeRegExp)
+            .join('\\s+')
+        cleaned = cleaned.replace(new RegExp(`\\s+${namePattern}\\s*$`, 'iu'), '').trim()
+    })
+
+    return cleaned
+}
+
 function noteMatchesGuestName(note: string, guestNames: Array<string | undefined>) {
     const noteNorm = normalizeGuestNoteCandidate(note)
     if (!noteNorm || /\bbox\b/i.test(note) || normalizeForMatch(note).includes('recepce')) return false
@@ -672,7 +709,9 @@ function noteMatchesGuestName(note: string, guestNames: Array<string | undefined
 }
 
 function removeGuestNameNotes(notes: string[], guestNames: Array<string | undefined>) {
-    return notes.filter((note) => !noteMatchesGuestName(note, guestNames))
+    return notes
+        .map((note) => stripTrailingGuestNameFromNote(note, guestNames))
+        .filter((note) => note && !noteMatchesGuestName(note, guestNames))
 }
 
 function haveSameNotes(left: string[], right: string[]) {
@@ -1118,7 +1157,8 @@ function extractNameCandidates(blockLines: string[]) {
             const firstLower = /^\p{Ll}[\p{L}'’-]+$/u.test(first)
             const secondUpper = /^\p{Lu}[\p{L}'’-]+$/u.test(second)
             const secondLower = /^\p{Ll}[\p{L}'’-]+$/u.test(second)
-            if ((firstUpper && secondUpper) || (firstLower && secondUpper) || (firstLower && secondLower)) {
+            const secondInitial = /^\p{Lu}$/u.test(second)
+            if ((firstUpper && (secondUpper || secondInitial)) || (firstLower && secondUpper) || (firstLower && secondLower)) {
                 pushCandidate(`${first} ${second}`)
             }
         }
@@ -1166,13 +1206,24 @@ function mergeMissingFieldsFromTextFallback(primaryRows: PrevioStateParsedRow[],
         const fallback = fallbackByKey.get(key)
         if (!fallback) return
 
-        if (!row.departureTime && fallback.departureTime) row.departureTime = fallback.departureTime
-        if (!row.arrivalTime && fallback.arrivalTime) row.arrivalTime = fallback.arrivalTime
+        const hasPrimaryDepartureSignal = Boolean(
+            row.departureGuestName
+            || typeof row.departureGuestCount === 'number'
+            || (row.departureNotes?.length || 0) > 0
+        )
+        const hasPrimaryArrivalSignal = Boolean(
+            row.arrivalGuestName
+            || typeof row.arrivalGuestCount === 'number'
+            || (row.arrivalNotes?.length || 0) > 0
+        )
 
-        if (typeof row.departureGuestCount !== 'number' && typeof fallback.departureGuestCount === 'number') {
+        if (!row.departureTime && fallback.departureTime && hasPrimaryDepartureSignal) row.departureTime = fallback.departureTime
+        if (!row.arrivalTime && fallback.arrivalTime && hasPrimaryArrivalSignal) row.arrivalTime = fallback.arrivalTime
+
+        if (hasPrimaryDepartureSignal && typeof row.departureGuestCount !== 'number' && typeof fallback.departureGuestCount === 'number') {
             row.departureGuestCount = fallback.departureGuestCount
         }
-        if (typeof row.arrivalGuestCount !== 'number' && typeof fallback.arrivalGuestCount === 'number') {
+        if (hasPrimaryArrivalSignal && typeof row.arrivalGuestCount !== 'number' && typeof fallback.arrivalGuestCount === 'number') {
             row.arrivalGuestCount = fallback.arrivalGuestCount
         }
         if (typeof row.stayoverGuestCount !== 'number' && typeof fallback.stayoverGuestCount === 'number') {
@@ -1201,8 +1252,8 @@ function mergeMissingFieldsFromTextFallback(primaryRows: PrevioStateParsedRow[],
             }
         }
 
-        if (!row.departureGuestName && fallback.departureGuestName) row.departureGuestName = fallback.departureGuestName
-        if (!row.arrivalGuestName && fallback.arrivalGuestName) row.arrivalGuestName = fallback.arrivalGuestName
+        if (!row.departureGuestName && fallback.departureGuestName && hasPrimaryDepartureSignal) row.departureGuestName = fallback.departureGuestName
+        if (!row.arrivalGuestName && fallback.arrivalGuestName && hasPrimaryArrivalSignal) row.arrivalGuestName = fallback.arrivalGuestName
         if (!row.stayoverGuestName && fallback.stayoverGuestName) row.stayoverGuestName = fallback.stayoverGuestName
 
         const hasPrimaryNotes = (row.departureNotes?.length || 0) > 0 || (row.arrivalNotes?.length || 0) > 0
