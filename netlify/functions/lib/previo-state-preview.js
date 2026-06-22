@@ -531,6 +531,13 @@ function mergeMissingFieldsFromTextFallback(primaryRows, fallbackRows) {
         const fallback = fallbackByKey.get(key)
         if (!fallback) return
 
+        const hasFutureStayoverWindow = Boolean(
+            !row.departureTime
+            && !row.arrivalTime
+            && row.stayoverUntil
+            && row.stayoverUntil > row.dateIso
+        )
+
         const hasPrimaryDepartureSignal = Boolean(
             row.departureGuestName
             || typeof row.departureGuestCount === 'number'
@@ -541,14 +548,16 @@ function mergeMissingFieldsFromTextFallback(primaryRows, fallbackRows) {
             || typeof row.arrivalGuestCount === 'number'
             || ((row.arrivalNotes || []).length || 0) > 0
         )
+        const canMergeDepartureSide = hasPrimaryDepartureSignal && !hasFutureStayoverWindow
+        const canMergeArrivalSide = hasPrimaryArrivalSignal && !hasFutureStayoverWindow
 
-        if (!row.departureTime && fallback.departureTime && hasPrimaryDepartureSignal) row.departureTime = fallback.departureTime
-        if (!row.arrivalTime && fallback.arrivalTime && hasPrimaryArrivalSignal) row.arrivalTime = fallback.arrivalTime
+        if (!row.departureTime && fallback.departureTime && canMergeDepartureSide) row.departureTime = fallback.departureTime
+        if (!row.arrivalTime && fallback.arrivalTime && canMergeArrivalSide) row.arrivalTime = fallback.arrivalTime
 
-        if (hasPrimaryDepartureSignal && typeof row.departureGuestCount !== 'number' && typeof fallback.departureGuestCount === 'number') {
+        if (canMergeDepartureSide && typeof row.departureGuestCount !== 'number' && typeof fallback.departureGuestCount === 'number') {
             row.departureGuestCount = fallback.departureGuestCount
         }
-        if (hasPrimaryArrivalSignal && typeof row.arrivalGuestCount !== 'number' && typeof fallback.arrivalGuestCount === 'number') {
+        if (canMergeArrivalSide && typeof row.arrivalGuestCount !== 'number' && typeof fallback.arrivalGuestCount === 'number') {
             row.arrivalGuestCount = fallback.arrivalGuestCount
         }
         if (typeof row.stayoverGuestCount !== 'number' && typeof fallback.stayoverGuestCount === 'number') {
@@ -577,8 +586,8 @@ function mergeMissingFieldsFromTextFallback(primaryRows, fallbackRows) {
             }
         }
 
-        if (!row.departureGuestName && fallback.departureGuestName && hasPrimaryDepartureSignal) row.departureGuestName = fallback.departureGuestName
-        if (!row.arrivalGuestName && fallback.arrivalGuestName && hasPrimaryArrivalSignal) row.arrivalGuestName = fallback.arrivalGuestName
+        if (!row.departureGuestName && fallback.departureGuestName && canMergeDepartureSide) row.departureGuestName = fallback.departureGuestName
+        if (!row.arrivalGuestName && fallback.arrivalGuestName && canMergeArrivalSide) row.arrivalGuestName = fallback.arrivalGuestName
         if (!row.stayoverGuestName && fallback.stayoverGuestName) row.stayoverGuestName = fallback.stayoverGuestName
 
         const hasPrimaryNotes = (row.departureNotes && row.departureNotes.length > 0)
@@ -1175,6 +1184,50 @@ function pickArrivalGuestName(sideText) {
     return expandPrimaryGuestName(source, selected)
 }
 
+function pickStayoverGuestName(rawText, fallbackName) {
+    const names = []
+    const pushName = (value) => {
+        const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+        if (!normalized) return
+        const matchKey = normalizeForMatch(normalized)
+        if (names.some((name) => {
+            const existingKey = normalizeForMatch(name)
+            return existingKey === matchKey || existingKey.includes(matchKey)
+        })) return
+        for (let index = names.length - 1; index >= 0; index--) {
+            if (matchKey.includes(normalizeForMatch(names[index]))) names.splice(index, 1)
+        }
+        names.push(normalized)
+    }
+
+    String(rawText || '').split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim()
+        if (!trimmed || isNoteLine(trimmed) || isAlfredWindow(trimmed) || isCapacityLine(trimmed)) return
+
+        const cleaned = trimmed
+            .replace(/^\d{1,3}\s+/, '')
+            .replace(/\b\d{1,2}\.\s*\d{1,2}\.?\b/g, ' ')
+            .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\b/gi, ' ')
+            .replace(/\b(?:AM|PM)\b/gi, ' ')
+            .replace(/\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]/g, ' ')
+            .replace(/[()]/g, ' ')
+            .replace(/\b(?:odjezd|prijezd|datum|pokoj|poznamka|recepce|box|alfred|studio|chill|apartments)\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+
+        const tokens = cleaned.split(' ').map((token) => token.trim()).filter(Boolean)
+        const allNameLike = tokens.length >= 2
+            && tokens.length <= 4
+            && tokens.every((token) => /^\p{L}[\p{L}'’-]*$/u.test(token))
+        if (allNameLike) pushName(cleaned)
+    })
+
+    extractNameCandidates(String(rawText || '').split(/\r?\n/)).forEach(pushName)
+    pushName(fallbackName)
+
+    return names.length > 0 ? names.join(', ') : undefined
+}
+
 function inferGuestCountNearName(rawText, guestName) {
     if (!guestName) return undefined
 
@@ -1366,7 +1419,7 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                 let departureGuestName = pickDepartureGuestName(block.departureText)
                 let arrivalGuestName = pickArrivalGuestName(block.arrivalText)
                 let stayoverGuestName = !departureTime && !arrivalTime
-                    ? (departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
+                    ? pickStayoverGuestName(block.rawText, departureGuestName || arrivalGuestName || extractNameCandidates(block.rawText.split(/\r?\n/))[0])
                     : undefined
 
                     ; ({

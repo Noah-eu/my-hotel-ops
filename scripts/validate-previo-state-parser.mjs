@@ -1169,6 +1169,103 @@ function runStav220702StabilizationChecks(parsed, preview) {
     return failures
 }
 
+function runStav221901StayoverChecks(parsed, preview) {
+    const failures = []
+    const byDate = buildByDateFromPreview(preview, [], '22.06.2026 19:01')
+
+    const r26301 = findRow(parsed.rows, '2026-06-26', '301')
+    expect(failures, Boolean(r26301), 'Missing parsed row 2026-06-26/301')
+    if (r26301) {
+        expect(failures, Boolean(r26301.isStayover), '26.6/301 parsed row must be stayover')
+        expect(failures, !r26301.departureTime, `26.6/301 parsed row must not have departure time, got "${r26301.departureTime || ''}"`)
+        expectNumber(failures, '26.6/301 parsed stayover guest count', r26301.stayoverGuestCount, 3)
+        expectTextContains(failures, '26.6/301 parsed stayover guest Jasmine', r26301.stayoverGuestName, 'Jasmine Chuang')
+        expectTextContains(failures, '26.6/301 parsed stayover guest Wency', r26301.stayoverGuestName, 'Wency Tang')
+        expectTextContains(failures, '26.6/301 parsed stayover guest Yin', r26301.stayoverGuestName, 'Yin Yung Alison Chan')
+        expectTextContains(failures, '26.6/301 parsed stayover BOX', notesToString(r26301.departureNotes), 'Recepce: BOX 1')
+    }
+
+    const b26301 = findPlanRow(byDate, '2026-06-26', '301')
+    expect(failures, Boolean(b26301), 'Missing final byDate row 2026-06-26/301')
+    if (b26301) {
+        expect(failures, Boolean(b26301.occupiedConfirmed), '26.6/301 final row must be occupied/stayover')
+        expect(failures, !b26301.departure?.time, `26.6/301 final row must not have departure time, got "${b26301.departure?.time || ''}"`)
+        expect(failures, !b26301.departure?.guestLabel, `26.6/301 final row must not have departure guest, got "${b26301.departure?.guestLabel || ''}"`)
+        expectNumber(failures, '26.6/301 final guest count', b26301.guestCount, 3)
+        expectTextContains(failures, '26.6/301 final stayover guest Jasmine', b26301.stayoverGuestName, 'Jasmine Chuang')
+        expectTextContains(failures, '26.6/301 final stayover guest Wency', b26301.stayoverGuestName, 'Wency Tang')
+        expectTextContains(failures, '26.6/301 final stayover guest Yin', b26301.stayoverGuestName, 'Yin Yung Alison Chan')
+        expectTextContains(failures, '26.6/301 final stayover BOX', notesToString(b26301.notes), 'Recepce: BOX 1')
+    }
+
+    const b25301 = findPlanRow(byDate, '2026-06-25', '301')
+    expect(failures, Boolean(b25301), 'Missing final byDate row 2026-06-25/301')
+    if (b25301) {
+        const departureNotes = notesToString(b25301.departure?.notes)
+        expectTextContains(failures, '25.6/301 final departure BOX', departureNotes, 'Recepce: BOX 1')
+        expectTextContains(failures, '25.6/301 final departure toys note', departureNotes, 'hračky')
+        expectTextContains(failures, '25.6/301 final departure highchair note', departureNotes, 'dětská židlička')
+        expectTextContains(failures, '25.6/301 final arrival BOX', notesToString(b25301.arrival?.notes), 'Recepce: BOX 1')
+    }
+
+    const b26202 = findPlanRow(byDate, '2026-06-26', '202')
+    expect(failures, Boolean(b26202), 'Missing final byDate row 2026-06-26/202')
+    if (b26202) {
+        expect(failures, Boolean(b26202.occupiedConfirmed), '26.6/202 final row must stay occupied')
+        expectTextContains(failures, '26.6/202 final stayover guest', b26202.stayoverGuestName, 'Nity G')
+        expectTextContains(failures, '26.6/202 final stayover BOX', notesToString(b26202.notes), 'Recepce: BOX 7')
+    }
+
+    const b26104 = findPlanRow(byDate, '2026-06-26', '104')
+    expect(failures, Boolean(b26104), 'Missing final byDate row 2026-06-26/104')
+    if (b26104) {
+        expectEqual(failures, '26.6/104 final departure guest', b26104.departure?.guestLabel, 'Jorg Preussig')
+        expectTextContains(failures, '26.6/104 final departure BOX', notesToString(b26104.departure?.notes), 'Recepce: BOX 8')
+    }
+
+    const b26302 = findPlanRow(byDate, '2026-06-26', '302')
+    expect(failures, Boolean(b26302), 'Missing final byDate row 2026-06-26/302')
+    if (b26302) {
+        expectEqual(failures, '26.6/302 final departure time', b26302.departure?.time, '11:00')
+        expectEqual(failures, '26.6/302 final departure guest', b26302.departure?.guestLabel, 'Anna Polova')
+        expect(failures, !b26302.occupiedConfirmed, '26.6/302 final row must not be stayover')
+    }
+
+    const b25202 = findPlanRow(byDate, '2026-06-25', '202')
+    expect(failures, Boolean(b25202), 'Missing final byDate row 2026-06-25/202')
+    if (b25202) {
+        expectEqual(failures, '25.6/202 final departure guest', b25202.departure?.guestLabel, 'Lenka Sucháňová')
+        expectEqual(failures, '25.6/202 final arrival guest', b25202.arrival?.guestLabel, 'Nity G')
+        expectTextContains(failures, '25.6/202 final departure BOX', notesToString(b25202.departure?.notes), 'BOX 5')
+        expectTextContains(failures, '25.6/202 final arrival BOX', notesToString(b25202.arrival?.notes), 'BOX 7')
+    }
+
+    const b25203 = findPlanRow(byDate, '2026-06-25', '203')
+    expect(failures, Boolean(b25203), 'Missing final byDate row 2026-06-25/203')
+    if (b25203) {
+        expect(failures, !b25203.arrival?.guestLabel, `25.6/203 final arrival must remain empty, got "${b25203.arrival?.guestLabel || ''}"`)
+        expectTextNotContains(failures, '25.6/203 final row must not contain De Moet', `${b25203.arrival?.guestLabel || ''} ${notesToString(b25203.arrival?.notes)}`, 'De Moet')
+    }
+
+    const b25204 = findPlanRow(byDate, '2026-06-25', '204')
+    expect(failures, Boolean(b25204), 'Missing final byDate row 2026-06-25/204')
+    if (b25204) {
+        expectEqual(failures, '25.6/204 final arrival guest', b25204.arrival?.guestLabel, 'De Moet')
+        expectTextContains(failures, '25.6/204 final arrival BOX', notesToString(b25204.arrival?.notes), 'BOX 6')
+    }
+
+    const b25205 = findPlanRow(byDate, '2026-06-25', '205')
+    expect(failures, Boolean(b25205), 'Missing final byDate row 2026-06-25/205')
+    if (b25205) {
+        expectEqual(failures, '25.6/205 final departure guest', b25205.departure?.guestLabel, 'Stepan Kuca')
+        expectTextContains(failures, '25.6/205 final departure BOX', notesToString(b25205.departure?.notes), 'BOX 5')
+        expectEqual(failures, '25.6/205 final arrival guest', b25205.arrival?.guestLabel, 'Nikolas Brett')
+        expectTextContains(failures, '25.6/205 final arrival BOX', notesToString(b25205.arrival?.notes), 'BOX 3')
+    }
+
+    return failures
+}
+
 function runFinalAdminPreviewCoreGoldenChecks(preview) {
     const failures = []
     const byDate = buildByDateFromPreview(preview, [], '21.06.2026 20:01')
@@ -1223,6 +1320,7 @@ async function main() {
     const isStav210702Fixture = fixtureLower.includes('stav-2026-06-21-0702')
     const isStav212001Fixture = fixtureLower.includes('stav-2026-06-21-2001')
     const isStav220702Fixture = fixtureLower.includes('stav-2026-06-22-0702')
+    const isStav221901Fixture = fixtureLower.includes('stav-2026-06-22-1901')
 
     const pdfBuffer = await fs.readFile(fixturePath)
 
@@ -1250,6 +1348,8 @@ async function main() {
         // The current fixture has its own final Admin preview checks above.
     } else if (isStav220702Fixture) {
         failures.push(...runStav220702StabilizationChecks(parsed, preview))
+    } else if (isStav221901Fixture) {
+        failures.push(...runStav221901StayoverChecks(parsed, preview))
     } else {
         failures.push(...runConcreteRegressionChecks(parsed))
         failures.push(...runCriticalFixtureCellChecks(parsed, preview))
