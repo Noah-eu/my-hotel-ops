@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const {
+    selectPrevioAttachmentBatch,
     selectPreferredPrevioAttachment,
     buildProcessedKey,
     buildImportPayload,
@@ -90,10 +91,19 @@ function validateAttachmentPreference() {
     const selected = selectPreferredPrevioAttachment([pdf, xlsx])
     assert(selected === xlsx, 'XLSX attachment should be preferred over PDF when both are present')
 
+    const batch = selectPrevioAttachmentBatch([pdf, xlsx])
+    assert(batch && batch.primary === xlsx, 'Batch selector should use XLSX as primary when available')
+    assert(batch && batch.overlay === pdf, 'Batch selector should attach PDF as overlay when XLSX primary is selected')
+
     const payload = buildImportPayload(selected)
     assert(payload.fileName.endsWith('.xlsx'), 'Selected payload should keep the XLSX file name')
     assert(payload.contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Selected payload should keep the XLSX content type')
     assert(typeof payload.fileBase64 === 'string' && payload.fileBase64.length > 0, 'Selected payload should contain base64 file content')
+
+    const batchPayload = buildImportPayload(batch)
+    assert(batchPayload.fileName.endsWith('.xlsx'), 'Batch payload should keep XLSX primary name')
+    assert(batchPayload.overlayFileName && batchPayload.overlayFileName.endsWith('.pdf'), 'Batch payload should include paired PDF overlay')
+    assert(typeof batchPayload.overlayFileBase64 === 'string' && batchPayload.overlayFileBase64.length > 0, 'Batch payload should include overlay base64')
 }
 
 function validateSuccessFlowDedupes() {
@@ -115,7 +125,7 @@ function validateSuccessFlowDedupes() {
     assert(firstResult.status === 'imported', 'Successful import should return imported status')
     assert(message.debugState().unread === false, 'Message should be marked read only after successful import')
 
-    const processedKey = buildProcessedKey('message-1', attachment)
+    const processedKey = buildProcessedKey('message-1', { primary: attachment, overlay: null })
     assert(Boolean(properties.getProperty(processedKey)), 'Successful import should persist a processed key')
 
     const duplicateMessage = createMessage({ id: 'message-1', attachments: [attachment] })
@@ -157,10 +167,27 @@ function validateFailureLeavesRetryable() {
     assert(properties.debugMap().size === 0, 'Failed uploads must not store a processed key')
 }
 
+function validateProcessedKeyIncludesOverlayFingerprint() {
+    const xlsx = createAttachment({
+        name: 'Previo Stav key-check.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    const pdf = createAttachment({
+        name: 'Previo Stav key-check.pdf',
+        contentType: 'application/pdf'
+    })
+
+    const keyWithoutOverlay = buildProcessedKey('message-key', { primary: xlsx, overlay: null })
+    const keyWithOverlay = buildProcessedKey('message-key', { primary: xlsx, overlay: pdf })
+
+    assert(keyWithOverlay !== keyWithoutOverlay, 'Processed key should include overlay fingerprint when paired PDF exists')
+}
+
 function main() {
     validateAttachmentPreference()
     validateSuccessFlowDedupes()
     validateFailureLeavesRetryable()
+    validateProcessedKeyIncludesOverlayFingerprint()
 
     console.log('[validate:previo-gmail-importer] PASS')
 }

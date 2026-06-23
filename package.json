@@ -11,6 +11,7 @@
         "validate:previo": "node scripts/validate-previo-parser.mjs",
         "validate:previo-state": "node scripts/validate-previo-state-parser.mjs",
         "validate:previo-state-xls": "node scripts/validate-previo-state-xls-parser.mjs",
+        "validate:previo-state-arrival-overlay": "node scripts/validate-previo-state-arrival-overlay.mjs",
         "validate:previo-state-xls-pdf-compat": "node scripts/validate-previo-state-xls-pdf-compat.mjs",
         "validate:previo-import-preview-runtime": "node scripts/validate-previo-import-preview-runtime.mjs"
     },

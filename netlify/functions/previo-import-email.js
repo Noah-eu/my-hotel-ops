@@ -12,6 +12,11 @@ const {
     detectMissingDatesInRange,
     buildByDateFromPreview
 } = require('./lib/previo-state-preview')
+const {
+    overlayArrivalTimesFromPdf,
+    annotatePreviewWithArrivalOverlay,
+    annotateByDateWithArrivalOverlay
+} = require('./lib/previo-arrival-overlay')
 const { sanitizeForFirestore, runSanitizerSelfCheck } = require('./lib/firestore-sanitize')
 
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024
@@ -158,13 +163,13 @@ function normalizeContentType(contentType, fileName) {
     return null
 }
 
-function buildStoragePath(hotelId, jobId, importKind) {
+function buildStoragePath(hotelId, jobId, importKind, baseName = 'source') {
     const extension = importKind === 'xlsx'
         ? 'xlsx'
         : importKind === 'xls'
             ? 'xls'
             : 'pdf'
-    return `hotels/${hotelId}/importJobs/${jobId}/source.${extension}`
+    return `hotels/${hotelId}/importJobs/${jobId}/${baseName}.${extension}`
 }
 
 function getSourceFileLabel(importKind) {
@@ -172,15 +177,86 @@ function getSourceFileLabel(importKind) {
     return 'PDF Stav'
 }
 
-function parseImportBuffer({ buffer, fileName, contentType, referenceDate }) {
+async function parseImportBuffer({ buffer, fileName, contentType, referenceDate }) {
     const importKind = resolveImportKind(fileName, contentType)
     if (importKind === 'xlsx' || importKind === 'xls') {
         const extracted = extractStateDataFromXlsxBuffer(buffer)
         return parsePrevioStateXlsxData(extracted, referenceDate)
     }
 
-    const extracted = extractStateTextFromPdfBuffer(buffer)
-    return extracted.then((pdfExtracted) => parsePrevioStatePdfText(pdfExtracted, referenceDate))
+    const extracted = await extractStateTextFromPdfBuffer(buffer)
+    return parsePrevioStatePdfText(extracted, referenceDate)
+}
+
+function resolvePrimaryAttachmentPayload(payload) {
+    const fileName = String(payload?.fileName || '').trim() || 'previo-stav.pdf'
+    const contentType = normalizeContentType(payload?.contentType, fileName)
+    const importKind = resolveImportKind(fileName, contentType)
+    const decodedFile = decodeImportBase64(payload?.fileBase64 || payload?.pdfBase64)
+
+    return {
+        fileName,
+        contentType,
+        importKind,
+        decodedFile
+    }
+}
+
+function resolveOverlayAttachmentPayload(payload) {
+    const overlayBase64 = payload?.overlayFileBase64 || payload?.overlayPdfBase64
+    if (!overlayBase64) return null
+
+    const fileName = String(payload?.overlayFileName || '').trim() || 'previo-stav-overlay.pdf'
+    const contentType = normalizeContentType(payload?.overlayContentType, fileName)
+    const importKind = resolveImportKind(fileName, contentType)
+    const decodedFile = decodeImportBase64(overlayBase64)
+
+    return {
+        fileName,
+        contentType,
+        importKind,
+        decodedFile
+    }
+}
+
+async function parseHybridImportBuffers({ primary, overlay, referenceDate }) {
+    const parsedPrimary = await parseImportBuffer({
+        buffer: primary.buffer,
+        fileName: primary.fileName,
+        contentType: primary.contentType,
+        referenceDate
+    })
+
+    if (!overlay || !overlay.buffer || overlay.importKind !== 'pdf') {
+        return {
+            parsed: parsedPrimary,
+            arrivalOverlay: {
+                enabled: false,
+                mode: 'none',
+                primaryKind: primary.importKind,
+                overlayKind: overlay?.importKind || null,
+                consideredRows: 0,
+                matchedRows: 0,
+                appliedRows: 0,
+                skippedBySpecificity: 0,
+                skippedByIdentityMismatch: 0,
+                applied: []
+            }
+        }
+    }
+
+    const parsedOverlay = await parseImportBuffer({
+        buffer: overlay.buffer,
+        fileName: overlay.fileName,
+        contentType: overlay.contentType,
+        referenceDate
+    })
+
+    return overlayArrivalTimesFromPdf({
+        primaryParsed: parsedPrimary,
+        overlayParsed: parsedOverlay,
+        primaryKind: primary.importKind
+    })
 }
 
 function serializeError(error, fallbackMessage) {
@@ -303,17 +379,29 @@ exports.handler = async (event) => {
         return json(400, { error: 'Invalid JSON body.' })
     }
 
-    const fileName = (payload.fileName || '').trim() || 'previo-stav.pdf'
-    const contentType = normalizeContentType(payload.contentType, fileName)
-    const importKind = resolveImportKind(fileName, contentType)
-
-    if (!contentType || !importKind) {
+    const primaryPayload = resolvePrimaryAttachmentPayload(payload)
+    if (!primaryPayload.contentType || !primaryPayload.importKind) {
         return json(400, { error: 'Only PDF, XLS, and XLSX payloads are accepted.' })
     }
 
-    const decodedFile = decodeImportBase64(payload.fileBase64 || payload.pdfBase64)
-    if (decodedFile.error) {
-        return json(decodedFile.tooLarge ? 413 : 400, { error: decodedFile.error })
+    if (primaryPayload.decodedFile.error) {
+        return json(primaryPayload.decodedFile.tooLarge ? 413 : 400, { error: primaryPayload.decodedFile.error })
+    }
+
+    const overlayPayload = resolveOverlayAttachmentPayload(payload)
+    if (overlayPayload) {
+        if (!overlayPayload.contentType || !overlayPayload.importKind) {
+            return json(400, { error: 'Overlay attachment must be a valid PDF payload.' })
+        }
+        if (overlayPayload.decodedFile.error) {
+            return json(overlayPayload.decodedFile.tooLarge ? 413 : 400, { error: overlayPayload.decodedFile.error })
+        }
+        if (overlayPayload.importKind !== 'pdf') {
+            return json(400, { error: 'Overlay attachment must be a PDF file.' })
+        }
+        if (!(primaryPayload.importKind === 'xlsx' || primaryPayload.importKind === 'xls')) {
+            return json(400, { error: 'PDF overlay is supported only when primary source is XLS/XLSX.' })
+        }
     }
 
     const hotelId = process.env.PREVIO_IMPORT_HOTEL_ID || 'chill-apartments'
@@ -326,33 +414,59 @@ exports.handler = async (event) => {
 
         const jobRef = db.collection('hotels').doc(hotelId).collection('importJobs').doc()
         const nowIso = new Date().toISOString()
-        const sizeBytes = decodedFile.buffer.byteLength
-        const storagePath = buildStoragePath(hotelId, jobRef.id, importKind)
+        const primaryBuffer = primaryPayload.decodedFile.buffer
+        const overlayBuffer = overlayPayload ? overlayPayload.decodedFile.buffer : null
+        const sizeBytes = primaryBuffer.byteLength
+        const overlaySizeBytes = overlayBuffer ? overlayBuffer.byteLength : null
+        const storagePath = buildStoragePath(hotelId, jobRef.id, primaryPayload.importKind, 'source')
+        const overlayStoragePath = overlayPayload
+            ? buildStoragePath(hotelId, jobRef.id, overlayPayload.importKind, 'overlay')
+            : null
         const autoConfirmMode = resolveAutoConfirmMode()
         const autoConfirmDryRun = autoConfirmMode !== 'enabled'
 
-        await bucket.file(storagePath).save(decodedFile.buffer, {
+        await bucket.file(storagePath).save(primaryBuffer, {
             resumable: false,
-            contentType,
+            contentType: primaryPayload.contentType,
             metadata: {
-                contentType,
+                contentType: primaryPayload.contentType,
                 metadata: {
                     hotelId,
                     source: 'email',
                     jobId: jobRef.id,
-                    fileName,
+                    fileName: primaryPayload.fileName,
                     receivedAt: nowIso
                 }
             }
         })
 
+        if (overlayPayload && overlayStoragePath) {
+            await bucket.file(overlayStoragePath).save(overlayBuffer, {
+                resumable: false,
+                contentType: overlayPayload.contentType,
+                metadata: {
+                    contentType: overlayPayload.contentType,
+                    metadata: {
+                        hotelId,
+                        source: 'email-overlay',
+                        jobId: jobRef.id,
+                        fileName: overlayPayload.fileName,
+                        receivedAt: nowIso
+                    }
+                }
+            })
+        }
+
         await jobRef.set(sanitizePatchForWrite({
             type: 'previo-state-pdf',
             source: 'email',
             status: 'received',
-            fileName,
-            contentType,
+            fileName: primaryPayload.fileName,
+            contentType: primaryPayload.contentType,
             sizeBytes,
+            overlayFileName: overlayPayload?.fileName || null,
+            overlayContentType: overlayPayload?.contentType || null,
+            overlaySizeBytes,
             receivedAt: nowIso,
             parsedAt: null,
             confirmedAt: null,
@@ -361,11 +475,15 @@ exports.handler = async (event) => {
             turnoverCount: null,
             stayoverCount: null,
             freeCount: null,
-            warnings: [`${getSourceFileLabel(importKind)} z e-mailu je uložený. Náhled bude dostupný po serverovém zpracování.`],
+            warnings: [
+                `${getSourceFileLabel(primaryPayload.importKind)} z e-mailu je uložený. Náhled bude dostupný po serverovém zpracování.`,
+                ...(overlayPayload ? ['Párový PDF report je uložený pro overlay časů příjezdů.'] : [])
+            ],
             error: null,
             storagePath,
+            overlayStoragePath,
             previewSummary: null,
-            parserVersion: 'email-ingest-v4',
+            parserVersion: 'email-ingest-v5',
             automation: {
                 autoPreview: {
                     status: 'pending',
@@ -385,13 +503,25 @@ exports.handler = async (event) => {
         }, 'importJob.initialPatch'))
 
         try {
-            const [sourceBuffer] = await bucket.file(storagePath).download()
-            const parsed = await parseImportBuffer({
-                buffer: sourceBuffer,
-                fileName,
-                contentType,
+            const parseResult = await parseHybridImportBuffers({
+                primary: {
+                    buffer: primaryBuffer,
+                    fileName: primaryPayload.fileName,
+                    contentType: primaryPayload.contentType,
+                    importKind: primaryPayload.importKind
+                },
+                overlay: overlayPayload
+                    ? {
+                        buffer: overlayBuffer,
+                        fileName: overlayPayload.fileName,
+                        contentType: overlayPayload.contentType,
+                        importKind: overlayPayload.importKind
+                    }
+                    : null,
                 referenceDate: new Date()
             })
+            const parsed = parseResult.parsed
+            const arrivalOverlay = parseResult.arrivalOverlay
 
             const roomsSnap = await db.collection('hotels').doc(hotelId).collection('rooms').get()
             const roomCatalog = roomsSnap.docs
@@ -399,10 +529,16 @@ exports.handler = async (event) => {
                 .map((room) => ({ roomNumber: String(room.roomNumber || '').trim() }))
                 .filter((room) => room.roomNumber)
 
-            const preview = buildPrevioStateImportPreview(parsed, roomCatalog, new Date())
+            let preview = buildPrevioStateImportPreview(parsed, roomCatalog, new Date())
             const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
             const missingDateLabels = missingDateIsos.map((dateIso) => formatDateLabel(dateIso))
-            const byDate = buildByDateFromPreview(preview, roomCatalog)
+            if ((arrivalOverlay?.appliedRows || 0) > 0) {
+                preview = annotatePreviewWithArrivalOverlay(preview, arrivalOverlay.applied)
+            }
+            let byDate = buildByDateFromPreview(preview, roomCatalog)
+            if ((arrivalOverlay?.appliedRows || 0) > 0) {
+                byDate = annotateByDateWithArrivalOverlay(byDate, arrivalOverlay.applied)
+            }
             const safety = evaluatePrevioStateImportSafety({
                 preview,
                 missingDateLabels,
@@ -439,6 +575,7 @@ exports.handler = async (event) => {
                     parsedTabDates: preview.parsedTabDates,
                     byDate,
                     missingDateLabels,
+                    arrivalOverlay,
                     parserVersion: PREVIO_STAV_PARSER_VERSION,
                     safety,
                     preview

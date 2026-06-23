@@ -46,6 +46,13 @@ async function loadPreviewFromSource(filePath, referenceDate) {
     return { parsed, preview, byDate }
 }
 
+function countOverlayMarkers(byDate) {
+    return Object.values(byDate || {}).reduce((sum, dayRooms) => {
+        const dayCount = (dayRooms || []).filter((room) => room.arrivalTimeSource === 'pdf_overlay').length
+        return sum + dayCount
+    }, 0)
+}
+
 async function main() {
     assert(previewFunction && previewFunction._test, 'previo-import-preview test hooks are not available')
 
@@ -69,18 +76,43 @@ async function main() {
     const xlsxResult = await loadPreviewFromSource(xlsxPath, referenceDate)
     const pdfResult = await loadPreviewFromSource(pdfPath, referenceDate)
 
+    const hybridParsed = await previewFunction._test.parseImportSources({
+        primary: {
+            buffer: await fs.readFile(xlsxPath),
+            fileName: path.basename(xlsxPath),
+            contentType: '',
+            storagePath: 'hotels/chill-apartments/importJobs/test/source.xlsx'
+        },
+        overlay: {
+            buffer: await fs.readFile(pdfPath),
+            fileName: path.basename(pdfPath),
+            contentType: 'application/pdf',
+            storagePath: 'hotels/chill-apartments/importJobs/test/overlay.pdf'
+        },
+        referenceDate
+    })
+    const hybridPreview = buildPrevioStateImportPreview(hybridParsed.parsed, [], referenceDate)
+    const hybridByDate = buildByDateFromPreview(hybridPreview, [], '22.06.2026 19:01')
+
     assert(previewFunction._test.resolveImportKind(path.basename(xlsxPath), '', 'source.xlsx') === 'xlsx', 'XLSX source was not detected as xlsx')
     assert(previewFunction._test.resolveImportKind(path.basename(pdfPath), '', 'source.pdf') === 'pdf', 'PDF source was not detected as pdf')
     assert(Object.keys(xlsxResult.byDate).length > 0, 'XLS preview byDate is empty')
     assert(Object.keys(pdfResult.byDate).length > 0, 'PDF preview byDate is empty')
+    assert(Object.keys(hybridByDate).length > 0, 'Hybrid preview byDate is empty')
     assert(Array.isArray(xlsxResult.preview.days) && xlsxResult.preview.days.length > 0, 'XLS preview days are empty')
     assert(Array.isArray(pdfResult.preview.days) && pdfResult.preview.days.length > 0, 'PDF preview days are empty')
+    assert(Array.isArray(hybridPreview.days) && hybridPreview.days.length > 0, 'Hybrid preview days are empty')
+    assert(typeof hybridParsed.arrivalOverlay?.appliedRows === 'number', 'Hybrid parse did not return arrival overlay summary')
+    if (hybridParsed.arrivalOverlay?.appliedRows > 0) {
+        assert(countOverlayMarkers(hybridByDate) >= 0, 'Hybrid byDate overlay marker counting failed')
+    }
 
     console.log('[validate:previo-import-preview-runtime] PASS')
     console.log(`- XLS fixture: ${path.basename(xlsxPath)}`)
     console.log(`- PDF fixture: ${path.basename(pdfPath)}`)
     console.log(`- XLS preview days: ${xlsxResult.preview.days.length}`)
     console.log(`- PDF preview days: ${pdfResult.preview.days.length}`)
+    console.log(`- Hybrid overlay applied rows: ${hybridParsed.arrivalOverlay?.appliedRows || 0}`)
 }
 
 main().catch((error) => {

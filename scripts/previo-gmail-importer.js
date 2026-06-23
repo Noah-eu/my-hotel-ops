@@ -46,13 +46,46 @@ function getAttachmentPriority(attachment) {
     return 99
 }
 
+function sortAttachmentCandidates(candidates) {
+    return (candidates || [])
+        .slice()
+        .sort((left, right) => {
+            const byPriority = getAttachmentPriority(left) - getAttachmentPriority(right)
+            if (byPriority !== 0) return byPriority
+
+            const leftSize = Number(left && left.getSize ? left.getSize() : 0)
+            const rightSize = Number(right && right.getSize ? right.getSize() : 0)
+            if (leftSize !== rightSize) return rightSize - leftSize
+
+            const leftName = String(left && left.getName ? left.getName() : '')
+            const rightName = String(right && right.getName ? right.getName() : '')
+            return leftName.localeCompare(rightName)
+        })
+}
+
 function selectPreferredPrevioAttachment(attachments) {
     const candidates = (attachments || []).filter(isSupportedPrevioAttachment)
     if (candidates.length === 0) return null
 
-    return candidates
-        .slice()
-        .sort((left, right) => getAttachmentPriority(left) - getAttachmentPriority(right))[0]
+    return sortAttachmentCandidates(candidates)[0]
+}
+
+function selectPrevioAttachmentBatch(attachments) {
+    const candidates = (attachments || []).filter(isSupportedPrevioAttachment)
+    if (candidates.length === 0) return null
+
+    const sorted = sortAttachmentCandidates(candidates)
+    const primary = sorted[0]
+    const primaryExtension = attachmentExtension(primary && primary.getName ? primary.getName() : '')
+
+    const overlay = (primaryExtension === 'xlsx' || primaryExtension === 'xls')
+        ? sorted.find((candidate) => attachmentExtension(candidate && candidate.getName ? candidate.getName() : '') === 'pdf') || null
+        : null
+
+    return {
+        primary,
+        overlay
+    }
 }
 
 function bytesToBase64(bytes) {
@@ -69,29 +102,62 @@ function encodeAttachmentBase64(attachment) {
 }
 
 function buildAttachmentFingerprint(attachment) {
+    if (!attachment) return ''
     const fileName = String(attachment && attachment.getName ? attachment.getName() : '').trim()
     const contentType = normalizeAttachmentContentType(fileName, attachment && attachment.getContentType ? attachment.getContentType() : '')
     const size = String(attachment && attachment.getSize ? attachment.getSize() : '')
     return [fileName, contentType, size].join('|')
 }
 
-function buildProcessedKey(messageId, attachment) {
-    return ['previo-stav', String(messageId || '').trim(), buildAttachmentFingerprint(attachment)].join('|')
+function buildProcessedKey(messageId, attachmentOrBatch) {
+    const batch = attachmentOrBatch && attachmentOrBatch.primary
+        ? attachmentOrBatch
+        : { primary: attachmentOrBatch, overlay: null }
+
+    return [
+        'previo-stav',
+        String(messageId || '').trim(),
+        buildAttachmentFingerprint(batch.primary),
+        buildAttachmentFingerprint(batch.overlay)
+    ].join('|')
 }
 
-function buildImportPayload(attachment) {
-    const fileName = String(attachment.getName() || '').trim()
-    const contentType = normalizeAttachmentContentType(fileName, attachment.getContentType())
+function buildImportPayload(attachmentOrBatch) {
+    const batch = attachmentOrBatch && attachmentOrBatch.primary
+        ? attachmentOrBatch
+        : { primary: attachmentOrBatch, overlay: null }
+
+    const primary = batch.primary
+    if (!primary) {
+        throw new Error('Attachment batch is missing a primary file.')
+    }
+
+    const fileName = String(primary.getName() || '').trim()
+    const contentType = normalizeAttachmentContentType(fileName, primary.getContentType())
     if (!fileName || !contentType) {
         throw new Error('Attachment is missing a supported file name or content type.')
     }
 
-    return {
+    const payload = {
         fileName,
         contentType,
         source: 'email',
-        fileBase64: encodeAttachmentBase64(attachment)
+        fileBase64: encodeAttachmentBase64(primary)
     }
+
+    if (batch.overlay) {
+        const overlayFileName = String(batch.overlay.getName() || '').trim()
+        const overlayContentType = normalizeAttachmentContentType(overlayFileName, batch.overlay.getContentType())
+        if (!overlayFileName || !overlayContentType) {
+            throw new Error('Overlay attachment is missing a supported file name or content type.')
+        }
+
+        payload.overlayFileName = overlayFileName
+        payload.overlayContentType = overlayContentType
+        payload.overlayFileBase64 = encodeAttachmentBase64(batch.overlay)
+    }
+
+    return payload
 }
 
 function resolveImporterConfig(scriptProperties) {
@@ -124,8 +190,8 @@ function parseJsonSafe(rawValue) {
     }
 }
 
-function uploadPrevioAttachment(attachment, config, fetchImpl) {
-    const payload = buildImportPayload(attachment)
+function uploadPrevioAttachment(attachmentBatch, config, fetchImpl) {
+    const payload = buildImportPayload(attachmentBatch)
     const response = fetchImpl(config.importUrl, {
         method: 'post',
         contentType: 'application/json; charset=utf-8',
@@ -159,20 +225,21 @@ function uploadPrevioAttachment(attachment, config, fetchImpl) {
 }
 
 function processPrevioMessage(message, services) {
-    const attachment = selectPreferredPrevioAttachment(message.getAttachments())
-    if (!attachment) {
+    const attachmentBatch = selectPrevioAttachmentBatch(message.getAttachments())
+    if (!attachmentBatch || !attachmentBatch.primary) {
         return { status: 'skipped', reason: 'No supported Stav attachment found.' }
     }
 
-    const processedKey = buildProcessedKey(message.getId(), attachment)
+    const processedKey = buildProcessedKey(message.getId(), attachmentBatch)
     if (services.properties.getProperty(processedKey)) {
         return { status: 'duplicate', processedKey }
     }
 
-    const result = services.importUploader(attachment)
+    const result = services.importUploader(attachmentBatch)
     const processedValue = JSON.stringify({
         processedAt: new Date().toISOString(),
-        fileName: attachment.getName(),
+        fileName: attachmentBatch.primary.getName(),
+        overlayFileName: attachmentBatch.overlay ? attachmentBatch.overlay.getName() : null,
         jobId: result.jobId || null,
         status: result.status || null
     })
@@ -192,7 +259,8 @@ function processPrevioMessage(message, services) {
         processedKey,
         jobId: result.jobId || null,
         importStatus: result.status || null,
-        fileName: attachment.getName()
+        fileName: attachmentBatch.primary.getName(),
+        overlayFileName: attachmentBatch.overlay ? attachmentBatch.overlay.getName() : null
     }
 }
 
@@ -279,6 +347,7 @@ if (typeof module !== 'undefined') {
         normalizeAttachmentContentType,
         isSupportedPrevioAttachment,
         selectPreferredPrevioAttachment,
+        selectPrevioAttachmentBatch,
         buildAttachmentFingerprint,
         buildProcessedKey,
         buildImportPayload,

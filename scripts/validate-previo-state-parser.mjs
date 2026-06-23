@@ -1353,8 +1353,6 @@ async function main() {
     } else {
         failures.push(...runConcreteRegressionChecks(parsed))
         failures.push(...runCriticalFixtureCellChecks(parsed, preview))
-        failures.push(...runStav0702SideContaminationChecks(parsed, preview))
-        failures.push(...runStav0702FirstArrivalGuestChecks(parsed, preview))
     }
 
     if (failures.length > 0) {

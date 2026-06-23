@@ -13,6 +13,11 @@ const {
     detectMissingDatesInRange,
     buildByDateFromPreview
 } = require('./lib/previo-state-preview')
+const {
+    overlayArrivalTimesFromPdf,
+    annotatePreviewWithArrivalOverlay,
+    annotateByDateWithArrivalOverlay
+} = require('./lib/previo-arrival-overlay')
 const { sanitizeForFirestore, runSanitizerSelfCheck } = require('./lib/firestore-sanitize')
 
 const DEV = process.env.NODE_ENV !== 'production'
@@ -133,6 +138,80 @@ async function parseImportBuffer({ buffer, fileName, contentType, storagePath, r
 
     const extracted = await extractStateTextFromPdfBuffer(buffer)
     return parsePrevioStatePdfText(extracted, referenceDate)
+}
+
+async function parseImportSources({
+    primary,
+    overlay,
+    referenceDate
+}) {
+    const primaryKind = resolveImportKind(primary.fileName, primary.contentType, primary.storagePath)
+    const parsedPrimary = await parseImportBuffer({
+        buffer: primary.buffer,
+        fileName: primary.fileName,
+        contentType: primary.contentType,
+        storagePath: primary.storagePath,
+        referenceDate
+    })
+
+    if (!overlay?.buffer) {
+        return {
+            parsed: parsedPrimary,
+            arrivalOverlay: {
+                enabled: false,
+                mode: 'none',
+                primaryKind,
+                overlayKind: null,
+                consideredRows: 0,
+                matchedRows: 0,
+                appliedRows: 0,
+                skippedBySpecificity: 0,
+                skippedByIdentityMismatch: 0,
+                applied: []
+            },
+            primaryKind
+        }
+    }
+
+    const overlayKind = resolveImportKind(overlay.fileName, overlay.contentType, overlay.storagePath)
+    if (overlayKind !== 'pdf') {
+        return {
+            parsed: parsedPrimary,
+            arrivalOverlay: {
+                enabled: false,
+                mode: 'none',
+                primaryKind,
+                overlayKind,
+                consideredRows: 0,
+                matchedRows: 0,
+                appliedRows: 0,
+                skippedBySpecificity: 0,
+                skippedByIdentityMismatch: 0,
+                applied: []
+            },
+            primaryKind
+        }
+    }
+
+    const parsedOverlay = await parseImportBuffer({
+        buffer: overlay.buffer,
+        fileName: overlay.fileName,
+        contentType: overlay.contentType,
+        storagePath: overlay.storagePath,
+        referenceDate
+    })
+
+    const overlayResult = overlayArrivalTimesFromPdf({
+        primaryParsed: parsedPrimary,
+        overlayParsed: parsedOverlay,
+        primaryKind
+    })
+
+    return {
+        parsed: overlayResult.parsed,
+        arrivalOverlay: overlayResult.overlay,
+        primaryKind
+    }
 }
 
 function safeErrorMessage(error) {
@@ -343,6 +422,9 @@ exports.handler = async (event) => {
         const storagePath = String(jobData.storagePath || '').trim()
         const fileName = String(jobData.fileName || '').trim()
         const contentType = String(jobData.contentType || '').trim()
+        const overlayStoragePath = String(jobData.overlayStoragePath || '').trim()
+        const overlayFileName = String(jobData.overlayFileName || '').trim()
+        const overlayContentType = String(jobData.overlayContentType || '').trim()
         if (!storagePath) {
             const errorMessage = 'Import job nemá storagePath se zdrojovým souborem.'
             const failedPatch = sanitizePatchForWrite({
@@ -360,13 +442,41 @@ exports.handler = async (event) => {
         const previewRequestId = createPreviewRequestId()
 
         const [sourceBuffer] = await bucket.file(storagePath).download()
-        const parsed = await parseImportBuffer({
-            buffer: sourceBuffer,
-            fileName,
-            contentType,
-            storagePath,
+        let overlayBuffer = null
+        if (overlayStoragePath) {
+            try {
+                const [loadedOverlayBuffer] = await bucket.file(overlayStoragePath).download()
+                overlayBuffer = loadedOverlayBuffer
+            } catch (overlayError) {
+                if (DEV) {
+                    console.warn('[previo-import-preview] overlay download failed', {
+                        jobId,
+                        overlayStoragePath,
+                        message: overlayError?.message || String(overlayError)
+                    })
+                }
+            }
+        }
+
+        const parseResult = await parseImportSources({
+            primary: {
+                buffer: sourceBuffer,
+                fileName,
+                contentType,
+                storagePath
+            },
+            overlay: overlayBuffer
+                ? {
+                    buffer: overlayBuffer,
+                    fileName: overlayFileName,
+                    contentType: overlayContentType,
+                    storagePath: overlayStoragePath
+                }
+                : null,
             referenceDate: new Date()
         })
+        const parsed = parseResult.parsed
+        const arrivalOverlay = parseResult.arrivalOverlay
 
         const roomsSnap = await db.collection('hotels').doc(hotelId).collection('rooms').get()
         const roomCatalog = roomsSnap.docs
@@ -374,10 +484,16 @@ exports.handler = async (event) => {
             .map((room) => ({ roomNumber: String(room.roomNumber || '').trim() }))
             .filter((room) => room.roomNumber)
 
-        const preview = buildPrevioStateImportPreview(parsed, roomCatalog, new Date())
+        let preview = buildPrevioStateImportPreview(parsed, roomCatalog, new Date())
         const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
         const missingDateLabels = missingDateIsos.map((dateIso) => formatDateLabel(dateIso))
-        const byDate = buildByDateFromPreview(preview, roomCatalog)
+        if ((arrivalOverlay?.appliedRows || 0) > 0) {
+            preview = annotatePreviewWithArrivalOverlay(preview, arrivalOverlay.applied)
+        }
+        let byDate = buildByDateFromPreview(preview, roomCatalog)
+        if ((arrivalOverlay?.appliedRows || 0) > 0) {
+            byDate = annotateByDateWithArrivalOverlay(byDate, arrivalOverlay.applied)
+        }
         const debugProbeRows = buildDebugProbeRows(byDate)
         const safety = evaluatePrevioStateImportSafety({
             preview,
@@ -423,6 +539,8 @@ exports.handler = async (event) => {
                 previewRequestId,
                 previewFreshGenerated: true,
                 sourceStoragePath: storagePath,
+                overlayStoragePath: overlayStoragePath || null,
+                arrivalOverlay,
                 debugProbeRows,
                 safety,
                 preview
@@ -454,6 +572,8 @@ exports.handler = async (event) => {
                 previewGeneratedBy,
                 previewRequestId,
                 sourceStoragePath: storagePath,
+                overlayStoragePath: overlayStoragePath || null,
+                arrivalOverlay,
                 freshGenerated: true,
                 debugProbeRows
             },
@@ -488,5 +608,6 @@ exports.handler = async (event) => {
 
 exports._test = {
     resolveImportKind,
-    parseImportBuffer
+    parseImportBuffer,
+    parseImportSources
 }

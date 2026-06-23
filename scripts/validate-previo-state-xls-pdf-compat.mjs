@@ -11,6 +11,11 @@ const {
     buildPrevioStateImportPreview,
     buildByDateFromPreview
 } = require('../netlify/functions/lib/previo-state-preview.js')
+const {
+    overlayArrivalTimesFromPdf,
+    annotatePreviewWithArrivalOverlay,
+    annotateByDateWithArrivalOverlay
+} = require('../netlify/functions/lib/previo-arrival-overlay.js')
 
 const root = process.cwd()
 
@@ -37,6 +42,13 @@ function assert(condition, message) {
     if (!condition) {
         throw new Error(message)
     }
+}
+
+function countArrivalOverlayMarkers(byDate) {
+    return Object.values(byDate || {}).reduce((sum, rooms) => {
+        const dayCount = (rooms || []).filter((room) => room.arrivalTimeSource === 'pdf_overlay').length
+        return sum + dayCount
+    }, 0)
 }
 
 async function main() {
@@ -70,6 +82,20 @@ async function main() {
     const pdfPreview = buildPrevioStateImportPreview(pdfParsed, [], new Date('2026-06-22T00:00:00'))
     const pdfByDate = buildByDateFromPreview(pdfPreview, [], '22.06.2026 19:01')
 
+    const overlayResult = overlayArrivalTimesFromPdf({
+        primaryParsed: xlsxParsed,
+        overlayParsed: pdfParsed,
+        primaryKind: 'xlsx'
+    })
+    let hybridPreview = buildPrevioStateImportPreview(overlayResult.parsed, [], new Date('2026-06-22T00:00:00'))
+    if ((overlayResult.overlay?.appliedRows || 0) > 0) {
+        hybridPreview = annotatePreviewWithArrivalOverlay(hybridPreview, overlayResult.overlay.applied)
+    }
+    let hybridByDate = buildByDateFromPreview(hybridPreview, [], '22.06.2026 19:01')
+    if ((overlayResult.overlay?.appliedRows || 0) > 0) {
+        hybridByDate = annotateByDateWithArrivalOverlay(hybridByDate, overlayResult.overlay.applied)
+    }
+
     const overlapDates = Object.keys(xlsxByDate).filter((dateIso) => Object.prototype.hasOwnProperty.call(pdfByDate, dateIso)).sort()
     assert(overlapDates.length > 0, 'No overlapping dates between XLS and PDF byDate previews')
 
@@ -94,10 +120,17 @@ async function main() {
         assert(!p26301.departure?.time, 'PDF 2026-06-26/301 must not have departure time')
     }
 
+    const hybridOverlayMarkers = countArrivalOverlayMarkers(hybridByDate)
+    assert(typeof overlayResult.overlay?.appliedRows === 'number', 'Hybrid overlay summary is missing appliedRows')
+    if ((overlayResult.overlay?.appliedRows || 0) > 0) {
+        assert(hybridOverlayMarkers > 0, 'Hybrid byDate should include arrivalTimeSource markers when overlays are applied')
+    }
+
     console.log('[validate:previo-state-xls-pdf-compat] PASS')
     console.log(`- XLS fixture: ${path.basename(xlsxPath)}`)
     console.log(`- PDF fixture: ${path.basename(pdfPath)}`)
     console.log(`- Overlap days: ${overlapDates.length}`)
+    console.log(`- Hybrid overlay applied rows: ${overlayResult.overlay?.appliedRows || 0}`)
 }
 
 main().catch((error) => {
