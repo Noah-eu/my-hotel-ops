@@ -30,6 +30,12 @@ import {
     signOutFirebaseUser
 } from './lib/firebase'
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
+import {
+    mergeImportedByDateWithExistingOperationalState,
+    mergeImportedRoomDayWithExistingOperationalState,
+    type OperationalMergeDiagnostic,
+    summarizeOperationalMergeDiagnostics
+} from './lib/importOperationalMerge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
@@ -2061,9 +2067,9 @@ export default function App() {
     }
 
     function getCurrentRoomsForDate(dateIso: string, parsedTabDates?: Partial<Record<OpsTab, string>>) {
-        if (importedRoomsByDate[dateIso]) return importedRoomsByDate[dateIso]
         const mappedTab = findTabForDate(dateIso, parsedTabDates)
         if (mappedTab) return roomsByDay[mappedTab]
+        if (importedRoomsByDate[dateIso]) return importedRoomsByDate[dateIso]
         return []
     }
 
@@ -2293,26 +2299,6 @@ export default function App() {
         return `BOX ${match[1].toUpperCase()}`
     }
 
-    function sameGuestLabel(left?: string, right?: string) {
-        return normalizeTaskTitleForCleanup(left || '') === normalizeTaskTitleForCleanup(right || '')
-    }
-
-    function shouldPreserveTurnoverOperationalState(base: RoomPlan | undefined, parsed: StateImportDayRow, mergedSituation: RoomPlan['situation']) {
-        if (!base) return false
-        if (base.stateSource !== 'previo-state-pdf') return false
-        if (base.situation !== mergedSituation) return false
-        if ((base.departureTime || '') !== (parsed.departureTime || '')) return false
-        if ((base.arrivalTime || '') !== (parsed.arrivalTime || '')) return false
-
-        const baseDepartureGuest = base.departure?.guestLabel
-        const baseArrivalGuest = base.arrival?.guestLabel
-
-        if (!sameGuestLabel(baseDepartureGuest, parsed.departureGuestName)) return false
-        if (!sameGuestLabel(baseArrivalGuest, parsed.arrivalGuestName)) return false
-
-        return true
-    }
-
     function buildImportedBaseRow(base: RoomPlan | undefined, roomNumber: string, displayName: string | undefined, importedAt: string, importJobId?: string): RoomPlan {
         return {
             id: base?.id || roomIdForNumber(roomNumber),
@@ -2348,10 +2334,18 @@ export default function App() {
         }
     }
 
-    function buildRoomsForStateDay(dateIso: string, dayPreview: PrevioStateImportPreview['days'][number], importedAt: string, importJobId?: string) {
+    function buildRoomsForStateDay(
+        dateIso: string,
+        dayPreview: PrevioStateImportPreview['days'][number],
+        importedAt: string,
+        importJobId?: string,
+        diagnosticsCollector?: OperationalMergeDiagnostic[]
+    ) {
         const existingTabs = ['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]
         const currentTabDate = existingTabs.find((day) => importedTabDates[day] === dateIso)
-        const sourceRooms = (currentTabDate ? roomsByDay[currentTabDate] : roomsByDay.Dnes) || importedRoomsByDate[dateIso] || []
+        const sourceRooms = currentTabDate
+            ? roomsByDay[currentTabDate]
+            : (importedRoomsByDate[dateIso] || [])
         const existingByRoom = new Map(
             sourceRooms.map((room) => [normalizeCatalogRoomNumber(room.number), room])
         )
@@ -2373,76 +2367,79 @@ export default function App() {
             const catalogRoom = catalogByRoom.get(roomNumber)
             const row = buildImportedBaseRow(base, roomNumber, catalogRoom?.displayName || catalogRoom?.roomNumber, importedAt, importJobId)
 
+            let importedRoom: RoomPlan
+
             if (!parsed) {
-                return {
+                importedRoom = {
                     ...row,
                     planDateIso: dateIso,
                     freeConfirmed: Boolean(dayPreview.complete && dayPreview.derivedFreeRooms.includes(roomNumber))
                 }
-            }
+            } else {
+                const hasDeparture = Boolean(parsed.departureTime)
+                const hasArrival = Boolean(parsed.arrivalTime)
+                if (!hasDeparture && !hasArrival) {
+                    const stayoverNotes = parsed.arrivalNotes.length
+                        ? parsed.arrivalNotes
+                        : parsed.departureNotes.length
+                            ? parsed.departureNotes
+                            : undefined
+                    const stayoverBox = extractArrivalBoxFromNotes(stayoverNotes)
+                    const stayoverGuestCount = parsed.stayoverGuestCount ?? parsed.arrivalGuestCount ?? parsed.departureGuestCount
 
-            const hasDeparture = Boolean(parsed.departureTime)
-            const hasArrival = Boolean(parsed.arrivalTime)
-            if (!hasDeparture && !hasArrival) {
-                const stayoverNotes = parsed.arrivalNotes.length
-                    ? parsed.arrivalNotes
-                    : parsed.departureNotes.length
-                        ? parsed.departureNotes
-                        : undefined
-                const stayoverBox = extractArrivalBoxFromNotes(stayoverNotes)
-                const stayoverGuestCount = parsed.stayoverGuestCount ?? parsed.arrivalGuestCount ?? parsed.departureGuestCount
+                    importedRoom = {
+                        ...row,
+                        planDateIso: dateIso,
+                        occupiedConfirmed: true,
+                        stayoverGuestName: parsed.stayoverGuestName || parsed.departureGuestName || parsed.arrivalGuestName,
+                        stayoverUntil: parsed.stayoverUntil,
+                        guestCount: stayoverGuestCount,
+                        box: stayoverBox,
+                        notes: stayoverNotes
+                    }
+                } else {
+                    const mergedSituation = hasDeparture && hasArrival
+                        ? 'odjezd_prijezd'
+                        : hasDeparture
+                            ? 'odjezd'
+                            : 'prijezd'
+                    const departureNotes = parsed.departureNotes.length ? parsed.departureNotes : undefined
+                    const arrivalNotes = parsed.arrivalNotes.length ? parsed.arrivalNotes : undefined
+                    const arrivalBox = extractArrivalBoxFromNotes(arrivalNotes)
 
-                return {
-                    ...row,
-                    planDateIso: dateIso,
-                    occupiedConfirmed: true,
-                    stayoverGuestName: parsed.stayoverGuestName || parsed.departureGuestName || parsed.arrivalGuestName,
-                    stayoverUntil: parsed.stayoverUntil,
-                    guestCount: stayoverGuestCount,
-                    box: stayoverBox,
-                    notes: stayoverNotes
+                    importedRoom = {
+                        ...row,
+                        planDateIso: dateIso,
+                        situation: mergedSituation,
+                        departure: hasDeparture ? {
+                            time: parsed.departureTime as string,
+                            guestLabel: parsed.departureGuestName,
+                            guestCount: parsed.departureGuestCount,
+                            notes: departureNotes
+                        } : undefined,
+                        arrival: hasArrival ? {
+                            time: parsed.arrivalTime as string,
+                            guestLabel: parsed.arrivalGuestName,
+                            guestCount: parsed.arrivalGuestCount,
+                            box: arrivalBox,
+                            notes: arrivalNotes
+                        } : undefined,
+                        departureTime: parsed.departureTime,
+                        arrivalTime: parsed.arrivalTime,
+                        guestCount: parsed.arrivalGuestCount ?? parsed.departureGuestCount,
+                        box: arrivalBox,
+                        status: 'ceka'
+                    }
                 }
             }
 
-            const mergedSituation = hasDeparture && hasArrival
-                ? 'odjezd_prijezd'
-                : hasDeparture
-                    ? 'odjezd'
-                    : 'prijezd'
-
-            const preserveOperationalState = shouldPreserveTurnoverOperationalState(base, parsed, mergedSituation)
-            const departureNotes = parsed.departureNotes.length ? parsed.departureNotes : undefined
-            const arrivalNotes = parsed.arrivalNotes.length ? parsed.arrivalNotes : undefined
-            const arrivalBox = extractArrivalBoxFromNotes(arrivalNotes)
-
-            return {
-                ...row,
-                planDateIso: dateIso,
-                situation: mergedSituation,
-                departure: hasDeparture ? {
-                    time: parsed.departureTime as string,
-                    guestLabel: parsed.departureGuestName,
-                    guestCount: parsed.departureGuestCount,
-                    notes: departureNotes
-                } : undefined,
-                arrival: hasArrival ? {
-                    time: parsed.arrivalTime as string,
-                    guestLabel: parsed.arrivalGuestName,
-                    guestCount: parsed.arrivalGuestCount,
-                    box: arrivalBox,
-                    notes: arrivalNotes
-                } : undefined,
-                departureTime: parsed.departureTime,
-                arrivalTime: parsed.arrivalTime,
-                guestCount: parsed.arrivalGuestCount ?? parsed.departureGuestCount,
-                box: arrivalBox,
-                status: preserveOperationalState ? (base?.status || 'ceka') : 'ceka',
-                assigned: preserveOperationalState ? base?.assigned : undefined,
-                estimatedReady: preserveOperationalState ? base?.estimatedReady : undefined,
-                estimateSetAt: preserveOperationalState ? base?.estimateSetAt : undefined,
-                statusNote: preserveOperationalState ? base?.statusNote : undefined,
-                checkoutException: preserveOperationalState ? Boolean(base?.checkoutException) : false
-            }
+            const mergeResult = mergeImportedRoomDayWithExistingOperationalState({
+                dateIso,
+                importedRoom,
+                existingRoom: base
+            })
+            if (diagnosticsCollector) diagnosticsCollector.push(...mergeResult.diagnostics)
+            return mergeResult.room
         })
     }
 
@@ -2452,11 +2449,12 @@ export default function App() {
             Zitra: [],
             Pozitri: []
         }
+        const diagnostics: OperationalMergeDiagnostic[] = []
 
         const byDate: Record<string, typeof roomsByDay[OpsTab]> = {}
 
         preview.days.forEach((day) => {
-            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day, importedAt, importJobId)
+            byDate[day.dateIso] = buildRoomsForStateDay(day.dateIso, day, importedAt, importJobId, diagnostics)
         })
 
             ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
@@ -2468,7 +2466,34 @@ export default function App() {
                 next[day] = byDate[dateIso]
             })
 
-        return { next, byDate }
+        return { next, byDate, diagnostics }
+    }
+
+    function buildOperationalMergeFeedbackMessages(summary: ReturnType<typeof summarizeOperationalMergeDiagnostics>) {
+        const counts: string[] = []
+        if (summary.statusPreservedCount > 0) counts.push(`stav: ${summary.statusPreservedCount}`)
+        if (summary.assignmentPreservedCount > 0) counts.push(`přiřazení: ${summary.assignmentPreservedCount}`)
+        if (summary.estimatePreservedCount > 0) counts.push(`odhad: ${summary.estimatePreservedCount}`)
+        if (summary.problemPreservedCount > 0) counts.push(`problém: ${summary.problemPreservedCount}`)
+        if (summary.carryOverPreservedCount > 0) counts.push(`carry-over: ${summary.carryOverPreservedCount}`)
+
+        const touchedMessage = summary.touchedRoomCount > 0
+            ? `Zachován provozní stav u ${summary.touchedRoomCount} pokojů${counts.length > 0 ? ` (${counts.join(', ')})` : ''}.`
+            : ''
+
+        const warningMessage = summary.inconsistencyWarningCount > 0
+            ? `Pozor: ${summary.inconsistencyWarningCount} případů může být nekonzistentních (${summary.inconsistencyRooms.join(', ')}).`
+            : ''
+
+        const importWarnings: string[] = []
+        if (touchedMessage) importWarnings.push(`[merge] ${touchedMessage}`)
+        if (warningMessage) importWarnings.push(`[merge-warning] ${warningMessage}`)
+
+        return {
+            touchedMessage,
+            warningMessage,
+            importWarnings
+        }
     }
 
     function applyPrevioOriginToByDate(byDate: Record<string, RoomPlan[]>, importedAt: string, importJobId?: string) {
@@ -2668,7 +2693,9 @@ export default function App() {
 
         try {
             const importedAt = formatImportTimestamp(new Date())
-            const { next, byDate } = buildMergedPlansFromStateImport(stateImportPreview, importedAt, targetJob?.id)
+            const { next, byDate, diagnostics } = buildMergedPlansFromStateImport(stateImportPreview, importedAt, targetJob?.id)
+            const mergeSummary = summarizeOperationalMergeDiagnostics(diagnostics)
+            const mergeFeedback = buildOperationalMergeFeedbackMessages(mergeSummary)
 
             const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
             if (targetJob) {
@@ -2701,15 +2728,26 @@ export default function App() {
 
             if (activeStateImportJobId) {
                 const confirmedAt = new Date().toISOString()
+                const mergedWarnings = targetJob
+                    ? Array.from(new Set([...(targetJob.warnings || []), ...mergeFeedback.importWarnings]))
+                    : undefined
                 activeStore.updateImportJob(activeStateImportJobId, {
                     status: 'confirmed',
                     confirmedAt,
                     confirmedBy,
-                    error: undefined
+                    error: undefined,
+                    ...(mergedWarnings ? { warnings: mergedWarnings } : {})
                 })
                 setImportJobs((prev) => sortImportJobs(prev.map((job) => (
                     job.id === activeStateImportJobId
-                        ? { ...job, status: 'confirmed', confirmedAt, confirmedBy, error: undefined }
+                        ? {
+                            ...job,
+                            status: 'confirmed',
+                            confirmedAt,
+                            confirmedBy,
+                            error: undefined,
+                            ...(mergedWarnings ? { warnings: mergedWarnings } : {})
+                        }
                         : job
                 ))))
             }
@@ -2717,7 +2755,13 @@ export default function App() {
             setStateImportPreview(null)
             setStateImportPdfStatus('idle')
             setStateImportPdfError(null)
-            setStateImportActionMessage('Import Stav byl potvrzen a snapshot pro rollback je uložen.')
+            setStateImportActionMessage(
+                [
+                    'Import Stav byl potvrzen a snapshot pro rollback je uložen.',
+                    mergeFeedback.touchedMessage,
+                    mergeFeedback.warningMessage
+                ].filter(Boolean).join(' ')
+            )
             setActiveStateImportJobId(null)
         } catch (error: any) {
             setStateImportPdfError(error?.message || 'Potvrzení importu Stav selhalo při ukládání snapshotu.')
@@ -2847,6 +2891,16 @@ export default function App() {
         try {
             const importedAt = formatImportTimestamp(new Date())
             const byDateWithOrigin = applyPrevioOriginToByDate(byDate, importedAt, job.id)
+            const existingByDate = Object.fromEntries(
+                Object.keys(byDateWithOrigin).map((dateIso) => [dateIso, getCurrentRoomsForDate(dateIso, parsedTabDates)])
+            ) as Record<string, RoomPlan[]>
+            const mergeResult = mergeImportedByDateWithExistingOperationalState({
+                importedByDate: byDateWithOrigin,
+                existingByDate
+            })
+            const mergedByDate = mergeResult.byDate
+            const mergeSummary = summarizeOperationalMergeDiagnostics(mergeResult.diagnostics)
+            const mergeFeedback = buildOperationalMergeFeedbackMessages(mergeSummary)
             const next: Record<OpsTab, RoomPlan[]> = {
                 Dnes: roomsByDay.Dnes,
                 Zitra: roomsByDay.Zitra,
@@ -2855,16 +2909,16 @@ export default function App() {
 
                 ; (['Dnes', 'Zitra', 'Pozitri'] as OpsTab[]).forEach((day) => {
                     const dateIso = parsedTabDates[day]
-                    if (!dateIso || !byDateWithOrigin[dateIso]) return
-                    next[day] = byDateWithOrigin[dateIso]
+                    if (!dateIso || !mergedByDate[dateIso]) return
+                    next[day] = mergedByDate[dateIso]
                 })
 
             const confirmedBy = currentUser?.name || currentUser?.id || 'admin'
-            const backupPayload = buildImportBackupPayload(job.id, byDateWithOrigin, parsedTabDates, confirmedBy)
+            const backupPayload = buildImportBackupPayload(job.id, mergedByDate, parsedTabDates, confirmedBy)
             await persistImportBackup(job, backupPayload, confirmedBy)
 
             setImportedTabDates(parsedTabDates)
-            setImportedRoomsByDate(byDateWithOrigin)
+            setImportedRoomsByDate(mergedByDate)
             setSelectedImportedDateIso(null)
             setRoomsByDay(next)
 
@@ -2874,7 +2928,7 @@ export default function App() {
                 })
 
                 const primaryDateSet = new Set(Object.values(parsedTabDates).filter((dateIso): dateIso is string => Boolean(dateIso)))
-                Object.entries(byDateWithOrigin).forEach(([dateIso, rooms]) => {
+                Object.entries(mergedByDate).forEach(([dateIso, rooms]) => {
                     if (primaryDateSet.has(dateIso)) return
                     rooms.forEach((room) => activeStore.replaceRoomPlan(dateIso, room))
                 })
@@ -2906,6 +2960,7 @@ export default function App() {
                 confirmedAt,
                 confirmedBy,
                 error: undefined,
+                warnings: Array.from(new Set([...(job.warnings || []), ...mergeFeedback.importWarnings])),
                 ...(automationPatch ? { automation: automationPatch } : {})
             })
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
@@ -2916,15 +2971,20 @@ export default function App() {
                         confirmedAt,
                         confirmedBy,
                         error: undefined,
+                        warnings: Array.from(new Set([...(item.warnings || []), ...mergeFeedback.importWarnings])),
                         ...(automationPatch ? { automation: automationPatch } : {})
                     }
                     : item
             ))))
             setStateImportPreview(null)
             setActiveStateImportJobId(null)
-            setStateImportActionMessage(isAutoConfirm
-                ? 'Import Stav byl automaticky potvrzen a snapshot pro rollback je uložen.'
-                : 'Import Stav byl potvrzen a snapshot pro rollback je uložen.')
+            setStateImportActionMessage([
+                isAutoConfirm
+                    ? 'Import Stav byl automaticky potvrzen a snapshot pro rollback je uložen.'
+                    : 'Import Stav byl potvrzen a snapshot pro rollback je uložen.',
+                mergeFeedback.touchedMessage,
+                mergeFeedback.warningMessage
+            ].filter(Boolean).join(' '))
         } catch (error: any) {
             const message = error?.message || 'Potvrzení importu selhalo při ukládání snapshotu.'
             if (job && isAutoConfirm) {
