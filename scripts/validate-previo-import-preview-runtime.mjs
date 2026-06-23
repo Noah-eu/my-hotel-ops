@@ -76,21 +76,32 @@ async function main() {
     const xlsxResult = await loadPreviewFromSource(xlsxPath, referenceDate)
     const pdfResult = await loadPreviewFromSource(pdfPath, referenceDate)
 
-    const hybridParsed = await previewFunction._test.parseImportSources({
-        primary: {
-            buffer: await fs.readFile(xlsxPath),
-            fileName: path.basename(xlsxPath),
-            contentType: '',
-            storagePath: 'hotels/chill-apartments/importJobs/test/source.xlsx'
-        },
-        overlay: {
-            buffer: await fs.readFile(pdfPath),
-            fileName: path.basename(pdfPath),
-            contentType: 'application/pdf',
-            storagePath: 'hotels/chill-apartments/importJobs/test/overlay.pdf'
-        },
-        referenceDate
-    })
+    const originalDOMMatrix = globalThis.DOMMatrix
+    let hybridParsed
+    try {
+        globalThis.DOMMatrix = undefined
+        hybridParsed = await previewFunction._test.parseImportSources({
+            primary: {
+                buffer: await fs.readFile(xlsxPath),
+                fileName: path.basename(xlsxPath),
+                contentType: '',
+                storagePath: 'hotels/chill-apartments/importJobs/test/source.xlsx'
+            },
+            overlay: {
+                buffer: await fs.readFile(pdfPath),
+                fileName: path.basename(pdfPath),
+                contentType: 'application/pdf',
+                storagePath: 'hotels/chill-apartments/importJobs/test/overlay.pdf'
+            },
+            referenceDate
+        })
+    } finally {
+        if (typeof originalDOMMatrix === 'undefined') {
+            delete globalThis.DOMMatrix
+        } else {
+            globalThis.DOMMatrix = originalDOMMatrix
+        }
+    }
     const hybridPreview = buildPrevioStateImportPreview(hybridParsed.parsed, [], referenceDate)
     const hybridByDate = buildByDateFromPreview(hybridPreview, [], '22.06.2026 19:01')
 

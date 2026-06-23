@@ -1294,7 +1294,229 @@ function isSuspiciousNightTurnover(time) {
     return hours >= 1 && hours <= 7
 }
 
+let pdfRuntimePrimitivesReady = false
+
+function toFiniteNumber(value, fallback = 0) {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : fallback
+}
+
+function toMatrix2D(input) {
+    if (!input) return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+
+    if (Array.isArray(input)) {
+        if (input.length >= 6) {
+            return {
+                a: toFiniteNumber(input[0], 1),
+                b: toFiniteNumber(input[1], 0),
+                c: toFiniteNumber(input[2], 0),
+                d: toFiniteNumber(input[3], 1),
+                e: toFiniteNumber(input[4], 0),
+                f: toFiniteNumber(input[5], 0)
+            }
+        }
+        return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+    }
+
+    if (typeof input === 'object') {
+        const a = input.a ?? input.m11 ?? 1
+        const b = input.b ?? input.m12 ?? 0
+        const c = input.c ?? input.m21 ?? 0
+        const d = input.d ?? input.m22 ?? 1
+        const e = input.e ?? input.m41 ?? 0
+        const f = input.f ?? input.m42 ?? 0
+        return {
+            a: toFiniteNumber(a, 1),
+            b: toFiniteNumber(b, 0),
+            c: toFiniteNumber(c, 0),
+            d: toFiniteNumber(d, 1),
+            e: toFiniteNumber(e, 0),
+            f: toFiniteNumber(f, 0)
+        }
+    }
+
+    return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+}
+
+function multiplyMatrix2D(left, right) {
+    return {
+        a: left.a * right.a + left.c * right.b,
+        b: left.b * right.a + left.d * right.b,
+        c: left.a * right.c + left.c * right.d,
+        d: left.b * right.c + left.d * right.d,
+        e: left.a * right.e + left.c * right.f + left.e,
+        f: left.b * right.e + left.d * right.f + left.f
+    }
+}
+
+function createDOMMatrixPolyfillClass() {
+    return class DOMMatrixPolyfill {
+        constructor(init) {
+            const matrix = toMatrix2D(init)
+            this.a = matrix.a
+            this.b = matrix.b
+            this.c = matrix.c
+            this.d = matrix.d
+            this.e = matrix.e
+            this.f = matrix.f
+        }
+
+        get is2D() {
+            return true
+        }
+
+        get isIdentity() {
+            return this.a === 1 && this.b === 0 && this.c === 0 && this.d === 1 && this.e === 0 && this.f === 0
+        }
+
+        get m11() { return this.a }
+        set m11(value) { this.a = toFiniteNumber(value, 1) }
+        get m12() { return this.b }
+        set m12(value) { this.b = toFiniteNumber(value, 0) }
+        get m21() { return this.c }
+        set m21(value) { this.c = toFiniteNumber(value, 0) }
+        get m22() { return this.d }
+        set m22(value) { this.d = toFiniteNumber(value, 1) }
+        get m41() { return this.e }
+        set m41(value) { this.e = toFiniteNumber(value, 0) }
+        get m42() { return this.f }
+        set m42(value) { this.f = toFiniteNumber(value, 0) }
+
+        multiplySelf(other) {
+            const current = toMatrix2D(this)
+            const next = multiplyMatrix2D(current, toMatrix2D(other))
+            this.a = next.a
+            this.b = next.b
+            this.c = next.c
+            this.d = next.d
+            this.e = next.e
+            this.f = next.f
+            return this
+        }
+
+        preMultiplySelf(other) {
+            const current = toMatrix2D(this)
+            const next = multiplyMatrix2D(toMatrix2D(other), current)
+            this.a = next.a
+            this.b = next.b
+            this.c = next.c
+            this.d = next.d
+            this.e = next.e
+            this.f = next.f
+            return this
+        }
+
+        translateSelf(tx = 0, ty = 0) {
+            return this.multiplySelf({ a: 1, b: 0, c: 0, d: 1, e: toFiniteNumber(tx, 0), f: toFiniteNumber(ty, 0) })
+        }
+
+        scaleSelf(scaleX = 1, scaleY = scaleX) {
+            return this.multiplySelf({ a: toFiniteNumber(scaleX, 1), b: 0, c: 0, d: toFiniteNumber(scaleY, 1), e: 0, f: 0 })
+        }
+
+        rotateSelf(rotX = 0, rotY = 0, rotZ = 0) {
+            const angle = toFiniteNumber(rotZ || rotY || rotX, 0)
+            const radians = (angle * Math.PI) / 180
+            const cos = Math.cos(radians)
+            const sin = Math.sin(radians)
+            return this.multiplySelf({ a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 })
+        }
+
+        inverse() {
+            const det = this.a * this.d - this.b * this.c
+            if (!det) return new this.constructor()
+            const invDet = 1 / det
+            return new this.constructor({
+                a: this.d * invDet,
+                b: -this.b * invDet,
+                c: -this.c * invDet,
+                d: this.a * invDet,
+                e: (this.c * this.f - this.d * this.e) * invDet,
+                f: (this.b * this.e - this.a * this.f) * invDet
+            })
+        }
+
+        transformPoint(point) {
+            const x = toFiniteNumber(point?.x, 0)
+            const y = toFiniteNumber(point?.y, 0)
+            return {
+                x: this.a * x + this.c * y + this.e,
+                y: this.b * x + this.d * y + this.f,
+                z: toFiniteNumber(point?.z, 0),
+                w: toFiniteNumber(point?.w, 1)
+            }
+        }
+
+        toFloat32Array() {
+            return new Float32Array([
+                this.a, this.b, 0, 0,
+                this.c, this.d, 0, 0,
+                0, 0, 1, 0,
+                this.e, this.f, 0, 1
+            ])
+        }
+
+        toString() {
+            return `matrix(${this.a}, ${this.b}, ${this.c}, ${this.d}, ${this.e}, ${this.f})`
+        }
+
+        setMatrixValue(value) {
+            const text = String(value || '').trim()
+            const match = text.match(/^matrix\(([^)]+)\)$/i)
+            if (!match) return this
+            const values = match[1].split(',').map((part) => toFiniteNumber(part.trim(), 0))
+            if (values.length >= 6) {
+                this.a = values[0]
+                this.b = values[1]
+                this.c = values[2]
+                this.d = values[3]
+                this.e = values[4]
+                this.f = values[5]
+            }
+            return this
+        }
+
+        static fromMatrix(input) {
+            return new this(input)
+        }
+    }
+}
+
+function ensurePdfRuntimePrimitives() {
+    if (pdfRuntimePrimitivesReady) return
+
+    if (typeof globalThis.DOMMatrix === 'undefined') {
+        globalThis.DOMMatrix = createDOMMatrixPolyfillClass()
+    }
+
+    if (typeof globalThis.Path2D === 'undefined') {
+        globalThis.Path2D = class Path2DPolyfill {
+            addPath() { }
+            closePath() { }
+            moveTo() { }
+            lineTo() { }
+            bezierCurveTo() { }
+            quadraticCurveTo() { }
+            rect() { }
+            arc() { }
+        }
+    }
+
+    if (typeof globalThis.ImageData === 'undefined') {
+        globalThis.ImageData = class ImageDataPolyfill {
+            constructor(data, width, height) {
+                this.data = data
+                this.width = width
+                this.height = height
+            }
+        }
+    }
+
+    pdfRuntimePrimitivesReady = true
+}
+
 async function extractStateTextFromPdfBuffer(pdfBuffer) {
+    ensurePdfRuntimePrimitives()
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const data = new Uint8Array(pdfBuffer)
     const loadingTask = getDocument({ data, disableWorker: true })
@@ -1569,102 +1791,102 @@ function parsePrevioStateXlsxData(source, referenceDate = new Date()) {
     const rows = []
     let amPmEvidence = false
 
-    ;(source.sheets || [])
-        .slice()
-        .sort((a, b) => String(a.dateIso || '').localeCompare(String(b.dateIso || '')))
-        .forEach((sheet) => {
-            const dateIso = String(sheet.dateIso || '')
-            if (!dateIso) return
-            if (!parsedDates.includes(dateIso)) parsedDates.push(dateIso)
+        ; (source.sheets || [])
+            .slice()
+            .sort((a, b) => String(a.dateIso || '').localeCompare(String(b.dateIso || '')))
+            .forEach((sheet) => {
+                const dateIso = String(sheet.dateIso || '')
+                if (!dateIso) return
+                if (!parsedDates.includes(dateIso)) parsedDates.push(dateIso)
 
-            if (sheet.totals && (
-                typeof sheet.totals.arrivals === 'number'
-                || typeof sheet.totals.departures === 'number'
-                || typeof sheet.totals.stayovers === 'number'
-            )) {
-                dayTotals[dateIso] = {
-                    arrivals: sheet.totals.arrivals,
-                    departures: sheet.totals.departures,
-                    stayovers: sheet.totals.stayovers
-                }
-            }
-
-            ;(sheet.rows || []).forEach((rowEntry) => {
-                const row = (rowEntry && Array.isArray(rowEntry.cells))
-                    ? rowEntry.cells.map((cell) => normalizeSpreadsheetCell(cell))
-                    : []
-
-                const firstColNormalized = normalizeForMatch((row || [])[0] || '')
-                if (firstColNormalized.includes('prijizdejici') || firstColNormalized.includes('prijezdejici')) {
-                    return
+                if (sheet.totals && (
+                    typeof sheet.totals.arrivals === 'number'
+                    || typeof sheet.totals.departures === 'number'
+                    || typeof sheet.totals.stayovers === 'number'
+                )) {
+                    dayTotals[dateIso] = {
+                        arrivals: sheet.totals.arrivals,
+                        departures: sheet.totals.departures,
+                        stayovers: sheet.totals.stayovers
+                    }
                 }
 
-                const roomToken = normalizeRoomKey((row || [])[1] || '')
-                if (!MASTER_ROOM_SET.has(roomToken)) return
+                ; (sheet.rows || []).forEach((rowEntry) => {
+                    const row = (rowEntry && Array.isArray(rowEntry.cells))
+                        ? rowEntry.cells.map((cell) => normalizeSpreadsheetCell(cell))
+                        : []
 
-                const departureInfo = parseSpreadsheetGuestCell((row || [])[2] || '', 'departure')
-                const arrivalInfo = parseSpreadsheetGuestCell((row || [])[3] || '', 'arrival')
-                const stayoverInfo = parseSpreadsheetGuestCell((row || [])[4] || '', 'stayover')
-                amPmEvidence = amPmEvidence || departureInfo.hadAmPm || arrivalInfo.hadAmPm || stayoverInfo.hadAmPm
+                    const firstColNormalized = normalizeForMatch((row || [])[0] || '')
+                    if (firstColNormalized.includes('prijizdejici') || firstColNormalized.includes('prijezdejici')) {
+                        return
+                    }
 
-                let departureNotes = parseSpreadsheetNotes((row || [])[6] || '')
-                let arrivalNotes = parseSpreadsheetNotes((row || [])[7] || '')
-                const stayoverNotes = parseSpreadsheetNotes((row || [])[8] || '')
+                    const roomToken = normalizeRoomKey((row || [])[1] || '')
+                    if (!MASTER_ROOM_SET.has(roomToken)) return
 
-                const departureTime = departureInfo.hasSignal ? departureInfo.time : undefined
-                const arrivalTime = arrivalInfo.hasSignal ? arrivalInfo.time : undefined
+                    const departureInfo = parseSpreadsheetGuestCell((row || [])[2] || '', 'departure')
+                    const arrivalInfo = parseSpreadsheetGuestCell((row || [])[3] || '', 'arrival')
+                    const stayoverInfo = parseSpreadsheetGuestCell((row || [])[4] || '', 'stayover')
+                    amPmEvidence = amPmEvidence || departureInfo.hadAmPm || arrivalInfo.hadAmPm || stayoverInfo.hadAmPm
 
-                const stayoverMode = !departureTime && !arrivalTime && stayoverInfo.hasSignal
-                if (!departureTime && !arrivalTime && !stayoverMode && !departureInfo.hasSignal && !arrivalInfo.hasSignal) {
-                    return
+                    let departureNotes = parseSpreadsheetNotes((row || [])[6] || '')
+                    let arrivalNotes = parseSpreadsheetNotes((row || [])[7] || '')
+                    const stayoverNotes = parseSpreadsheetNotes((row || [])[8] || '')
+
+                    const departureTime = departureInfo.hasSignal ? departureInfo.time : undefined
+                    const arrivalTime = arrivalInfo.hasSignal ? arrivalInfo.time : undefined
+
+                    const stayoverMode = !departureTime && !arrivalTime && stayoverInfo.hasSignal
+                    if (!departureTime && !arrivalTime && !stayoverMode && !departureInfo.hasSignal && !arrivalInfo.hasSignal) {
+                        return
+                    }
+
+                    if (stayoverMode) {
+                        const mergedStayoverNotes = stayoverNotes.length > 0
+                            ? stayoverNotes
+                            : departureNotes.length > 0
+                                ? departureNotes
+                                : arrivalNotes
+                        departureNotes = mergedStayoverNotes
+                        arrivalNotes = []
+                    }
+
+                    const stayoverUntil = stayoverMode
+                        ? parseSpreadsheetDateIso((row || [])[5] || '', Number(String(dateIso).slice(0, 4)) || referenceDate.getFullYear()) || undefined
+                        : undefined
+
+                    const parsedRow = {
+                        dateIso,
+                        roomNumber: roomToken,
+                        departureTime,
+                        arrivalTime,
+                        departureGuestCount: departureInfo.guestCount,
+                        arrivalGuestCount: arrivalInfo.guestCount,
+                        departureGuestName: departureInfo.guestName,
+                        arrivalGuestName: arrivalInfo.guestName,
+                        stayoverGuestName: stayoverMode ? stayoverInfo.guestName : undefined,
+                        stayoverGuestCount: stayoverMode ? stayoverInfo.guestCount : undefined,
+                        stayoverUntil,
+                        departureNotes,
+                        arrivalNotes,
+                        isStayover: !departureTime && !arrivalTime,
+                        warnings: []
+                    }
+
+                    if (parsedRow.departureTime && !parsedRow.departureGuestName && typeof parsedRow.departureGuestCount !== 'number') {
+                        parsedRow.warnings.push('Odjezd má čas, ale chybí jméno hosta.')
+                    }
+                    if (parsedRow.arrivalTime && !parsedRow.arrivalGuestName && typeof parsedRow.arrivalGuestCount !== 'number') {
+                        parsedRow.warnings.push('Příjezd má čas, ale chybí jméno hosta.')
+                    }
+
+                    rows.push(parsedRow)
+                })
+
+                if (sheet.complete || rows.some((row) => row.dateIso === dateIso)) {
+                    completeDates.add(dateIso)
                 }
-
-                if (stayoverMode) {
-                    const mergedStayoverNotes = stayoverNotes.length > 0
-                        ? stayoverNotes
-                        : departureNotes.length > 0
-                            ? departureNotes
-                            : arrivalNotes
-                    departureNotes = mergedStayoverNotes
-                    arrivalNotes = []
-                }
-
-                const stayoverUntil = stayoverMode
-                    ? parseSpreadsheetDateIso((row || [])[5] || '', Number(String(dateIso).slice(0, 4)) || referenceDate.getFullYear()) || undefined
-                    : undefined
-
-                const parsedRow = {
-                    dateIso,
-                    roomNumber: roomToken,
-                    departureTime,
-                    arrivalTime,
-                    departureGuestCount: departureInfo.guestCount,
-                    arrivalGuestCount: arrivalInfo.guestCount,
-                    departureGuestName: departureInfo.guestName,
-                    arrivalGuestName: arrivalInfo.guestName,
-                    stayoverGuestName: stayoverMode ? stayoverInfo.guestName : undefined,
-                    stayoverGuestCount: stayoverMode ? stayoverInfo.guestCount : undefined,
-                    stayoverUntil,
-                    departureNotes,
-                    arrivalNotes,
-                    isStayover: !departureTime && !arrivalTime,
-                    warnings: []
-                }
-
-                if (parsedRow.departureTime && !parsedRow.departureGuestName && typeof parsedRow.departureGuestCount !== 'number') {
-                    parsedRow.warnings.push('Odjezd má čas, ale chybí jméno hosta.')
-                }
-                if (parsedRow.arrivalTime && !parsedRow.arrivalGuestName && typeof parsedRow.arrivalGuestCount !== 'number') {
-                    parsedRow.warnings.push('Příjezd má čas, ale chybí jméno hosta.')
-                }
-
-                rows.push(parsedRow)
             })
-
-            if (sheet.complete || rows.some((row) => row.dateIso === dateIso)) {
-                completeDates.add(dateIso)
-            }
-        })
 
     const sortedRows = rows.sort((a, b) => {
         const byDate = String(a.dateIso || '').localeCompare(String(b.dateIso || ''))
