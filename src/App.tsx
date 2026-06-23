@@ -427,13 +427,23 @@ function getImportJobPreviewDiagnostics(summary: ImportJob['previewSummary']) {
     const summaryRecord = asRecord(summary)
     if (!summaryRecord) return null
 
-    const parserBuildId = typeof summaryRecord.parserBuildId === 'string' ? summaryRecord.parserBuildId : ''
-    const parserFileVersion = typeof summaryRecord.parserFileVersion === 'string' ? summaryRecord.parserFileVersion : ''
+    const nestedDiagnostics = asRecord(summaryRecord.diagnostics)
+    const nestedPrimary = asRecord(nestedDiagnostics?.primary)
+
+    const parserBuildId = typeof summaryRecord.parserBuildId === 'string'
+        ? summaryRecord.parserBuildId
+        : (typeof nestedDiagnostics?.parserBuildId === 'string' ? nestedDiagnostics.parserBuildId : '')
+    const parserFileVersion = typeof summaryRecord.parserFileVersion === 'string'
+        ? summaryRecord.parserFileVersion
+        : (typeof nestedDiagnostics?.parserFileVersion === 'string' ? nestedDiagnostics.parserFileVersion : '')
     const previewGeneratedAt = typeof summaryRecord.previewGeneratedAt === 'string' ? summaryRecord.previewGeneratedAt : ''
     const previewGeneratedBy = typeof summaryRecord.previewGeneratedBy === 'string' ? summaryRecord.previewGeneratedBy : ''
-    const sourceStoragePath = typeof summaryRecord.sourceStoragePath === 'string' ? summaryRecord.sourceStoragePath : ''
+    const sourceStoragePath = typeof summaryRecord.sourceStoragePath === 'string'
+        ? summaryRecord.sourceStoragePath
+        : (typeof nestedPrimary?.storagePath === 'string' ? nestedPrimary.storagePath : '')
     const previewRequestId = typeof summaryRecord.previewRequestId === 'string' ? summaryRecord.previewRequestId : ''
     const previewFreshGenerated = summaryRecord.previewFreshGenerated === true
+        || nestedDiagnostics?.previewFreshGenerated === true
 
     const debugProbeRowsRaw = asRecord(summaryRecord.debugProbeRows)
     const debugProbeRows: Record<string, {
@@ -2935,6 +2945,27 @@ export default function App() {
             }
 
             const confirmedAt = new Date().toISOString()
+            const operationalMergePatch = sanitizeForFirestore({
+                status: 'applied',
+                touchedRoomCount: mergeSummary.touchedRoomCount,
+                statusPreservedCount: mergeSummary.statusPreservedCount,
+                assignmentPreservedCount: mergeSummary.assignmentPreservedCount,
+                estimatePreservedCount: mergeSummary.estimatePreservedCount,
+                problemPreservedCount: mergeSummary.problemPreservedCount,
+                carryOverPreservedCount: mergeSummary.carryOverPreservedCount,
+                inconsistencyWarningCount: mergeSummary.inconsistencyWarningCount,
+                inconsistencyRooms: mergeSummary.inconsistencyRooms,
+                appliedAt: confirmedAt
+            })
+            const previewSummaryPatch = job.previewSummary
+                ? sanitizeForFirestore({
+                    ...job.previewSummary,
+                    diagnostics: sanitizeForFirestore({
+                        ...(asRecord(job.previewSummary?.diagnostics) || {}),
+                        operationalMerge: operationalMergePatch
+                    })
+                })
+                : undefined
             const automationPatch = isAutoConfirm
                 ? sanitizeForFirestore({
                     ...(job.automation || {}),
@@ -2961,6 +2992,11 @@ export default function App() {
                 confirmedBy,
                 error: undefined,
                 warnings: Array.from(new Set([...(job.warnings || []), ...mergeFeedback.importWarnings])),
+                confirmationDiagnostics: sanitizeForFirestore({
+                    ...(asRecord(job.confirmationDiagnostics) || {}),
+                    operationalMerge: operationalMergePatch
+                }),
+                ...(previewSummaryPatch ? { previewSummary: previewSummaryPatch } : {}),
                 ...(automationPatch ? { automation: automationPatch } : {})
             })
             setImportJobs((prev) => sortImportJobs(prev.map((item) => (
@@ -2972,6 +3008,21 @@ export default function App() {
                         confirmedBy,
                         error: undefined,
                         warnings: Array.from(new Set([...(item.warnings || []), ...mergeFeedback.importWarnings])),
+                        confirmationDiagnostics: sanitizeForFirestore({
+                            ...(asRecord(item.confirmationDiagnostics) || {}),
+                            operationalMerge: operationalMergePatch
+                        }),
+                        ...(item.previewSummary
+                            ? {
+                                previewSummary: sanitizeForFirestore({
+                                    ...item.previewSummary,
+                                    diagnostics: sanitizeForFirestore({
+                                        ...(asRecord(item.previewSummary?.diagnostics) || {}),
+                                        operationalMerge: operationalMergePatch
+                                    })
+                                })
+                            }
+                            : {}),
                         ...(automationPatch ? { automation: automationPatch } : {})
                     }
                     : item

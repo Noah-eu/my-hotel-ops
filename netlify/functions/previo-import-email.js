@@ -2,21 +2,16 @@ const { cert, getApps, initializeApp } = require('firebase-admin/app')
 const { getFirestore } = require('firebase-admin/firestore')
 const { getStorage } = require('firebase-admin/storage')
 const {
-    PREVIO_STAV_PARSER_VERSION,
-    extractStateDataFromXlsxBuffer,
-    extractStateTextFromPdfBuffer,
-    parsePrevioStateXlsxData,
-    parsePrevioStatePdfText,
-    buildPrevioStateImportPreview,
-    evaluatePrevioStateImportSafety,
-    detectMissingDatesInRange,
-    buildByDateFromPreview
+    PREVIO_STAV_PARSER_VERSION
 } = require('./lib/previo-state-preview')
 const {
-    overlayArrivalTimesFromPdf,
-    annotatePreviewWithArrivalOverlay,
-    annotateByDateWithArrivalOverlay
-} = require('./lib/previo-arrival-overlay')
+    resolveImportKind,
+    parseImportSources,
+    resolveParserBuildId,
+    createPreviewRequestId,
+    computeBufferSha256,
+    buildImportPreviewArtifacts
+} = require('./lib/previo-import-processing')
 const { sanitizeForFirestore, runSanitizerSelfCheck } = require('./lib/firestore-sanitize')
 
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024
@@ -96,22 +91,6 @@ function looksLikeSpreadsheet(fileName, contentType) {
         || lowerName.endsWith('.xls')
 }
 
-function resolveImportKind(fileName, contentType) {
-    const lowerName = (fileName || '').toLowerCase()
-    const lowerContentType = (contentType || '').toLowerCase()
-
-    if (lowerContentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || lowerName.endsWith('.xlsx')) {
-        return 'xlsx'
-    }
-    if (lowerContentType === 'application/vnd.ms-excel' || lowerName.endsWith('.xls')) {
-        return 'xls'
-    }
-    if (looksLikePdf(fileName, contentType)) {
-        return 'pdf'
-    }
-    return null
-}
-
 function normalizeBase64(base64Value) {
     const raw = (base64Value || '').trim()
     if (!raw) return ''
@@ -177,21 +156,10 @@ function getSourceFileLabel(importKind) {
     return 'PDF Stav'
 }
 
-async function parseImportBuffer({ buffer, fileName, contentType, referenceDate }) {
-    const importKind = resolveImportKind(fileName, contentType)
-    if (importKind === 'xlsx' || importKind === 'xls') {
-        const extracted = extractStateDataFromXlsxBuffer(buffer)
-        return parsePrevioStateXlsxData(extracted, referenceDate)
-    }
-
-    const extracted = await extractStateTextFromPdfBuffer(buffer)
-    return parsePrevioStatePdfText(extracted, referenceDate)
-}
-
 function resolvePrimaryAttachmentPayload(payload) {
     const fileName = String(payload?.fileName || '').trim() || 'previo-stav.pdf'
     const contentType = normalizeContentType(payload?.contentType, fileName)
-    const importKind = resolveImportKind(fileName, contentType)
+    const importKind = resolveImportKind(fileName, contentType, fileName)
     const decodedFile = decodeImportBase64(payload?.fileBase64 || payload?.pdfBase64)
 
     return {
@@ -208,7 +176,7 @@ function resolveOverlayAttachmentPayload(payload) {
 
     const fileName = String(payload?.overlayFileName || '').trim() || 'previo-stav-overlay.pdf'
     const contentType = normalizeContentType(payload?.overlayContentType, fileName)
-    const importKind = resolveImportKind(fileName, contentType)
+    const importKind = resolveImportKind(fileName, contentType, fileName)
     const decodedFile = decodeImportBase64(overlayBase64)
 
     return {
@@ -217,51 +185,6 @@ function resolveOverlayAttachmentPayload(payload) {
         importKind,
         decodedFile
     }
-}
-
-async function parseHybridImportBuffers({ primary, overlay, referenceDate }) {
-    const parsedPrimary = await parseImportBuffer({
-        buffer: primary.buffer,
-        fileName: primary.fileName,
-        contentType: primary.contentType,
-        referenceDate
-    })
-
-    if (!overlay || !overlay.buffer || overlay.importKind !== 'pdf') {
-        return {
-            parsed: parsedPrimary,
-            arrivalOverlay: {
-                enabled: false,
-                mode: 'none',
-                primaryKind: primary.importKind,
-                overlayKind: overlay?.importKind || null,
-                consideredRows: 0,
-                matchedRows: 0,
-                appliedRows: 0,
-                skippedBySpecificity: 0,
-                skippedByIdentityMismatch: 0,
-                skippedByAmbiguousMatch: 0,
-                skippedWithoutMainTime: 0,
-                applied: [],
-                auditCheckedRows: 0,
-                auditMismatches: 0,
-                audit: []
-            }
-        }
-    }
-
-    const parsedOverlay = await parseImportBuffer({
-        buffer: overlay.buffer,
-        fileName: overlay.fileName,
-        contentType: overlay.contentType,
-        referenceDate
-    })
-
-    return overlayArrivalTimesFromPdf({
-        primaryParsed: parsedPrimary,
-        overlayParsed: parsedOverlay,
-        primaryKind: primary.importKind
-    })
 }
 
 function serializeError(error, fallbackMessage) {
@@ -287,16 +210,6 @@ function resolveAutoConfirmMode() {
     if (enabled) return 'enabled'
     if (dryRun) return 'dry-run'
     return 'off'
-}
-
-function formatDateLabel(dateIso) {
-    const date = new Date(`${dateIso}T00:00:00`)
-    if (Number.isNaN(date.getTime())) return dateIso
-    return date.toLocaleDateString('cs-CZ', {
-        day: 'numeric',
-        month: 'numeric',
-        year: 'numeric'
-    })
 }
 
 function buildAutoConfirmSummary({ mode, nextStatus, byDate, parsedTabDates, safety }) {
@@ -410,6 +323,7 @@ exports.handler = async (event) => {
     }
 
     const hotelId = process.env.PREVIO_IMPORT_HOTEL_ID || 'chill-apartments'
+    const importerMode = String(payload?.importerMode || (payload?.source === 'email' ? 'gmail-apps-script' : '') || '').trim() || null
 
     try {
         const { db, bucket, bucketName } = getFirebaseContext()
@@ -427,6 +341,10 @@ exports.handler = async (event) => {
         const overlayStoragePath = overlayPayload
             ? buildStoragePath(hotelId, jobRef.id, overlayPayload.importKind, 'overlay')
             : null
+        const parserBuildId = resolveParserBuildId()
+        const previewGeneratedBy = 'previo-import-email'
+        const previewGeneratedAt = new Date().toISOString()
+        const previewRequestId = createPreviewRequestId('email-ingest')
         const autoConfirmMode = resolveAutoConfirmMode()
         const autoConfirmDryRun = autoConfirmMode !== 'enabled'
 
@@ -488,7 +406,19 @@ exports.handler = async (event) => {
             storagePath,
             overlayStoragePath,
             previewSummary: null,
-            parserVersion: 'email-ingest-v5',
+            parserVersion: PREVIO_STAV_PARSER_VERSION,
+            confirmationDiagnostics: {
+                operationalMerge: {
+                    status: 'pending',
+                    touchedRoomCount: 0,
+                    statusPreservedCount: 0,
+                    assignmentPreservedCount: 0,
+                    estimatePreservedCount: 0,
+                    problemPreservedCount: 0,
+                    carryOverPreservedCount: 0,
+                    inconsistencyWarningCount: 0
+                }
+            },
             automation: {
                 autoPreview: {
                     status: 'pending',
@@ -508,11 +438,12 @@ exports.handler = async (event) => {
         }, 'importJob.initialPatch'))
 
         try {
-            const parseResult = await parseHybridImportBuffers({
+            const parseResult = await parseImportSources({
                 primary: {
                     buffer: primaryBuffer,
                     fileName: primaryPayload.fileName,
                     contentType: primaryPayload.contentType,
+                    storagePath,
                     importKind: primaryPayload.importKind
                 },
                 overlay: overlayPayload
@@ -520,6 +451,7 @@ exports.handler = async (event) => {
                         buffer: overlayBuffer,
                         fileName: overlayPayload.fileName,
                         contentType: overlayPayload.contentType,
+                        storagePath: overlayStoragePath,
                         importKind: overlayPayload.importKind
                     }
                     : null,
@@ -534,37 +466,44 @@ exports.handler = async (event) => {
                 .map((room) => ({ roomNumber: String(room.roomNumber || '').trim() }))
                 .filter((room) => room.roomNumber)
 
-            let preview = buildPrevioStateImportPreview(parsed, roomCatalog, new Date())
-            const missingDateIsos = detectMissingDatesInRange(preview.days.map((day) => day.dateIso))
-            const missingDateLabels = missingDateIsos.map((dateIso) => formatDateLabel(dateIso))
-            if ((arrivalOverlay?.appliedRows || 0) > 0) {
-                preview = annotatePreviewWithArrivalOverlay(preview, arrivalOverlay.applied)
-            }
-            let byDate = buildByDateFromPreview(preview, roomCatalog)
-            if ((arrivalOverlay?.appliedRows || 0) > 0) {
-                byDate = annotateByDateWithArrivalOverlay(byDate, arrivalOverlay.applied)
-            }
-            const safety = evaluatePrevioStateImportSafety({
-                preview,
-                missingDateLabels,
+            const previewArtifacts = buildImportPreviewArtifacts({
+                parsed,
+                arrivalOverlay,
+                roomCatalog,
+                referenceDate: new Date(),
+                importedAt: previewGeneratedAt,
                 parserVersion: PREVIO_STAV_PARSER_VERSION,
-                checkedAt: new Date()
+                parserBuildId,
+                parserFileVersion: PREVIO_STAV_PARSER_VERSION,
+                previewGeneratedAt,
+                previewGeneratedBy,
+                previewRequestId,
+                previewFreshGenerated: true,
+                processingPath: 'email-ingest',
+                source: String(payload?.source || 'email'),
+                importerMode,
+                primary: {
+                    fileName: primaryPayload.fileName,
+                    contentType: primaryPayload.contentType,
+                    storagePath,
+                    importKind: primaryPayload.importKind,
+                    sizeBytes,
+                    sha256: computeBufferSha256(primaryBuffer)
+                },
+                overlay: overlayPayload
+                    ? {
+                        fileName: overlayPayload.fileName,
+                        contentType: overlayPayload.contentType,
+                        storagePath: overlayStoragePath,
+                        importKind: overlayPayload.importKind,
+                        sizeBytes: overlaySizeBytes,
+                        sha256: computeBufferSha256(overlayBuffer)
+                    }
+                    : null
             })
-
-            const previewWarnings = [...preview.warnings, ...safety.warnings, ...safety.blocks]
-            if (missingDateLabels.length > 0) {
-                previewWarnings.push(`V nahledu chybi dny uprostred rozsahu: ${missingDateLabels.join(', ')}`)
-            }
-            if ((arrivalOverlay?.auditMismatches || 0) > 0) {
-                previewWarnings.push(`Parovy PDF overlay: ${arrivalOverlay.auditMismatches} radku ma hlavni PDF cas odlisny od finalniho casu.`)
-            }
-
-            const nextStatus = preview.confidenceLow
-                || missingDateLabels.length > 0
-                || safety.blocked
-                || (arrivalOverlay?.auditMismatches || 0) > 0
-                ? 'parsed'
-                : 'needs_review'
+            const byDate = previewArtifacts.byDate
+            const nextStatus = previewArtifacts.nextStatus
+            const safety = previewArtifacts.safety
 
             const autoConfirmSummary = buildAutoConfirmSummary({
                 mode: autoConfirmMode,
@@ -576,21 +515,13 @@ exports.handler = async (event) => {
 
             const parsedPatch = sanitizePatchForWrite({
                 status: nextStatus,
-                parsedAt: new Date().toISOString(),
-                detectedDaysCount: preview.days.length,
-                turnoverCount: preview.turnoverCount,
-                stayoverCount: preview.stayoverCount,
-                freeCount: preview.derivedFreeCount,
-                warnings: previewWarnings,
-                previewSummary: {
-                    parsedTabDates: preview.parsedTabDates,
-                    byDate,
-                    missingDateLabels,
-                    arrivalOverlay,
-                    parserVersion: PREVIO_STAV_PARSER_VERSION,
-                    safety,
-                    preview
-                },
+                parsedAt: previewGeneratedAt,
+                detectedDaysCount: previewArtifacts.preview.days.length,
+                turnoverCount: previewArtifacts.preview.turnoverCount,
+                stayoverCount: previewArtifacts.preview.stayoverCount,
+                freeCount: previewArtifacts.preview.derivedFreeCount,
+                warnings: previewArtifacts.previewWarnings,
+                previewSummary: previewArtifacts.previewSummary,
                 parserVersion: PREVIO_STAV_PARSER_VERSION,
                 error: null,
                 automation: {
@@ -611,6 +542,20 @@ exports.handler = async (event) => {
                 status: nextStatus,
                 sizeBytes,
                 autoPreview: 'done',
+                diagnostics: {
+                    parserBuildId,
+                    parserFileVersion: PREVIO_STAV_PARSER_VERSION,
+                    previewGeneratedAt,
+                    previewGeneratedBy,
+                    previewRequestId,
+                    sourceStoragePath: storagePath,
+                    overlayStoragePath: overlayStoragePath || null,
+                    arrivalOverlay,
+                    arrivalOverlayMismatchRows: previewArtifacts.arrivalOverlayMismatchRows,
+                    freshGenerated: true,
+                    processingPath: 'email-ingest',
+                    importerMode
+                },
                 autoConfirmMode,
                 autoConfirmDryRun,
                 autoConfirmWouldConfirm: autoConfirmSummary.wouldConfirm,

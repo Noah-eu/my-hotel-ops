@@ -1,0 +1,17 @@
+# 06 - Known Invariants
+
+## Source Invariants
+- XLS/XLSX should be treated as authoritative primary state source.
+- PDF is overlay-only (arrival-time enrichment), not authoritative baseline.
+
+## Identity Invariants
+- Merge and preservation must resolve rooms by stable date + room identity.
+- Room number normalization is required where number formatting differs.
+
+## Processing Invariants
+- Fresh ingest and regeneration must share the same parser + preview artifact builder.
+- Provenance metadata must expose endpoint/path/build/input markers.
+
+## Safety Invariants
+- `needs_review` only when preview passes safety checks and no blocking mismatch exists.
+- Blocked/suspicious previews must not auto-confirm.

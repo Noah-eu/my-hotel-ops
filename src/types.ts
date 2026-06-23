@@ -179,6 +179,70 @@ export interface ImportJobBackupSummary {
     rolledBackBy?: string
 }
 
+export interface ImportJobOperationalMergeSummary {
+    status: 'pending' | 'applied' | 'failed'
+    touchedRoomCount: number
+    statusPreservedCount: number
+    assignmentPreservedCount: number
+    estimatePreservedCount: number
+    problemPreservedCount: number
+    carryOverPreservedCount: number
+    inconsistencyWarningCount: number
+    inconsistencyRooms?: string[]
+    appliedAt?: string
+}
+
+export interface ImportJobConfirmationDiagnostics {
+    operationalMerge?: ImportJobOperationalMergeSummary
+}
+
+export interface ImportJobOverlayMismatchRow {
+    dateIso: string
+    roomNumber: string
+    pdfMainTime?: string | null
+    xlsTime?: string | null
+    finalTime?: string | null
+    alfredWindow?: string | null
+    reason?: string
+}
+
+export interface ImportJobSourceFileDiagnostics {
+    fileName?: string | null
+    contentType?: string | null
+    storagePath?: string | null
+    importKind?: 'pdf' | 'xls' | 'xlsx' | null
+    sizeBytes?: number | null
+    sha256?: string | null
+    attached?: boolean
+}
+
+export interface ImportJobArrivalOverlayDiagnostics {
+    enabled?: boolean
+    mode?: string
+    consideredRows?: number
+    matchedRows?: number
+    appliedRows?: number
+    auditCheckedRows?: number
+    auditMismatches?: number
+    mismatchRows?: ImportJobOverlayMismatchRow[]
+}
+
+export interface ImportJobPreviewDiagnostics {
+    processingPath?: string
+    endpoint?: string
+    source?: string
+    importerMode?: string | null
+    parserVersion?: string
+    parserBuildId?: string
+    parserFileVersion?: string
+    deployMarker?: string
+    previewFreshGenerated?: boolean
+    primary?: ImportJobSourceFileDiagnostics
+    overlay?: ImportJobSourceFileDiagnostics
+    arrivalOverlay?: ImportJobArrivalOverlayDiagnostics
+    operationalMerge?: ImportJobOperationalMergeSummary
+}
+
 export interface ImportJobPreviewSummary {
     parsedTabDates?: Partial<Record<'Dnes' | 'Zitra' | 'Pozitri', string>>
     byDate?: Record<string, RoomPlan[]>
@@ -191,6 +255,9 @@ export interface ImportJobPreviewSummary {
     previewRequestId?: string
     previewFreshGenerated?: boolean
     sourceStoragePath?: string
+    overlayStoragePath?: string
+    arrivalOverlay?: Record<string, unknown>
+    arrivalOverlayMismatchRows?: ImportJobOverlayMismatchRow[]
     debugProbeRows?: Record<string, {
         departureTime?: string
         arrivalTime?: string
@@ -202,6 +269,7 @@ export interface ImportJobPreviewSummary {
         arrivalNotes?: string[]
     } | null>
     safety?: ImportJobSafetySummary
+    diagnostics?: ImportJobPreviewDiagnostics
     preview?: {
         days: Array<{
             dateIso: string
@@ -266,6 +334,7 @@ export interface ImportJob {
     storagePath?: string
     previewSummary?: ImportJobPreviewSummary
     parserVersion?: string
+    confirmationDiagnostics?: ImportJobConfirmationDiagnostics
     backupSummary?: ImportJobBackupSummary
     backupPayload?: ImportJobBackupPayload
     automation?: ImportJobAutomationSummary
