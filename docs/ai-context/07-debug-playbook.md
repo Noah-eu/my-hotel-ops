@@ -10,6 +10,7 @@
 4. Confirm operational merge diagnostics after confirmation.
 
 ## Required Validators
+- `npm run validate:previo-import-email-runtime`
 - `npm run validate:previo-import-determinism`
 - `npm run validate:previo-import-real-flow`
 - `npm run validate:previo-import-preview-runtime`

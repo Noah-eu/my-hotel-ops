@@ -76,6 +76,17 @@ function getFirebaseContext() {
     }
 }
 
+const testOverrides = {
+    getFirebaseContext: null
+}
+
+function resolveFirebaseContext() {
+    if (typeof testOverrides.getFirebaseContext === 'function') {
+        return testOverrides.getFirebaseContext()
+    }
+    return getFirebaseContext()
+}
+
 function looksLikePdf(fileName, contentType) {
     const lowerName = (fileName || '').toLowerCase()
     const lowerContentType = (contentType || '').toLowerCase()
@@ -326,7 +337,7 @@ exports.handler = async (event) => {
     const importerMode = String(payload?.importerMode || (payload?.source === 'email' ? 'gmail-apps-script' : '') || '').trim() || null
 
     try {
-        const { db, bucket, bucketName } = getFirebaseContext()
+        const { db, bucket, bucketName } = resolveFirebaseContext()
         if (!bucket || !bucketName) {
             return json(500, { error: 'Import storage not configured' })
         }
@@ -509,7 +520,7 @@ exports.handler = async (event) => {
                 mode: autoConfirmMode,
                 nextStatus,
                 byDate,
-                parsedTabDates: preview.parsedTabDates,
+                parsedTabDates: previewArtifacts.preview.parsedTabDates,
                 safety
             })
 
@@ -601,5 +612,14 @@ exports.handler = async (event) => {
         return json(500, {
             error: serializeError(error, 'Failed to create import job.')
         })
+    }
+}
+
+exports._test = {
+    setFirebaseContextProvider(provider) {
+        testOverrides.getFirebaseContext = provider
+    },
+    clearFirebaseContextProvider() {
+        testOverrides.getFirebaseContext = null
     }
 }
