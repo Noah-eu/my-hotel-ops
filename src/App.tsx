@@ -1108,13 +1108,15 @@ export default function App() {
             .sort((a, b) => Number(a) - Number(b))
     ), [activeRooms])
 
+    // Security boundary: in online mode trust only authenticated profile role (not switchable UI state).
     const currentUser = runtimeMode === 'online'
-        ? (staff.find((u) => u.id === userId) || onlineProfile || null)
+        ? (onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
-    const currentRole = (currentUser?.role || 'cleaner') as UserRole
+    const realUserRole = (currentUser?.role || 'cleaner') as UserRole
     const isAvailabilityOff = currentUser?.availability === 'dnes_nepracuji'
     const urgentOnlyAvailability = currentUser?.availability === 'jen_urgentni'
-    const isAdminUser = isAdminRole(currentUser?.role)
+    const isRealAdminUser = isAdminRole(realUserRole)
+    const isAdminUser = isRealAdminUser
     const PREVIEW_ROLE_KEY = 'chill_ops_preview_role_v1'
 
     const allowedPreviewRoles: Array<'real' | UserRole> = ['real', 'admin', 'lead', 'cleaner', 'maintenance']
@@ -1131,20 +1133,20 @@ export default function App() {
         }
     })
 
-    // effectiveRole: when admin and preview is active, use previewRole; otherwise use actual
+    // UI-only role preview: can only affect presentation for real admins.
     const effectiveRole = useMemo(() => {
-        if (isAdminUser && previewRole && previewRole !== 'real') return previewRole as UserRole
-        return currentRole
-    }, [isAdminUser, previewRole, currentRole])
+        if (isRealAdminUser && previewRole && previewRole !== 'real') return previewRole as UserRole
+        return realUserRole
+    }, [isRealAdminUser, previewRole, realUserRole])
 
     useEffect(() => {
-        if (!isAdminUser && previewRole !== 'real') {
+        if (!isRealAdminUser && previewRole !== 'real') {
             setPreviewRole('real')
             try { window.localStorage.removeItem(PREVIEW_ROLE_KEY) } catch (e) { }
         }
-    }, [isAdminUser])
-    const enableDangerousReset = isAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
-    const showInstallHint = isAdminUser && !isStandalone && !installHintDismissed
+    }, [isRealAdminUser])
+    const enableDangerousReset = isRealAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
+    const showInstallHint = isRealAdminUser && !isStandalone && !installHintDismissed
 
     const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
     const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
@@ -1318,8 +1320,8 @@ export default function App() {
     }, [currentImportJobs, pendingImportJobs])
 
     const visibleTodayTasks = useMemo(
-        () => tasks.filter((task) => canViewTask(currentRole, task)),
-        [tasks, currentRole]
+        () => tasks.filter((task) => canViewTask(effectiveRole, task)),
+        [tasks, effectiveRole]
     )
 
     const todayDateIso = formatLocalDateIso(new Date())
@@ -1490,7 +1492,7 @@ export default function App() {
     const relevantSoundAlerts = useMemo(() => {
         const alerts: Array<{ key: string; priority: 'normal' | 'urgent' }> = []
 
-        if (isAdminRole(currentRole) || isCleaningStaffRole(currentRole)) {
+        if (isAdminRole(effectiveRole) || isCleaningStaffRole(effectiveRole)) {
             unacknowledgedLateTodayTasks.forEach((task) => {
                 alerts.push({
                     key: `late:${task.id}`,
@@ -1499,7 +1501,7 @@ export default function App() {
             })
         }
 
-        if (isMaintenanceRole(currentRole) || isAdminRole(currentRole)) {
+        if (isMaintenanceRole(effectiveRole) || isAdminRole(effectiveRole)) {
             orderedMaintenanceAttentionTargets.forEach((target) => {
                 alerts.push({
                     key: `maintenance:${target.kind}:${target.id}`,
@@ -1509,7 +1511,7 @@ export default function App() {
         }
 
         return alerts
-    }, [currentRole, unacknowledgedLateTodayTasks, orderedMaintenanceAttentionTargets])
+    }, [effectiveRole, unacknowledgedLateTodayTasks, orderedMaintenanceAttentionTargets])
 
     useEffect(() => {
         if (orderedLateRoomNumbers.length === 0) {
@@ -1649,7 +1651,7 @@ export default function App() {
     }, [soundEnabled, relevantSoundAlerts, isAvailabilityOff, urgentOnlyAvailability])
 
     const visibleSupplies = useMemo(() => {
-        const role = (currentUser?.role || 'cleaner') as UserRole
+        const role = effectiveRole
         // Always hide cancelled requests from visible lists
         if (isAdminRole(role)) return supplyRequests.filter((s) => s.status !== 'cancelled')
         if (isCleaningStaffRole(role)) {
@@ -1659,7 +1661,7 @@ export default function App() {
             return supplyRequests.filter((s) => s.status !== 'cancelled' && (s.category === 'maintenance' || s.requestedByRole === 'maintenance'))
         }
         return supplyRequests.filter((s) => s.status !== 'cancelled')
-    }, [supplyRequests, currentUser?.role])
+    }, [supplyRequests, effectiveRole])
 
     async function loadOnlineProfile(user: User): Promise<OnlineStaffProfile | null> {
         if (!firestoreDb) return null
@@ -1782,6 +1784,14 @@ export default function App() {
     }
 
     async function handlePrevioPdfSelected(file: File | null) {
+        if (!isRealAdminUser) {
+            setImportPdfStatus('error')
+            setImportPdfError('Ruční import je povolen jen adminovi.')
+            setImportPreview(null)
+            setImportRawText('')
+            setImportParseResult(null)
+            return
+        }
         if (!file) return
         const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
         if (!isPdf) {
@@ -1817,6 +1827,14 @@ export default function App() {
     }
 
     async function handlePrevioStateImportSelected(file: File | null) {
+        if (!isRealAdminUser) {
+            setStateImportPdfStatus('error')
+            setStateImportPdfError('Import Stav je povolen jen adminovi.')
+            setStateImportPreview(null)
+            setStateImportRawText('')
+            setStateImportParseResult(null)
+            return
+        }
         if (!file) return
         const lowerName = file.name.toLowerCase()
         const isPdf = file.type === 'application/pdf' || lowerName.endsWith('.pdf')
@@ -1915,6 +1933,14 @@ export default function App() {
     }
 
     async function handleGenerateImportJobPreview(jobId: string) {
+        if (!isRealAdminUser) {
+            const message = 'Generování náhledu je povoleno jen adminovi.'
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: message
+            }))
+            return
+        }
         const job = importJobs.find((item) => item.id === jobId)
         if (!job || !job.storagePath) return
 
@@ -2586,6 +2612,10 @@ export default function App() {
     }
 
     async function handleConfirmPrevioImport() {
+        if (!isRealAdminUser) {
+            setImportPdfError('Potvrzení importu je povoleno jen adminovi.')
+            return
+        }
         if (!importPreview) return
         const merged = buildMergedPlansFromImport(importPreview)
         setImportedTabDates(importPreview.parsedTabDates)
@@ -2615,6 +2645,10 @@ export default function App() {
     }
 
     async function handleConfirmPrevioStateImport() {
+        if (!isRealAdminUser) {
+            setStateImportPdfError('Potvrzení importu Stav je povoleno jen adminovi.')
+            return
+        }
         if (!stateImportPreview) return
 
         const targetJob = activeStateImportJobId
@@ -2710,6 +2744,14 @@ export default function App() {
     }
 
     async function handleConfirmImportJob(jobId: string, options?: { autoConfirmReason?: string }) {
+        if (!isRealAdminUser) {
+            const message = 'Potvrzení importu je povoleno jen adminovi.'
+            setImportJobPreviewInlineErrors((prev) => ({
+                ...prev,
+                [jobId]: message
+            }))
+            return
+        }
         const job = importJobs.find((item) => item.id === jobId)
         const isAutoConfirm = Boolean(options?.autoConfirmReason)
         if (job && supersededPrevioStateJobIds.has(job.id)) {
@@ -2932,6 +2974,7 @@ export default function App() {
     }
 
     function handleCancelImportJob(jobId: string) {
+        if (!isRealAdminUser) return
         activeStore.updateImportJob(jobId, {
             status: 'cancelled',
             error: undefined
@@ -2976,7 +3019,7 @@ export default function App() {
     }
 
     function assertAdminCleanupAllowed() {
-        if (!isAdminUser) {
+        if (!isRealAdminUser) {
             throw new Error('Mazání importů je povoleno jen adminovi.')
         }
     }
