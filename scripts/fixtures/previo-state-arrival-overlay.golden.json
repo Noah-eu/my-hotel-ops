@@ -1,125 +1,223 @@
 {
-  "referenceDate": "2026-06-22T00:00:00",
-  "importedAt": "22.06.2026 19:01",
-  "primaryParsed": {
-    "rows": [
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "201",
-        "departureTime": "10:00",
-        "arrivalTime": "15:00",
-        "departureGuestCount": 2,
-        "arrivalGuestCount": 2,
-        "departureGuestName": "Guest Alpha",
-        "arrivalGuestName": "Guest Beta",
-        "departureNotes": ["Checkout by 10:00"],
-        "arrivalNotes": ["BOX B2", "alfred 13:00 - 17:00"],
-        "isStayover": false,
-        "warnings": []
-      },
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "202",
-        "departureTime": "09:10",
-        "arrivalTime": "16:15",
-        "departureGuestCount": 1,
-        "arrivalGuestCount": 1,
-        "departureGuestName": "Guest Gamma",
-        "arrivalGuestName": "Guest Delta",
-        "departureNotes": [],
-        "arrivalNotes": ["BOX C1"],
-        "isStayover": false,
-        "warnings": []
-      },
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "203",
-        "departureGuestCount": 2,
-        "arrivalGuestCount": 2,
-        "stayoverGuestCount": 2,
-        "stayoverGuestName": "Guest Stayover",
-        "arrivalGuestName": "Guest Stayover",
-        "departureNotes": ["Recepce: BOX S1"],
-        "arrivalNotes": [],
-        "isStayover": true,
-        "warnings": []
-      }
-    ],
-    "warnings": [],
-    "parsedDates": ["2026-06-22"],
-    "rawTextLength": 300,
-    "lineCount": 20,
-    "completeDates": ["2026-06-22"],
-    "amPmEvidence": false,
-    "dayTotals": {
-      "2026-06-22": {
-        "arrivals": 3,
-        "departures": 2,
-        "stayovers": 1
-      }
+    "referenceDate": "2026-06-22T00:00:00",
+    "importedAt": "22.06.2026 19:01",
+    "primaryParsed": {
+        "rows": [
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "201",
+                "departureTime": "10:00",
+                "arrivalTime": "15:00",
+                "departureGuestCount": 2,
+                "arrivalGuestCount": 2,
+                "departureGuestName": "Guest Alpha",
+                "arrivalGuestName": "Guest Beta",
+                "departureNotes": [
+                    "Checkout by 10:00"
+                ],
+                "arrivalNotes": [
+                    "BOX B2",
+                    "alfred 13:00 - 17:00"
+                ],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "202",
+                "departureTime": "09:10",
+                "arrivalTime": "16:15",
+                "departureGuestCount": 1,
+                "arrivalGuestCount": 1,
+                "departureGuestName": "Guest Gamma",
+                "arrivalGuestName": "Guest Delta",
+                "departureNotes": [],
+                "arrivalNotes": [
+                    "BOX C1"
+                ],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "203",
+                "departureTime": "10:20",
+                "arrivalTime": "14:00",
+                "departureGuestCount": 2,
+                "arrivalGuestCount": 2,
+                "departureGuestName": "Guest Stayover",
+                "arrivalGuestName": "Guest Stayover",
+                "departureNotes": [
+                    "Recepce: BOX S1"
+                ],
+                "arrivalNotes": [
+                    "Recepce: BOX S2"
+                ],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "204",
+                "departureTime": "10:45",
+                "arrivalTime": "14:00",
+                "departureGuestCount": 2,
+                "arrivalGuestCount": 3,
+                "departureGuestName": "Guest Epsilon",
+                "arrivalGuestName": "Guest Zeta",
+                "departureNotes": [
+                    "Recepce: BOX D1"
+                ],
+                "arrivalNotes": [
+                    "BOX D3"
+                ],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "205",
+                "departureTime": "09:00",
+                "arrivalTime": "17:00",
+                "departureGuestCount": 1,
+                "arrivalGuestCount": 2,
+                "departureGuestName": "Guest Keep",
+                "arrivalGuestName": "Guest Same",
+                "departureNotes": [
+                    "BOX K1"
+                ],
+                "arrivalNotes": [
+                    "BOX K2"
+                ],
+                "isStayover": false,
+                "warnings": []
+            }
+        ],
+        "warnings": [],
+        "parsedDates": [
+            "2026-06-22"
+        ],
+        "rawTextLength": 300,
+        "lineCount": 20,
+        "completeDates": [
+            "2026-06-22"
+        ],
+        "amPmEvidence": false,
+        "dayTotals": {
+            "2026-06-22": {
+                "arrivals": 3,
+                "departures": 2,
+                "stayovers": 1
+            }
+        }
+    },
+    "overlayParsed": {
+        "rows": [
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "201",
+                "arrivalTime": "14:00",
+                "mainDisplayedArrivalTime": "14:20",
+                "alfredWindow": "14:00 - 15:00",
+                "arrivalGuestCount": 2,
+                "arrivalGuestName": "Guest Beta",
+                "departureNotes": [],
+                "arrivalNotes": [],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "202",
+                "arrivalTime": "16:00",
+                "mainDisplayedArrivalTime": "16:30",
+                "alfredWindow": "16:00 - 17:00",
+                "arrivalGuestCount": 1,
+                "arrivalGuestName": "Guest Delta",
+                "departureNotes": [],
+                "arrivalNotes": [],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "203",
+                "arrivalTime": "14:30",
+                "mainDisplayedArrivalTime": "14:30",
+                "arrivalGuestCount": 2,
+                "arrivalGuestName": "Guest Stayover",
+                "departureNotes": [],
+                "arrivalNotes": [],
+                "isStayover": false,
+                "warnings": []
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "204",
+                "arrivalTime": "14:00",
+                "mainDisplayedArrivalTime": "11:00",
+                "alfredWindow": "14:00 - 15:00",
+                "arrivalGuestCount": 3,
+                "arrivalGuestName": "Guest Zeta",
+                "departureNotes": [],
+                "arrivalNotes": [],
+                "isStayover": false,
+                "warnings": []
+            }
+        ],
+        "warnings": [],
+        "parsedDates": [
+            "2026-06-22"
+        ],
+        "rawTextLength": 120,
+        "lineCount": 8,
+        "completeDates": [
+            "2026-06-22"
+        ],
+        "amPmEvidence": false,
+        "dayTotals": {
+            "2026-06-22": {
+                "arrivals": 3,
+                "departures": 2,
+                "stayovers": 1
+            }
+        }
+    },
+    "expected": {
+        "appliedRows": 4,
+        "auditCheckedRows": 4,
+        "auditMismatches": 0,
+        "changed": [
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "201",
+                "arrivalTime": "14:20"
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "202",
+                "arrivalTime": "16:30"
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "203",
+                "arrivalTime": "14:30"
+            },
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "204",
+                "arrivalTime": "11:00"
+            }
+        ],
+        "unchanged": [
+            {
+                "dateIso": "2026-06-22",
+                "roomNumber": "205"
+            }
+        ],
+        "freeRoom": {
+            "dateIso": "2026-06-22",
+            "roomNumber": "001"
+        }
     }
-  },
-  "overlayParsed": {
-    "rows": [
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "201",
-        "arrivalTime": "14:20",
-        "arrivalGuestCount": 2,
-        "arrivalGuestName": "Guest Beta",
-        "departureNotes": [],
-        "arrivalNotes": [],
-        "isStayover": false,
-        "warnings": []
-      },
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "202",
-        "arrivalTime": "16:00",
-        "arrivalGuestCount": 1,
-        "arrivalGuestName": "Guest Delta",
-        "departureNotes": [],
-        "arrivalNotes": [],
-        "isStayover": false,
-        "warnings": []
-      }
-    ],
-    "warnings": [],
-    "parsedDates": ["2026-06-22"],
-    "rawTextLength": 120,
-    "lineCount": 8,
-    "completeDates": ["2026-06-22"],
-    "amPmEvidence": false,
-    "dayTotals": {
-      "2026-06-22": {
-        "arrivals": 3,
-        "departures": 2,
-        "stayovers": 1
-      }
-    }
-  },
-  "expected": {
-    "appliedRows": 1,
-    "changed": [
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "201",
-        "arrivalTime": "14:20"
-      }
-    ],
-    "unchanged": [
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "202"
-      },
-      {
-        "dateIso": "2026-06-22",
-        "roomNumber": "203"
-      }
-    ],
-    "freeRoom": {
-      "dateIso": "2026-06-22",
-      "roomNumber": "204"
-    }
-  }
 }

@@ -167,7 +167,12 @@ async function parseImportSources({
                 appliedRows: 0,
                 skippedBySpecificity: 0,
                 skippedByIdentityMismatch: 0,
-                applied: []
+                skippedByAmbiguousMatch: 0,
+                skippedWithoutMainTime: 0,
+                applied: [],
+                auditCheckedRows: 0,
+                auditMismatches: 0,
+                audit: []
             },
             primaryKind
         }
@@ -187,7 +192,12 @@ async function parseImportSources({
                 appliedRows: 0,
                 skippedBySpecificity: 0,
                 skippedByIdentityMismatch: 0,
-                applied: []
+                skippedByAmbiguousMatch: 0,
+                skippedWithoutMainTime: 0,
+                applied: [],
+                auditCheckedRows: 0,
+                auditMismatches: 0,
+                audit: []
             },
             primaryKind
         }
@@ -506,8 +516,14 @@ exports.handler = async (event) => {
         if (missingDateLabels.length > 0) {
             previewWarnings.push(`V náhledu chybí dny uprostřed rozsahu: ${missingDateLabels.join(', ')}`)
         }
+        if ((arrivalOverlay?.auditMismatches || 0) > 0) {
+            previewWarnings.push(`Párový PDF overlay: ${arrivalOverlay.auditMismatches} řádků má hlavní PDF čas odlišný od finálního času.`)
+        }
 
-        const nextStatus = preview.confidenceLow || missingDateLabels.length > 0 || safety.blocked
+        const nextStatus = preview.confidenceLow
+            || missingDateLabels.length > 0
+            || safety.blocked
+            || (arrivalOverlay?.auditMismatches || 0) > 0
             ? 'parsed'
             : 'needs_review'
         const autoConfirmMode = resolveAutoConfirmMode()

@@ -240,7 +240,12 @@ async function parseHybridImportBuffers({ primary, overlay, referenceDate }) {
                 appliedRows: 0,
                 skippedBySpecificity: 0,
                 skippedByIdentityMismatch: 0,
-                applied: []
+                skippedByAmbiguousMatch: 0,
+                skippedWithoutMainTime: 0,
+                applied: [],
+                auditCheckedRows: 0,
+                auditMismatches: 0,
+                audit: []
             }
         }
     }
@@ -550,8 +555,14 @@ exports.handler = async (event) => {
             if (missingDateLabels.length > 0) {
                 previewWarnings.push(`V nahledu chybi dny uprostred rozsahu: ${missingDateLabels.join(', ')}`)
             }
+            if ((arrivalOverlay?.auditMismatches || 0) > 0) {
+                previewWarnings.push(`Parovy PDF overlay: ${arrivalOverlay.auditMismatches} radku ma hlavni PDF cas odlisny od finalniho casu.`)
+            }
 
-            const nextStatus = preview.confidenceLow || missingDateLabels.length > 0 || safety.blocked
+            const nextStatus = preview.confidenceLow
+                || missingDateLabels.length > 0
+                || safety.blocked
+                || (arrivalOverlay?.auditMismatches || 0) > 0
                 ? 'parsed'
                 : 'needs_review'
 

@@ -233,14 +233,40 @@ function isCapacityLine(line) {
     return /^\[\s*\d{1,2}\s*\+\s*\d{1,2}\s*\]$/.test(String(line || '').trim())
 }
 
+function matchAlfredWindows(sourceText) {
+    return String(sourceText || '').matchAll(
+        /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\s*\(?alfred\)?/gi
+    )
+}
+
+function extractAlfredWindows(sourceText) {
+    const windows = []
+    for (const match of matchAlfredWindows(sourceText)) {
+        const sharedMeridiem = match[3] || match[6] || ''
+        const startTime = normalizeTimeWithMeridiem(match[1], match[2], match[3] || sharedMeridiem)
+        const endTime = normalizeTimeWithMeridiem(match[4], match[5], match[6] || sharedMeridiem)
+        windows.push({
+            startTime,
+            endTime,
+            raw: String(match[0] || '').replace(/\s+/g, ' ').trim()
+        })
+    }
+    return windows
+}
+
+function formatAlfredWindowLabel(window) {
+    if (!window || !window.startTime || !window.endTime) return undefined
+    return `${window.startTime} - ${window.endTime}`
+}
+
 function isAlfredWindow(line) {
-    return /\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\b/i.test(line) && /alfred/i.test(line)
+    return extractAlfredWindows(line).length > 0
 }
 
 function stripAlfredWindowSegments(line) {
     return String(line || '')
-        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?(?:\s*\(?alfred\)?)?/gi, ' ')
-        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/gi, ' ')
+        .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*(AM|PM)?\s*\(?alfred\)?/gi, ' ')
+    .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:AM|PM)?\s*-\s*([01]?\d|2[0-3])[:.]([0-5]\d)\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim()
 }
@@ -283,6 +309,19 @@ function detectTimedEntries(blockText) {
     }
 
     return entries
+}
+
+function extractMainDisplayedArrivalTime(sideText) {
+    const entries = detectTimedEntries(sideText)
+    if (entries.length === 0) {
+        const times = detectTimes(sideText)
+        return times.length > 0 ? times[times.length - 1] : undefined
+    }
+
+    const withGuestCount = entries.filter((entry) => typeof entry.guestCount === 'number')
+    const candidates = withGuestCount.length > 0 ? withGuestCount : entries
+    const selected = candidates[candidates.length - 1]
+    return selected && selected.time
 }
 
 function chooseTimes(detectedTimes, noteGroupsCount) {
@@ -555,6 +594,12 @@ function mergeMissingFieldsFromTextFallback(primaryRows, fallbackRows) {
 
         if (!row.departureTime && fallback.departureTime && canMergeDepartureSide) row.departureTime = fallback.departureTime
         if (!row.arrivalTime && fallback.arrivalTime && canMergeArrivalSide) row.arrivalTime = fallback.arrivalTime
+        if (!row.mainDisplayedArrivalTime && fallback.mainDisplayedArrivalTime && canMergeArrivalSide) {
+            row.mainDisplayedArrivalTime = fallback.mainDisplayedArrivalTime
+        }
+        if (!row.alfredWindow && fallback.alfredWindow) {
+            row.alfredWindow = fallback.alfredWindow
+        }
 
         if (canMergeDepartureSide && typeof row.departureGuestCount !== 'number' && typeof fallback.departureGuestCount === 'number') {
             row.departureGuestCount = fallback.departureGuestCount
@@ -898,6 +943,10 @@ function extractSideNotes(sideText) {
 }
 
 function extractSideTimeAndCount(sideText, side) {
+    const alfredWindows = side === 'arrival' ? extractAlfredWindows(sideText) : []
+    const mainDisplayedArrivalTime = side === 'arrival'
+        ? extractMainDisplayedArrivalTime(sideText)
+        : undefined
     const entries = detectTimedEntries(sideText)
     const times = detectTimes(sideText)
     const standaloneCounts = extractStandaloneGuestCounts(sideText)
@@ -912,7 +961,9 @@ function extractSideTimeAndCount(sideText, side) {
         return {
             time: undefined,
             guestCount: undefined,
-            hadAmPm: /\b(?:AM|PM)\b/i.test(sideText)
+            hadAmPm: /\b(?:AM|PM)\b/i.test(sideText),
+            mainDisplayedArrivalTime,
+            alfredWindow: formatAlfredWindowLabel(alfredWindows[0])
         }
     }
 
@@ -939,7 +990,9 @@ function extractSideTimeAndCount(sideText, side) {
     return {
         time: selected && selected.time,
         guestCount: inferredCount,
-        hadAmPm: /\b(?:AM|PM)\b/i.test(sideText)
+        hadAmPm: /\b(?:AM|PM)\b/i.test(sideText),
+        mainDisplayedArrivalTime,
+        alfredWindow: formatAlfredWindowLabel(alfredWindows[0])
     }
 }
 
@@ -2006,6 +2059,8 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
 
                 let departureTime = departureInfo.time
                 let arrivalTime = arrivalInfo.time
+                let mainDisplayedArrivalTime = arrivalInfo.mainDisplayedArrivalTime
+                const alfredWindow = arrivalInfo.alfredWindow
                 let departureGuestCount = departureInfo.guestCount
                 let arrivalGuestCount = arrivalInfo.guestCount
                 let stayoverGuestCount = !departureTime && !arrivalTime
@@ -2079,6 +2134,7 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                 }
 
                 if (!departureTime && !arrivalTime) {
+                    mainDisplayedArrivalTime = undefined
                     if (departureNotes.length === 0 && arrivalNotes.length > 0) {
                         departureNotes = [...arrivalNotes]
                     }
@@ -2194,6 +2250,8 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                     roomNumber: block.room,
                     departureTime,
                     arrivalTime,
+                    mainDisplayedArrivalTime,
+                    alfredWindow,
                     departureGuestCount,
                     arrivalGuestCount,
                     departureGuestName,
@@ -2251,6 +2309,8 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
             const noteLineSource = beforeMarker.filter((line) => isNoteLine(line)).join(' ')
             const noteGroups = splitNoteGroups(noteLineSource || beforeMarker.join(' '))
             const timeSource = blockLines.map((line) => stripAlfredWindowSegments(line)).filter(Boolean).join('\n')
+            let mainDisplayedArrivalTime = extractMainDisplayedArrivalTime(rawBlock)
+            const alfredWindow = formatAlfredWindowLabel(extractAlfredWindows(rawBlock)[0])
             const timedEntries = detectTimedEntries(timeSource)
             const detectedTimes = detectTimes(timeSource)
             let { departureTime, arrivalTime } = chooseTimes(detectedTimes, noteGroups.length)
@@ -2330,6 +2390,7 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
             }
 
             if (!departureTime && !arrivalTime) {
+                mainDisplayedArrivalTime = undefined
                 if (departureNotes.length === 0 && arrivalNotes.length > 0) {
                     departureNotes = [...arrivalNotes]
                 }
@@ -2445,6 +2506,8 @@ function parsePrevioStatePdfText(source, referenceDate = new Date()) {
                 roomNumber: roomInfo.room,
                 departureTime,
                 arrivalTime,
+                mainDisplayedArrivalTime,
+                alfredWindow,
                 departureGuestCount,
                 arrivalGuestCount,
                 departureGuestName,

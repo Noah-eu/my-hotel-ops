@@ -50,6 +50,16 @@ function toComparableRoom(room) {
     }
 }
 
+function findOverlayAuditEntry(overlaySummary, dateIso, roomNumber) {
+    const targetDate = String(dateIso || '').trim()
+    const targetRoom = String(roomNumber || '').trim().padStart(3, '0')
+    const rows = Array.isArray(overlaySummary?.audit) ? overlaySummary.audit : []
+    return rows.find((entry) => (
+        String(entry?.dateIso || '').trim() === targetDate
+        && String(entry?.roomNumber || '').trim().padStart(3, '0') === targetRoom
+    )) || null
+}
+
 async function main() {
     const fixturePath = path.join(process.cwd(), 'scripts/fixtures/previo-state-arrival-overlay.golden.json')
     const fixture = JSON.parse(await fs.readFile(fixturePath, 'utf8'))
@@ -83,6 +93,14 @@ async function main() {
         overlayResult.overlay?.appliedRows === fixture.expected.appliedRows,
         `Expected ${fixture.expected.appliedRows} overlaid rows, got ${overlayResult.overlay?.appliedRows || 0}`
     )
+    assert(
+        (overlayResult.overlay?.auditCheckedRows || 0) === (fixture.expected.auditCheckedRows || 0),
+        `Expected ${fixture.expected.auditCheckedRows || 0} audited overlay rows, got ${overlayResult.overlay?.auditCheckedRows || 0}`
+    )
+    assert(
+        (overlayResult.overlay?.auditMismatches || 0) === (fixture.expected.auditMismatches || 0),
+        `Expected ${fixture.expected.auditMismatches || 0} overlay audit mismatches, got ${overlayResult.overlay?.auditMismatches || 0}`
+    )
 
     for (const changed of fixture.expected.changed || []) {
         const baseRoom = findRoom(baseByDate, changed.dateIso, changed.roomNumber)
@@ -94,6 +112,11 @@ async function main() {
         assert(baseRoom.arrivalTime !== hybridRoom.arrivalTime, `${changed.dateIso}/${changed.roomNumber}: arrival time should differ after overlay`)
         assert(hybridRoom.arrivalTimeSource === 'pdf_overlay', `${changed.dateIso}/${changed.roomNumber}: arrivalTimeSource marker missing`)
         assert(hybridRoom.arrival?.timeSource === 'pdf_overlay', `${changed.dateIso}/${changed.roomNumber}: nested arrival timeSource marker missing`)
+
+        const auditEntry = findOverlayAuditEntry(overlayResult.overlay, changed.dateIso, changed.roomNumber)
+        assert(Boolean(auditEntry), `${changed.dateIso}/${changed.roomNumber}: missing overlay audit entry`)
+        assert(auditEntry.reason === 'ok', `${changed.dateIso}/${changed.roomNumber}: overlay audit reason must be ok`) 
+        assert(auditEntry.finalTime === changed.arrivalTime, `${changed.dateIso}/${changed.roomNumber}: overlay audit final time mismatch`)
 
         const comparableBase = toComparableRoom(baseRoom)
         const comparableHybrid = toComparableRoom(hybridRoom)
@@ -122,6 +145,12 @@ async function main() {
         assert(Boolean(hybridFreeRoom?.freeConfirmed), `${freeRoomCfg.dateIso}/${freeRoomCfg.roomNumber}: free room should stay derived after PDF overlay`)
     }
 
+    const mainVsAlfred = findOverlayAuditEntry(overlayResult.overlay, '2026-06-22', '204')
+    assert(Boolean(mainVsAlfred), 'Missing audit row for 2026-06-22/204')
+    assert(mainVsAlfred.pdfMainTime === '11:00', '2026-06-22/204: expected main PDF time 11:00')
+    assert(mainVsAlfred.alfredWindow === '14:00 - 15:00', '2026-06-22/204: expected Alfred window metadata')
+    assert(mainVsAlfred.finalTime === '11:00', '2026-06-22/204: final time must prefer main PDF time over Alfred window')
+
     const baseDay = basePreview.days.find((day) => day.dateIso === '2026-06-22')
     const hybridDay = hybridPreview.days.find((day) => day.dateIso === '2026-06-22')
     assert(Boolean(baseDay && hybridDay), 'Expected day 2026-06-22 in both previews')
@@ -132,6 +161,7 @@ async function main() {
 
     console.log('[validate:previo-state-arrival-overlay] PASS')
     console.log(`- Applied overlay rows: ${overlayResult.overlay?.appliedRows || 0}`)
+    console.log(`- Overlay audit rows: ${overlayResult.overlay?.auditCheckedRows || 0}`)
     console.log(`- Changed room: ${fixture.expected.changed?.[0]?.dateIso}/${fixture.expected.changed?.[0]?.roomNumber}`)
 }
 

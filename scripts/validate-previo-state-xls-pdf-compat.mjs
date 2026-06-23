@@ -51,6 +51,41 @@ function countArrivalOverlayMarkers(byDate) {
     }, 0)
 }
 
+function findByDateRoom(byDate, dateIso, roomNumber) {
+    const targetRoom = String(roomNumber || '').trim().padStart(3, '0')
+    const rows = Array.isArray(byDate?.[dateIso]) ? byDate[dateIso] : []
+    return rows.find((row) => String(row?.number || '').trim().padStart(3, '0') === targetRoom) || null
+}
+
+function collectOverlayMainTimeMismatches(overlaySummary, byDate) {
+    const mismatches = []
+    const auditRows = Array.isArray(overlaySummary?.audit) ? overlaySummary.audit : []
+
+    auditRows.forEach((entry) => {
+        const pdfMainTime = String(entry?.pdfMainTime || '').trim()
+        if (!pdfMainTime) return
+
+        const dateIso = String(entry?.dateIso || '').trim()
+        const roomNumber = String(entry?.roomNumber || '').trim().padStart(3, '0')
+        const finalRoom = findByDateRoom(byDate, dateIso, roomNumber)
+        const finalTime = String(finalRoom?.arrivalTime || '').trim()
+
+        if (finalTime !== pdfMainTime) {
+            mismatches.push({
+                dateIso,
+                roomNumber,
+                pdfMainTime,
+                alfredWindow: entry?.alfredWindow || null,
+                xlsTime: entry?.xlsTime || null,
+                finalTime: finalTime || null,
+                reason: entry?.reason || 'final_time_differs'
+            })
+        }
+    })
+
+    return mismatches
+}
+
 async function main() {
     const xlsxPath = await resolveExistingPath([
         'private-sources/previo/denni_prehled - Stav - 22. 6. - 27. 6..xlsx',
@@ -105,7 +140,7 @@ async function main() {
         assert(xRows.length === pRows.length, `${dateIso}: room row count mismatch between XLS (${xRows.length}) and PDF (${pRows.length})`)
         xRows.forEach((xRow) => {
             const pRow = pRows.find((candidate) => String(candidate.number || '') === String(xRow.number || ''))
-            assert(Boolean(pRow), `${dateIso}/${xRow.number}: missing room in PDF byDate`) 
+            assert(Boolean(pRow), `${dateIso}/${xRow.number}: missing room in PDF byDate`)
             assert(typeof xRow.stateSource === 'string' && xRow.stateSource === 'previo-state-pdf', `${dateIso}/${xRow.number}: XLS row has incompatible stateSource`)
             assert(typeof pRow.stateSource === 'string' && pRow.stateSource === 'previo-state-pdf', `${dateIso}/${xRow.number}: PDF row has incompatible stateSource`)
         })
@@ -125,12 +160,19 @@ async function main() {
     if ((overlayResult.overlay?.appliedRows || 0) > 0) {
         assert(hybridOverlayMarkers > 0, 'Hybrid byDate should include arrivalTimeSource markers when overlays are applied')
     }
+    const overlayAuditMismatches = collectOverlayMainTimeMismatches(overlayResult.overlay, hybridByDate)
+    assert((overlayResult.overlay?.auditMismatches || 0) === 0, 'Overlay audit reported mismatches in parser output')
+    assert(
+        overlayAuditMismatches.length === 0,
+        `Final byDate arrival time mismatches PDF main time: ${JSON.stringify(overlayAuditMismatches.slice(0, 5))}`
+    )
 
     console.log('[validate:previo-state-xls-pdf-compat] PASS')
     console.log(`- XLS fixture: ${path.basename(xlsxPath)}`)
     console.log(`- PDF fixture: ${path.basename(pdfPath)}`)
     console.log(`- Overlap days: ${overlapDates.length}`)
     console.log(`- Hybrid overlay applied rows: ${overlayResult.overlay?.appliedRows || 0}`)
+    console.log(`- Hybrid overlay audit rows: ${overlayResult.overlay?.auditCheckedRows || 0}`)
 }
 
 main().catch((error) => {

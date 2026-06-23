@@ -53,6 +53,41 @@ function countOverlayMarkers(byDate) {
     }, 0)
 }
 
+function findByDateRoom(byDate, dateIso, roomNumber) {
+    const targetRoom = String(roomNumber || '').trim().padStart(3, '0')
+    const rooms = Array.isArray(byDate?.[dateIso]) ? byDate[dateIso] : []
+    return rooms.find((room) => String(room?.number || '').trim().padStart(3, '0') === targetRoom) || null
+}
+
+function collectOverlayMainTimeMismatches(overlaySummary, byDate) {
+    const mismatches = []
+    const auditRows = Array.isArray(overlaySummary?.audit) ? overlaySummary.audit : []
+
+    auditRows.forEach((entry) => {
+        const pdfMainTime = String(entry?.pdfMainTime || '').trim()
+        if (!pdfMainTime) return
+
+        const dateIso = String(entry?.dateIso || '').trim()
+        const roomNumber = String(entry?.roomNumber || '').trim().padStart(3, '0')
+        const finalRoom = findByDateRoom(byDate, dateIso, roomNumber)
+        const finalTime = String(finalRoom?.arrivalTime || '').trim()
+
+        if (finalTime !== pdfMainTime) {
+            mismatches.push({
+                dateIso,
+                roomNumber,
+                pdfMainTime,
+                alfredWindow: entry?.alfredWindow || null,
+                xlsTime: entry?.xlsTime || null,
+                finalTime: finalTime || null,
+                reason: entry?.reason || 'final_time_differs'
+            })
+        }
+    })
+
+    return mismatches
+}
+
 async function main() {
     assert(previewFunction && previewFunction._test, 'previo-import-preview test hooks are not available')
 
@@ -135,6 +170,12 @@ async function main() {
     if (hybridParsed.arrivalOverlay?.appliedRows > 0) {
         assert(countOverlayMarkers(hybridByDate) >= 0, 'Hybrid byDate overlay marker counting failed')
     }
+    const overlayAuditMismatches = collectOverlayMainTimeMismatches(hybridParsed.arrivalOverlay, hybridByDate)
+    assert((hybridParsed.arrivalOverlay?.auditMismatches || 0) === 0, 'Overlay audit reported mismatches in parser output')
+    assert(
+        overlayAuditMismatches.length === 0,
+        `Final byDate arrival time mismatches PDF main time: ${JSON.stringify(overlayAuditMismatches.slice(0, 5))}`
+    )
 
     console.log('[validate:previo-import-preview-runtime] PASS')
     console.log(`- XLS fixture: ${path.basename(xlsxPath)}`)
@@ -142,6 +183,7 @@ async function main() {
     console.log(`- XLS preview days: ${xlsxResult.preview.days.length}`)
     console.log(`- PDF preview days: ${pdfResult.preview.days.length}`)
     console.log(`- Hybrid overlay applied rows: ${hybridParsed.arrivalOverlay?.appliedRows || 0}`)
+    console.log(`- Hybrid overlay audit rows: ${hybridParsed.arrivalOverlay?.auditCheckedRows || 0}`)
 }
 
 main().catch((error) => {
