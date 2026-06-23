@@ -56,6 +56,16 @@ function countOverlayMarkers(byDate) {
 async function main() {
     assert(previewFunction && previewFunction._test, 'previo-import-preview test hooks are not available')
 
+    const localFunctionWorkerPath = path.join(root, 'netlify/functions/pdf.worker.mjs')
+    let hasLocalFunctionWorker = false
+    try {
+        await fs.access(localFunctionWorkerPath)
+        hasLocalFunctionWorker = true
+    } catch {
+        hasLocalFunctionWorker = false
+    }
+    assert(!hasLocalFunctionWorker, 'Validation expects no local netlify/functions/pdf.worker.mjs file')
+
     const xlsxPath = await resolveExistingPath([
         'private-sources/previo/denni_prehled - Stav - 22. 6. - 27. 6..xlsx',
         'private-sources/previo/Stav.xlsx'
@@ -77,9 +87,11 @@ async function main() {
     const pdfResult = await loadPreviewFromSource(pdfPath, referenceDate)
 
     const originalDOMMatrix = globalThis.DOMMatrix
+    const originalPdfjsWorker = globalThis.pdfjsWorker
     let hybridParsed
     try {
         globalThis.DOMMatrix = undefined
+        delete globalThis.pdfjsWorker
         hybridParsed = await previewFunction._test.parseImportSources({
             primary: {
                 buffer: await fs.readFile(xlsxPath),
@@ -100,6 +112,12 @@ async function main() {
             delete globalThis.DOMMatrix
         } else {
             globalThis.DOMMatrix = originalDOMMatrix
+        }
+
+        if (typeof originalPdfjsWorker === 'undefined') {
+            delete globalThis.pdfjsWorker
+        } else {
+            globalThis.pdfjsWorker = originalPdfjsWorker
         }
     }
     const hybridPreview = buildPrevioStateImportPreview(hybridParsed.parsed, [], referenceDate)

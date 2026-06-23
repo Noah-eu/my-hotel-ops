@@ -1295,6 +1295,7 @@ function isSuspiciousNightTurnover(time) {
 }
 
 let pdfRuntimePrimitivesReady = false
+let pdfRuntimeModulesPromise = null
 
 function toFiniteNumber(value, fallback = 0) {
     const n = Number(value)
@@ -1515,11 +1516,48 @@ function ensurePdfRuntimePrimitives() {
     pdfRuntimePrimitivesReady = true
 }
 
+async function ensurePdfRuntimeModules() {
+    if (!pdfRuntimeModulesPromise) {
+        pdfRuntimeModulesPromise = (async () => {
+            const pdfjsModule = await import('pdfjs-dist/legacy/build/pdf.mjs')
+
+            const hasWorkerHandler = Boolean(
+                globalThis.pdfjsWorker
+                && globalThis.pdfjsWorker.WorkerMessageHandler
+            )
+
+            if (!hasWorkerHandler) {
+                const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.mjs')
+                const workerMessageHandler = workerModule?.WorkerMessageHandler
+                    || workerModule?.default?.WorkerMessageHandler
+
+                if (workerMessageHandler) {
+                    globalThis.pdfjsWorker = {
+                        WorkerMessageHandler: workerMessageHandler
+                    }
+                }
+            }
+
+            try {
+                if (pdfjsModule?.GlobalWorkerOptions && !pdfjsModule.GlobalWorkerOptions.workerSrc) {
+                    pdfjsModule.GlobalWorkerOptions.workerSrc = 'pdfjs-dist/legacy/build/pdf.worker.mjs'
+                }
+            } catch {
+                // Ignore workerSrc assignment errors in constrained runtimes.
+            }
+
+            return pdfjsModule
+        })()
+    }
+
+    return pdfRuntimeModulesPromise
+}
+
 async function extractStateTextFromPdfBuffer(pdfBuffer) {
     ensurePdfRuntimePrimitives()
-    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const { getDocument } = await ensurePdfRuntimeModules()
     const data = new Uint8Array(pdfBuffer)
-    const loadingTask = getDocument({ data, disableWorker: true })
+    const loadingTask = getDocument({ data })
     const pdf = await loadingTask.promise
 
     const pageTexts = []
