@@ -1,12 +1,14 @@
-import { ImportJob, MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
+import { ImportJob, MaintenanceItem, RoomPlan, StaffAvailabilityRecord, SupplyRequest, Task } from '../types'
 import {
     CreateImportJobInput,
     CreateMaintenanceItemInput,
     CreateSupplyRequestInput,
     CreateTaskInput,
+    OpsTab,
     OpsPersistedState,
     OpsStore
 } from './opsStore'
+import { buildStaffAvailabilityRecordId, upsertStaffAvailabilityRecord } from '../lib/teamAvailability'
 
 const STORAGE_KEY = 'mho_demo_state_v1'
 
@@ -222,10 +224,16 @@ export function createLocalOpsStore(): OpsStore {
                 maintenanceItems: state.maintenanceItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item))
             }))
         },
-        setStaffAvailability(id: string, availability) {
+        setStaffAvailability(dateIso: string, id: string, availability) {
             withState((state) => ({
                 ...state,
-                staff: state.staff.map((person) => (person.id === id ? { ...person, availability } : person))
+                dailyAvailabilityRecords: upsertStaffAvailabilityRecord(state.dailyAvailabilityRecords || [], {
+                    id: buildStaffAvailabilityRecordId(dateIso, id),
+                    dateIso,
+                    staffId: id,
+                    availability,
+                    updatedAt: new Date().toISOString()
+                } as StaffAvailabilityRecord)
             }))
         },
         resetDemoState(_defaultState) {

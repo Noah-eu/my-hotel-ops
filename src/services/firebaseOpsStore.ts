@@ -13,7 +13,7 @@ import {
     writeBatch
 } from 'firebase/firestore'
 import { ensureAuthenticatedUser, firebaseAuth, firestoreDb } from '../lib/firebase'
-import { ImportJob, MaintenanceItem, RoomPlan, SupplyRequest, Task } from '../types'
+import { ImportJob, MaintenanceItem, RoomPlan, StaffAvailabilityRecord, SupplyRequest, Task } from '../types'
 import {
     CreateImportJobInput,
     CreateMaintenanceItemInput,
@@ -24,6 +24,7 @@ import {
     OpsStore,
     OpsTab
 } from './opsStore'
+import { buildStaffAvailabilityRecordId } from '../lib/teamAvailability'
 
 const DEV = import.meta.env.DEV
 
@@ -136,6 +137,13 @@ function roomPlanId(day: string, roomId: string) {
 
 function isIsoDateKey(value: string) {
     return /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
+function formatLocalDateIso(date: Date) {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
 }
 
 async function ensureSeeded(defaultState: OpsPersistedState) {
@@ -267,16 +275,11 @@ export function createFirebaseOpsStore(): OpsStore {
             let supplyRequests: SupplyRequest[] = []
             let maintenanceItems: MaintenanceItem[] = []
             let staffDocs: any[] = []
-            let availabilityDocs: any[] = []
+            let availabilityDocs: StaffAvailabilityRecord[] = []
             let metaDoc: Record<string, any> = {}
 
             function emitState() {
                 if (roomPlansByDay.Dnes.length === 0 && roomPlansByDay.Zitra.length === 0 && roomPlansByDay.Pozitri.length === 0) return
-                const availabilityMap = new Map(availabilityDocs.map((d) => [d.staffId || d.id, d.availability]))
-                const staff = staffDocs.map((member) => ({
-                    ...member,
-                    availability: availabilityMap.get(member.id) || member.availability
-                }))
                 onState({
                     roomsByDay: roomPlansByDay,
                     importedRoomsByDate,
@@ -285,7 +288,8 @@ export function createFirebaseOpsStore(): OpsStore {
                     tasks,
                     supplyRequests,
                     maintenanceItems,
-                    staff,
+                    staff: staffDocs as any,
+                    dailyAvailabilityRecords: availabilityDocs,
                     // include persisted meta like custom supply chips
                     customSupplyChips: Array.isArray(metaDoc?.customSupplyChips) ? metaDoc.customSupplyChips : []
                 } as any)
@@ -399,7 +403,20 @@ export function createFirebaseOpsStore(): OpsStore {
             unsubs.push(onSnapshot(
                 collection(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability'),
                 (snap) => {
-                    availabilityDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+                    availabilityDocs = snap.docs.map((d) => {
+                        const data = d.data() as Record<string, any>
+                        const staffId = typeof data.staffId === 'string' && data.staffId.trim() ? data.staffId : d.id
+                        const dateIso = typeof data.dateIso === 'string' && isIsoDateKey(data.dateIso)
+                            ? data.dateIso
+                            : formatLocalDateIso(new Date())
+                        return {
+                            id: buildStaffAvailabilityRecordId(dateIso, staffId),
+                            staffId,
+                            dateIso,
+                            availability: data.availability,
+                            updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined
+                        } as StaffAvailabilityRecord
+                    })
                     emitState()
                 },
                 (err) => {
@@ -645,18 +662,17 @@ export function createFirebaseOpsStore(): OpsStore {
             const { cleaned } = sanitizeForFirestore(patch, `maintenanceItems.${itemId}.patch`)
             void runWrite('updateMaintenanceItem', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'maintenanceItems', itemId), cleaned as Record<string, unknown>))
         },
-        setStaffAvailability(id: string, availability) {
+        setStaffAvailability(dateIso: string, id: string, availability) {
             if (!firestoreDb) return
             void runWrite('setStaffAvailability', async () => {
-                const availObj = { staffId: id, availability, updatedAt: serverTimestamp() }
-                const { cleaned: cleanedAvail } = sanitizeForFirestore(availObj, `dailyAvailability.${id}`)
+                const availabilityId = buildStaffAvailabilityRecordId(dateIso, id)
+                const availObj = { staffId: id, dateIso, availability, updatedAt: serverTimestamp() }
+                const { cleaned: cleanedAvail } = sanitizeForFirestore(availObj, `dailyAvailability.${availabilityId}`)
                 await setDoc(
-                    doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', id),
+                    doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'dailyAvailability', availabilityId),
                     cleanedAvail,
                     { merge: true }
                 )
-                const { cleaned: cleanedStaff } = sanitizeForFirestore({ availability }, `staff.${id}.availability`)
-                await updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'staff', id), cleanedStaff)
             })
         },
         async resetDemoState(defaultState) {

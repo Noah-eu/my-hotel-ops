@@ -402,3 +402,11 @@ export interface MaintenanceItem extends OriginMetadata {
     maintenanceAcknowledgedAt?: string
     maintenanceAcknowledgedBy?: string
 }
+
+export interface StaffAvailabilityRecord {
+    id: string
+    dateIso: string
+    staffId: string
+    availability: Availability
+    updatedAt?: string
+}

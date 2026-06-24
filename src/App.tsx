@@ -9,6 +9,7 @@ import MaintenanceView from './pages/MaintenanceView'
 import SuppliesView from './pages/SuppliesView'
 import { roomPlansByDay, users, supplyRequests as initialSupplyRequests, maintenanceItems as initialMaintenanceItems } from './mockData'
 import {
+    Availability,
     ImportJob,
     ImportJobAutoConfirmMode,
     ImportJobBackupPayload,
@@ -18,6 +19,7 @@ import {
     RoomPlanScheduleSnapshot,
     MaintenanceItem,
     SupplyRequest,
+    StaffAvailabilityRecord,
     Task,
     UserRole
 } from './types'
@@ -38,6 +40,7 @@ import {
 } from './lib/importOperationalMerge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
 import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolutionPatch, buildCustomSupplyChipKey, buildSupplyStatusPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus, type SupplyChipSection } from './lib/opsUiInvariants'
+import { canManageStaffAvailability, resolveStaffAvailabilityForDate, upsertStaffAvailabilityRecord } from './lib/teamAvailability'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -1035,6 +1038,7 @@ export default function App() {
         supplyRequests: initialSupplyRequests,
         maintenanceItems: initialMaintenanceItems,
         customSupplyChips: [],
+        dailyAvailabilityRecords: [],
         staff: users
     }), [])
 
@@ -1050,6 +1054,7 @@ export default function App() {
     const [supplyRequests, setSupplyRequests] = useState<SupplyRequest[]>(() => saved?.supplyRequests ?? initialSupplyRequests)
     const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>(() => saved?.maintenanceItems ?? initialMaintenanceItems)
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
+    const [dailyAvailabilityRecords, setDailyAvailabilityRecords] = useState<StaffAvailabilityRecord[]>(() => saved?.dailyAvailabilityRecords ?? [])
     const [staff, setStaff] = useState<StaffMember[]>(() => saved?.staff ?? users)
     const [roomCatalog, setRoomCatalog] = useState<RoomCatalogItem[]>(() => getDefaultRoomCatalog())
     const [importPdfStatus, setImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
@@ -1130,8 +1135,6 @@ export default function App() {
         ? (onlineProfile || null)
         : (users.find((u) => u.id === userId) || null)
     const realUserRole = (currentUser?.role || 'cleaner') as UserRole
-    const isAvailabilityOff = currentUser?.availability === 'dnes_nepracuji'
-    const urgentOnlyAvailability = currentUser?.availability === 'jen_urgentni'
     const isRealAdminUser = isAdminRole(realUserRole)
     const isAdminUser = isRealAdminUser
     const debugEnabled = useMemo(() => {
@@ -1355,6 +1358,20 @@ export default function App() {
     )
 
     const todayDateIso = formatLocalDateIso(new Date())
+    const staffWithTodayAvailability = useMemo(
+        () => resolveStaffAvailabilityForDate(staff, dailyAvailabilityRecords, todayDateIso),
+        [staff, dailyAvailabilityRecords, todayDateIso]
+    )
+    const staffWithEffectiveAvailability = useMemo(
+        () => resolveStaffAvailabilityForDate(staff, dailyAvailabilityRecords, effectiveDateIso),
+        [staff, dailyAvailabilityRecords, effectiveDateIso]
+    )
+    const currentUserAvailability = useMemo(() => {
+        if (!currentUser) return undefined
+        return staffWithTodayAvailability.find((member) => member.id === currentUser.id)?.availability || currentUser.availability
+    }, [currentUser, staffWithTodayAvailability])
+    const isAvailabilityOff = currentUserAvailability === 'dnes_nepracuji'
+    const urgentOnlyAvailability = currentUserAvailability === 'jen_urgentni'
 
     const unfinishedCarryOverByRoomNumber = useMemo(() => {
         const map: Record<string, string> = {}
@@ -4435,11 +4452,17 @@ export default function App() {
         setSupplyRequests((prev) => [newRequest, ...prev])
     }
 
-    function setStaffAvailability(id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni') {
-        if (runtimeMode === 'online') {
-            activeStore.setStaffAvailability(id, availability)
-        }
-        setStaff((prev) => prev.map((s) => (s.id === id ? { ...s, availability } : s)))
+    function setStaffAvailability(id: string, availability: Availability) {
+        if (!currentUser) return
+        if (!canManageStaffAvailability(realUserRole, currentUser.id, id)) return
+        activeStore.setStaffAvailability(effectiveDateIso, id, availability)
+        setDailyAvailabilityRecords((prev) => upsertStaffAvailabilityRecord(prev, {
+            id: `${effectiveDateIso}__${id}`,
+            dateIso: effectiveDateIso,
+            staffId: id,
+            availability,
+            updatedAt: new Date().toISOString()
+        }))
     }
 
     function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
@@ -4540,10 +4563,11 @@ export default function App() {
             supplyRequests,
             maintenanceItems,
             customSupplyChips,
+            dailyAvailabilityRecords,
             staff
         }
         activeStore.saveState(toSave)
-    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, importJobs, latestStateImportBackup, tasks, supplyRequests, maintenanceItems, customSupplyChips, staff, activeStore])
+    }, [userId, tab, view, roomsByDay, importedTabDates, importedRoomsByDate, importJobs, latestStateImportBackup, tasks, supplyRequests, maintenanceItems, customSupplyChips, dailyAvailabilityRecords, staff, activeStore])
 
     useEffect(() => {
         const updateStandaloneMode = () => {
@@ -4710,6 +4734,7 @@ export default function App() {
                             setDiagnostics((prev) => ({ ...prev, supplySyncCount: state.supplyRequests?.length || 0 }))
                         }
                         if (state.maintenanceItems) setMaintenanceItems(state.maintenanceItems)
+                        if (state.dailyAvailabilityRecords) setDailyAvailabilityRecords(state.dailyAvailabilityRecords as StaffAvailabilityRecord[])
                         if (state.staff) setStaff(state.staff as StaffMember[])
                         if (state.customSupplyChips && Array.isArray(state.customSupplyChips)) {
                             setCustomSupplyChips((prev) => {
@@ -4890,6 +4915,7 @@ export default function App() {
         setSupplyRequests(initialSupplyRequests)
         setMaintenanceItems(initialMaintenanceItems)
         setCustomSupplyChips([])
+        setDailyAvailabilityRecords([])
         setStaff(users)
         setTab('Dnes')
         setUserId('david')
@@ -5150,7 +5176,7 @@ export default function App() {
                                     dayLabel={dayLabel}
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
-                                    staff={staff}
+                                    staff={staffWithTodayAvailability}
                                     focusLateTaskRoomRequest={lateTaskRoomFocusRequest}
                                     onFocusLateTaskRoomResult={handleLateTaskFocusResult}
                                     readOnly={isExtraImportedDay}
@@ -5166,9 +5192,9 @@ export default function App() {
                             )}
                             {view === 'team' && (
                                 <TeamOverview
-                                    staff={staff}
-                                    role={(effectiveRole || 'cleaner') as UserRole}
-                                    currentUserId={userId}
+                                    staff={staffWithEffectiveAvailability}
+                                    role={realUserRole}
+                                    currentUserId={currentUser?.id || userId}
                                     onSetAvailability={setStaffAvailability}
                                 />
                             )}

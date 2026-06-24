@@ -1,4 +1,4 @@
-import { ImportJob, ImportJobBackupPayload, MaintenanceItem, RoomPlan, SupplyRequest, Task, UserRole } from '../types'
+import { Availability, ImportJob, ImportJobBackupPayload, MaintenanceItem, RoomPlan, StaffAvailabilityRecord, SupplyRequest, Task, UserRole } from '../types'
 
 export type OpsTab = 'Dnes' | 'Zitra' | 'Pozitri'
 export type OpsView = 'today' | 'sheet' | 'team' | 'admin' | 'maintenance' | 'supplies'
@@ -22,6 +22,7 @@ export interface OpsPersistedState {
     maintenanceItems: MaintenanceItem[]
     customSupplyChips: string[]
     staff: { id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }[]
+    dailyAvailabilityRecords?: StaffAvailabilityRecord[]
 }
 
 export interface CreateTaskInput {
@@ -135,6 +136,6 @@ export interface OpsStore {
     updateSupplyStatus(requestId: string, status: SupplyRequest['status'], patch?: Partial<SupplyRequest>): void
     createMaintenanceItem(input: CreateMaintenanceItemInput): MaintenanceItem | null
     updateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>): void
-    setStaffAvailability(id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'): void
+    setStaffAvailability(dateIso: string, id: string, availability: Availability): void
     resetDemoState(defaultState: OpsPersistedState): Promise<void> | void
 }

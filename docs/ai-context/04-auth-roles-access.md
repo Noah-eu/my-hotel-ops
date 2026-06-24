@@ -13,3 +13,9 @@
 
 ## Non-admin Behavior
 - Non-admin users can continue app usage even if import listeners are not available.
+
+## Team Availability
+- Team availability is shared hotel-wide state keyed by `dateIso + staff UID`, not viewer/session-local UI state.
+- Team counters and staff cards must resolve from the same shared selected-date availability data; they must not depend on the current viewer.
+- Only real authenticated admins can change another staff member's availability. Non-admin staff can change only their own availability.
+- Preview role must never be used as authority for Team availability writes.
