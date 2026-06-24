@@ -1134,6 +1134,19 @@ export default function App() {
     const urgentOnlyAvailability = currentUser?.availability === 'jen_urgentni'
     const isRealAdminUser = isAdminRole(realUserRole)
     const isAdminUser = isRealAdminUser
+    const debugEnabled = useMemo(() => {
+        if (typeof window === 'undefined') return Boolean(import.meta.env.DEV)
+        try {
+            const url = new URL(window.location.href)
+            const urlDebug = url.searchParams.get('debug') === '1'
+            const ls = window.localStorage.getItem('hotelOpsDebug') === '1'
+            return Boolean(import.meta.env.DEV) || urlDebug || ls
+        } catch (e) {
+            return Boolean(import.meta.env.DEV)
+        }
+    }, [])
+
+    const showDiagnostics = Boolean(isRealAdminUser && debugEnabled)
     const PREVIEW_ROLE_KEY = 'chill_ops_preview_role_v1'
 
     const allowedPreviewRoles: Array<'real' | UserRole> = ['real', 'admin', 'lead', 'cleaner', 'maintenance']
@@ -4938,30 +4951,32 @@ export default function App() {
                             )}
                         </div>
                     )}
-                    <div style={{ position: 'relative' }}>
-                        <button
-                            className="btn"
-                            style={{ padding: '2px 8px', fontSize: 11, minHeight: 'unset' }}
-                            onClick={() => setDiagOpen((prev) => !prev)}
-                        >
-                            Diagnostika
-                        </button>
-                        {diagOpen && (
-                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, width: 320, marginTop: 6, padding: 10, borderRadius: 10, border: '1px solid #cbd5e1', background: '#ffffff', boxShadow: '0 8px 24px rgba(15,23,42,0.12)', fontSize: 12, color: '#334155' }}>
-                                <div><strong>Mode:</strong> intended {diagnostics.intendedMode}, active {diagnostics.activeMode}</div>
-                                <div><strong>Firebase configured:</strong> {diagnostics.firebaseConfigured ? 'ano' : 'ne'}</div>
-                                <div><strong>Missing env vars:</strong> {diagnostics.missingEnvVars.length ? diagnostics.missingEnvVars.join(', ') : 'žádné'}</div>
-                                <div><strong>Auth status:</strong> {diagnostics.authStatus}{diagnostics.authUid ? ` (${diagnostics.authUid})` : ''}</div>
-                                <div><strong>isAnonymous:</strong> {diagnostics.isAnonymous ? 'ano' : 'ne'}</div>
-                                <div><strong>profileLoaded:</strong> {diagnostics.profileLoaded ? 'ano' : 'ne'}</div>
-                                <div><strong>Firestore status:</strong> {diagnostics.firestoreStatus}</div>
-                                <div><strong>Supply sync count:</strong> {typeof diagnostics.supplySyncCount === 'number' ? diagnostics.supplySyncCount : '—'}</div>
-                                <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
-                                <div><strong>Last error code:</strong> {diagnostics.lastErrorCode || '—'}</div>
-                                <div><strong>Last error message:</strong> {diagnostics.lastErrorMessage || '—'}</div>
-                            </div>
-                        )}
-                    </div>
+                    {showDiagnostics && (
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                className="btn"
+                                style={{ padding: '2px 8px', fontSize: 11, minHeight: 'unset' }}
+                                onClick={() => setDiagOpen((prev) => !prev)}
+                            >
+                                Diagnostika
+                            </button>
+                            {diagOpen && (
+                                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, width: 320, marginTop: 6, padding: 10, borderRadius: 10, border: '1px solid #cbd5e1', background: '#ffffff', boxShadow: '0 8px 24px rgba(15,23,42,0.12)', fontSize: 12, color: '#334155' }}>
+                                    <div><strong>Mode:</strong> intended {diagnostics.intendedMode}, active {diagnostics.activeMode}</div>
+                                    <div><strong>Firebase configured:</strong> {diagnostics.firebaseConfigured ? 'ano' : 'ne'}</div>
+                                    <div><strong>Missing env vars:</strong> {diagnostics.missingEnvVars.length ? diagnostics.missingEnvVars.join(', ') : 'žádné'}</div>
+                                    <div><strong>Auth status:</strong> {diagnostics.authStatus}{diagnostics.authUid ? ` ({diagnostics.authUid})` : ''}</div>
+                                    <div><strong>isAnonymous:</strong> {diagnostics.isAnonymous ? 'ano' : 'ne'}</div>
+                                    <div><strong>profileLoaded:</strong> {diagnostics.profileLoaded ? 'ano' : 'ne'}</div>
+                                    <div><strong>Firestore status:</strong> {diagnostics.firestoreStatus}</div>
+                                    <div><strong>Supply sync count:</strong> {typeof diagnostics.supplySyncCount === 'number' ? diagnostics.supplySyncCount : '—'}</div>
+                                    <div><strong>Hotel id:</strong> {diagnostics.hotelId}</div>
+                                    <div><strong>Last error code:</strong> {diagnostics.lastErrorCode || '—'}</div>
+                                    <div><strong>Last error message:</strong> {diagnostics.lastErrorMessage || '—'}</div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
                 {runtimeMode === 'demo' ? (
                     <RoleSwitch current={userId} onChange={handleRoleChange} />
