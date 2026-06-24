@@ -62,6 +62,7 @@ export interface CreateSupplyRequestInput {
     requestedBy: string
     requestedByRole: UserRole
     createdAt: string
+    completedAt?: string
     updatedAt?: string
     boughtAt?: string
     source?: SupplyRequest['source']

@@ -50,7 +50,6 @@ export type BoughtArchiveYear = {
 
 export type BoughtArchiveModel = {
     years: BoughtArchiveYear[]
-    undatedRequests: SupplyRequest[]
     totalCount: number
 }
 
@@ -105,6 +104,12 @@ function normalizeChipLabel(value: string) {
         .trim()
         .replace(/\s+/g, ' ')
         .toLowerCase()
+}
+
+function normalizeSupplyKeyword(value: string) {
+    return normalizeChipLabel(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
 }
 
 function isSupplyChipSection(value: string): value is SupplyChipSection {
@@ -256,6 +261,23 @@ export function buildCustomSupplyChipKey(name: string, section: SupplyChipSectio
     return `${section}::${String(name || '').trim()}`
 }
 
+export function getPreferredSupplyChipSection(name: string): SupplyChipSection | null {
+    const normalized = normalizeSupplyKeyword(name)
+    if (!normalized) return null
+
+    if (normalized.includes('sklenice na vino')) return 'vybaveni'
+    if (normalized.includes('cif')) return 'uklid'
+    if (normalized.includes('jar')) return 'uklid'
+
+    return null
+}
+
+export function getSupplyCategoryForChipSection(section: SupplyChipSection): SupplyRequest['category'] {
+    if (section === 'uklid') return 'cleaning'
+    if (section === 'vybaveni') return 'other'
+    return 'other'
+}
+
 export function parseCustomSupplyChips(customChips: string[]): ParsedCustomSupplyChip[] {
     const scopedNameSet = new Set<string>()
     const rawEntries = (customChips || []).map((chip) => {
@@ -264,9 +286,10 @@ export function parseCustomSupplyChips(customChips: string[]): ParsedCustomSuppl
 
         const parts = raw.split('::')
         if (parts.length === 2 && isSupplyChipSection(parts[0])) {
+            const preferredSection = getPreferredSupplyChipSection(parts[1].trim())
             const scoped = {
                 name: parts[1].trim(),
-                section: parts[0]
+                section: preferredSection || parts[0]
             }
             if (scoped.name) scopedNameSet.add(normalizeChipLabel(scoped.name))
             return scoped.name ? scoped : null
@@ -274,7 +297,7 @@ export function parseCustomSupplyChips(customChips: string[]): ParsedCustomSuppl
 
         return {
             name: raw,
-            section: 'ostatni' as SupplyChipSection,
+            section: getPreferredSupplyChipSection(raw) || ('ostatni' as SupplyChipSection),
             legacy: true
         }
     }).filter(Boolean) as Array<(ParsedCustomSupplyChip & { legacy?: boolean })>
@@ -313,15 +336,20 @@ export function isOpenSupplyStatus(status: SupplyRequest['status']) {
     return status !== 'cancelled' && status !== 'handed_over' && status !== 'delivered'
 }
 
-export function getSupplyRequestArchiveDate(request: SupplyRequest) {
+export function getSupplyRequestArchiveDate(request: SupplyRequest, fallbackDate = new Date()) {
     return parseSupplyArchiveDate(request.boughtAt)
+    || parseSupplyArchiveDate((request as SupplyRequest & { completedAt?: string }).completedAt)
         || parseSupplyArchiveDate(request.updatedAt)
         || parseSupplyArchiveDate(request.createdAt)
+    || fallbackDate
 }
 
 export function buildSupplyStatusPatch(request: SupplyRequest, status: SupplyRequest['status'], changedAt = new Date().toISOString()) {
     return {
         status,
+        completedAt: status === 'delivered' || status === 'handed_over'
+            ? ((request as SupplyRequest & { completedAt?: string }).completedAt || changedAt)
+            : (request as SupplyRequest & { completedAt?: string }).completedAt,
         updatedAt: changedAt,
         boughtAt: status === 'delivered' || status === 'handed_over'
             ? (request.boughtAt || changedAt)
@@ -354,28 +382,23 @@ export function buildSupplyRequestUiBuckets(requests: SupplyRequest[]): SupplyRe
     }
 }
 
-export function buildBoughtArchiveModel(requests: SupplyRequest[]): BoughtArchiveModel {
+export function buildBoughtArchiveModel(requests: SupplyRequest[], fallbackDate = new Date()): BoughtArchiveModel {
     const completedRequests = requests
         .filter((request) => request.status === 'delivered' || request.status === 'handed_over')
         .slice()
         .sort((left, right) => {
-            const leftDate = getSupplyRequestArchiveDate(left)
-            const rightDate = getSupplyRequestArchiveDate(right)
-            const leftTime = leftDate ? leftDate.getTime() : -Infinity
-            const rightTime = rightDate ? rightDate.getTime() : -Infinity
+            const leftDate = getSupplyRequestArchiveDate(left, fallbackDate)
+            const rightDate = getSupplyRequestArchiveDate(right, fallbackDate)
+            const leftTime = leftDate.getTime()
+            const rightTime = rightDate.getTime()
             if (leftTime !== rightTime) return rightTime - leftTime
             return (right.itemName || '').localeCompare(left.itemName || '', 'cs')
         })
 
     const grouped = new Map<number, Map<number, SupplyRequest[]>>()
-    const undatedRequests: SupplyRequest[] = []
 
     completedRequests.forEach((request) => {
-        const date = getSupplyRequestArchiveDate(request)
-        if (!date) {
-            undatedRequests.push(request)
-            return
-        }
+        const date = getSupplyRequestArchiveDate(request, fallbackDate)
 
         const year = date.getFullYear()
         const month = date.getMonth() + 1
@@ -412,7 +435,6 @@ export function buildBoughtArchiveModel(requests: SupplyRequest[]): BoughtArchiv
 
     return {
         years,
-        undatedRequests,
         totalCount: completedRequests.length
     }
 }

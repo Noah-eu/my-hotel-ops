@@ -581,6 +581,7 @@ export function createFirebaseOpsStore(): OpsStore {
                 requestedBy: input.requestedBy,
                 requestedByRole: input.requestedByRole,
                 createdAt: input.createdAt,
+                completedAt: input.completedAt,
                 updatedAt: input.updatedAt,
                 boughtAt: input.boughtAt,
                 status: 'new',

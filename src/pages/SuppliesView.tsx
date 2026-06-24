@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { SupplyRequest, UserRole } from '../types'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
-import { buildBoughtArchiveModel, buildSupplyRequestUiBuckets, canManageSupplyLifecycle, canSetSupplyStatus, getCustomSupplyChipsForSection, getSupplyRequestArchiveDate, type SupplyChipSection } from '../lib/opsUiInvariants'
+import { buildBoughtArchiveModel, buildSupplyRequestUiBuckets, canManageSupplyLifecycle, canSetSupplyStatus, getCustomSupplyChipsForSection, getSupplyCategoryForChipSection, getSupplyRequestArchiveDate, type SupplyChipSection } from '../lib/opsUiInvariants'
 
 type Props = {
     userName: string
@@ -137,11 +137,9 @@ export default function SuppliesView({
     const [maintenanceNote, setMaintenanceNote] = useState('')
 
     const {
-        newRequests,
         maintenanceRequests,
         normalNewRequests,
         orderedRequests,
-        completedRequests,
         cancelledRequests
     } = useMemo(() => buildSupplyRequestUiBuckets(requests), [requests])
     const [selectedSubsection, setSelectedSubsection] = useState<'normal' | 'maintenance'>('normal')
@@ -262,20 +260,6 @@ export default function SuppliesView({
         return categoryByItem[itemName] || 'other'
     }
 
-    function defaultCategoryForSection(section: SupplyChipSection): SupplyRequest['category'] {
-        if (section === 'uklid') return 'cleaning'
-        if (section === 'vybaveni') return 'other'
-        return 'other'
-    }
-
-    function itemToUiCategory(itemName: string) {
-        const cat = inferCategory(itemName)
-        if (cat === 'equipment') return 'vybaveni'
-        if (cat === 'maintenance' || cat === 'other') return 'ostatni'
-        // cleaning, bathroom, kitchen, laundry map to úklid
-        return 'uklid'
-    }
-
     function handleQuickAdd(item: string) {
         onCreateRequest({
             itemName: item,
@@ -291,7 +275,7 @@ export default function SuppliesView({
     function handleCustomChipQuickAdd(item: string, section: SupplyChipSection) {
         onCreateRequest({
             itemName: item,
-            category: defaultCategoryForSection(section),
+            category: getSupplyCategoryForChipSection(section),
             quantityLevel: 'medium',
             priority: 'normal',
             note: undefined,
@@ -306,7 +290,7 @@ export default function SuppliesView({
 
         onCreateRequest({
             itemName,
-            category: defaultCategoryForSection(selectedCategory),
+            category: getSupplyCategoryForChipSection(selectedCategory),
             quantityLevel: 'medium',
             priority: customPriority,
             note: customNote.trim() || undefined,
@@ -468,7 +452,7 @@ export default function SuppliesView({
             )}
 
             <div className="section">
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     {!isMaintenanceRole(role) && (
                         <button
                             className={`chip ${selectedSubsection === 'normal' ? 'active' : ''}`}
@@ -487,6 +471,15 @@ export default function SuppliesView({
                     >
                         Materiál pro údržbu
                         {maintenanceUnseenCount > 0 && <span className="chip-badge">{maintenanceUnseenCount}</span>}
+                    </button>
+
+                    <button
+                        type="button"
+                        className="chip"
+                        style={{ fontWeight: 800, border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#166534' }}
+                        onClick={() => setBoughtArchiveOpen(true)}
+                    >
+                        Koupeno ({boughtArchive.totalCount})
                     </button>
                 </div>
 
@@ -583,93 +576,6 @@ export default function SuppliesView({
                 </div>
             </div>
 
-            <div className="section">
-                <button
-                    type="button"
-                    className="btn"
-                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    onClick={() => setBoughtArchiveOpen((prev) => !prev)}
-                >
-                    <span>Koupeno</span>
-                    <span>{boughtArchive.totalCount}</span>
-                </button>
-
-                {boughtArchiveOpen && (
-                    <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-                        {boughtArchive.years.length === 0 && boughtArchive.undatedRequests.length === 0 && (
-                            <div className="room-card">Zatím nic</div>
-                        )}
-
-                        {boughtArchive.years.length > 0 && (
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                {boughtArchive.years.map((year) => (
-                                    <button
-                                        key={year.year}
-                                        className={`chip ${selectedArchiveYear === year.year ? 'active' : ''}`}
-                                        onClick={() => {
-                                            setSelectedArchiveYear(year.year)
-                                            setSelectedArchiveMonthKey(year.months[0]?.key || null)
-                                        }}
-                                        style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
-                                    >
-                                        {year.year}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-
-                        {selectedArchiveYearModel && (
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                {selectedArchiveYearModel.months.map((month) => (
-                                    <button
-                                        key={month.key}
-                                        className={`chip ${selectedArchiveMonthKey === month.key ? 'active' : ''}`}
-                                        onClick={() => setSelectedArchiveMonthKey(month.key)}
-                                        style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff' }}
-                                    >
-                                        {month.label} ({month.count})
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-
-                        {selectedArchiveMonthModel && (
-                            <div className="room-list">
-                                {selectedArchiveMonthModel.requests.map((request) => {
-                                    const archiveDate = getSupplyRequestArchiveDate(request)
-                                    return (
-                                        <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #059669' }}>
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
-                                                <div className="room-meta">{archiveDate ? archiveDate.toLocaleString('cs-CZ') : 'Bez data nákupu'}</div>
-                                                {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        )}
-
-                        {boughtArchive.undatedRequests.length > 0 && (
-                            <div>
-                                <h3 style={{ marginBottom: 8 }}>Bez data</h3>
-                                <div className="room-list">
-                                    {boughtArchive.undatedRequests.map((request) => (
-                                        <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #64748b' }}>
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-
             {cancelledRequests.length > 0 && (
                 <div className="section" style={{ opacity: 0.6 }}>
                     <h3>Zrušené</h3>
@@ -682,6 +588,91 @@ export default function SuppliesView({
                                 </div>
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {boughtArchiveOpen && (
+                <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Koupeno"
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(15, 23, 42, 0.45)',
+                        zIndex: 40,
+                        padding: 16,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                    }}
+                    onClick={() => setBoughtArchiveOpen(false)}
+                >
+                    <div
+                        className="section"
+                        style={{ maxWidth: 760, width: '100%', maxHeight: '90vh', overflow: 'auto', background: '#fff', borderRadius: 16, margin: 0 }}
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+                            <h3 style={{ margin: 0 }}>Koupeno</h3>
+                            <button type="button" className="btn" onClick={() => setBoughtArchiveOpen(false)}>Zavřít</button>
+                        </div>
+
+                        {boughtArchive.years.length === 0 ? (
+                            <div className="room-card">Zatím nic</div>
+                        ) : (
+                            <div style={{ display: 'grid', gap: 10 }}>
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                    {boughtArchive.years.map((year) => (
+                                        <button
+                                            key={year.year}
+                                            className={`chip ${selectedArchiveYear === year.year ? 'active' : ''}`}
+                                            onClick={() => {
+                                                setSelectedArchiveYear(year.year)
+                                                setSelectedArchiveMonthKey(year.months[0]?.key || null)
+                                            }}
+                                            style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
+                                        >
+                                            {year.year}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {selectedArchiveYearModel && (
+                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                        {selectedArchiveYearModel.months.map((month) => (
+                                            <button
+                                                key={month.key}
+                                                className={`chip ${selectedArchiveMonthKey === month.key ? 'active' : ''}`}
+                                                onClick={() => setSelectedArchiveMonthKey(month.key)}
+                                                style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff' }}
+                                            >
+                                                {month.label} ({month.count})
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {selectedArchiveMonthModel && (
+                                    <div className="room-list">
+                                        {selectedArchiveMonthModel.requests.map((request) => {
+                                            const archiveDate = getSupplyRequestArchiveDate(request)
+                                            return (
+                                                <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #059669' }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ fontWeight: 800 }}>{request.itemName}</div>
+                                                        <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                                        <div className="room-meta">{archiveDate.toLocaleString('cs-CZ')}</div>
+                                                        {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

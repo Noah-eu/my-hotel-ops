@@ -85,6 +85,7 @@ async function main() {
         buildRoomSheetCellModel,
         buildSheetRoomsByDate,
         getCustomSupplyChipsForSection,
+        getPreferredSupplyChipSection,
         getSupplyRequestArchiveDate,
         buildSupplyRequestUiBuckets,
         canManageSupplyLifecycle,
@@ -134,18 +135,35 @@ async function main() {
         assert(canSetSupplyStatus(pendingRequest.status, 'ordered') === true, 'Pending supply must expose Objednáno transition')
         assert(canSetSupplyStatus(pendingRequest.status, 'delivered') === true, 'Pending supply must expose Koupeno transition')
         assert(!suppliesViewSource.includes('>Vlastní<') && !suppliesViewSource.includes('Vlastní:'), 'Supplies UI must no longer render the Vlastní label')
+        assert(suppliesViewSource.includes('role="dialog"'), 'Bought archive must open as a separate modal/panel')
+        assert(!suppliesViewSource.includes('Bez data</h3>'), 'Bought archive must not render a visible Bez data section')
 
         const customChips = [
             'uklid::Test úklid',
             'vybaveni::Test vybavení',
             'ostatni::Test ostatní',
             'Legacy chip',
-            'uklid::Legacy chip'
+            'uklid::Legacy chip',
+            'ostatni::Sklenice na víno',
+            'ostatni::Cif na podlahy 5l',
+            'vybaveni::Jar 5l'
         ]
 
-        assert(getCustomSupplyChipsForSection(customChips, 'uklid').map((chip) => chip.name).join('|') === 'Test úklid|Legacy chip', 'Úklid custom chips must remain scoped to Úklid')
-        assert(getCustomSupplyChipsForSection(customChips, 'vybaveni').map((chip) => chip.name).join('|') === 'Test vybavení', 'Vybavení custom chips must remain scoped to Vybavení')
-        assert(getCustomSupplyChipsForSection(customChips, 'ostatni').map((chip) => chip.name).join('|') === 'Test ostatní', 'Ostatní custom chips must remain scoped to Ostatní and legacy duplicates must not leak in')
+        const uklidChipNames = getCustomSupplyChipsForSection(customChips, 'uklid').map((chip) => chip.name)
+        const vybaveniChipNames = getCustomSupplyChipsForSection(customChips, 'vybaveni').map((chip) => chip.name)
+        const ostatniChipNames = getCustomSupplyChipsForSection(customChips, 'ostatni').map((chip) => chip.name)
+
+        assert(uklidChipNames.includes('Test úklid') && uklidChipNames.includes('Legacy chip'), 'Úklid custom chips must keep Úklid-created entries')
+        assert(vybaveniChipNames.includes('Test vybavení'), 'Vybavení custom chips must remain scoped to Vybavení')
+        assert(ostatniChipNames.join('|') === 'Test ostatní', 'Ostatní custom chips must remain scoped to Ostatní and legacy duplicates must not leak in')
+        assert(getPreferredSupplyChipSection('Sklenice na víno') === 'vybaveni', 'Sklenice na víno must resolve to Vybavení')
+        assert(getPreferredSupplyChipSection('Cif na podlahy 5l') === 'uklid', 'Cif-related chips must resolve to Úklid')
+        assert(getPreferredSupplyChipSection('Jar 5l') === 'uklid', 'Jar-related chips must resolve to Úklid')
+        assert(getCustomSupplyChipsForSection(customChips, 'vybaveni').some((chip) => chip.name === 'Sklenice na víno'), 'Sklenice na víno must appear only in Vybavení')
+        assert(!getCustomSupplyChipsForSection(customChips, 'ostatni').some((chip) => chip.name === 'Sklenice na víno'), 'Sklenice na víno must not appear in Ostatní')
+        assert(getCustomSupplyChipsForSection(customChips, 'uklid').some((chip) => chip.name === 'Cif na podlahy 5l'), 'Cif na podlahy 5l must appear only in Úklid')
+        assert(getCustomSupplyChipsForSection(customChips, 'uklid').some((chip) => chip.name === 'Jar 5l'), 'Jar 5l must appear only in Úklid')
+        assert(!getCustomSupplyChipsForSection(customChips, 'vybaveni').some((chip) => chip.name === 'Jar 5l'), 'Jar 5l must not remain in Vybavení after reclassification')
 
         const pendingBuckets = buildSupplyRequestUiBuckets([pendingRequest])
         assert(pendingBuckets.newRequests.some((request) => request.id === pendingRequest.id), 'Pending supply must appear in active Čeká list')
@@ -171,17 +189,33 @@ async function main() {
                 id: 's-older',
                 itemName: 'Older item',
                 status: 'delivered',
+                completedAt: '2025-11-05T10:00:00.000Z',
                 updatedAt: '2025-11-04T08:00:00.000Z',
                 boughtAt: undefined
             })
         }
 
-        const archiveModel = buildBoughtArchiveModel([boughtRequest, olderBoughtWithoutBoughtAt])
-        assert(getSupplyRequestArchiveDate(olderBoughtWithoutBoughtAt)?.toISOString() === '2025-11-04T08:00:00.000Z', 'Older bought item without boughtAt must fall back to updatedAt safely')
-        assert(archiveModel.totalCount === 2, 'Bought archive count must include bought items only')
+        const legacyBoughtWithoutDates = {
+            ...baseSupplyRequest({
+                id: 's-legacy',
+                itemName: 'Legacy item',
+                status: 'delivered',
+                createdAt: '',
+                updatedAt: undefined,
+                boughtAt: undefined,
+                completedAt: undefined
+            })
+        }
+
+        const archiveFallbackDate = new Date('2026-06-01T00:00:00.000Z')
+        const archiveModel = buildBoughtArchiveModel([boughtRequest, olderBoughtWithoutBoughtAt, legacyBoughtWithoutDates], archiveFallbackDate)
+        assert(getSupplyRequestArchiveDate(olderBoughtWithoutBoughtAt, archiveFallbackDate)?.toISOString() === '2025-11-05T10:00:00.000Z', 'Older bought item without boughtAt must fall back to completedAt before updatedAt')
+        assert(getSupplyRequestArchiveDate(legacyBoughtWithoutDates, archiveFallbackDate)?.toISOString() === archiveFallbackDate.toISOString(), 'Legacy bought item without any date must fall back to the provided safe archive month')
+        assert(archiveModel.totalCount === 3, 'Bought archive count must include bought items only')
         assert(archiveModel.years[0]?.year === 2026, 'Bought archive must sort years newest first')
         assert(archiveModel.years[0]?.months[0]?.key === '2026-06', 'Newest bought item must appear under current year/month archive')
-        assert(archiveModel.years[0]?.months[0]?.requests[0]?.id === boughtRequest.id, 'Newest bought item must appear in selected month archive')
+        assert(archiveModel.years[0]?.months[0]?.requests.some((request) => request.id === boughtRequest.id), 'Newest bought item must appear in selected month archive')
+        assert(archiveModel.years[0]?.months[0]?.requests.some((request) => request.id === legacyBoughtWithoutDates.id), 'Legacy bought item without any date must still appear in a safe fallback month archive')
         assert(archiveModel.years[1]?.year === 2025, 'Fallback-dated bought items must appear under their fallback year')
         assert(archiveModel.years[1]?.months[0]?.key === '2025-11', 'Fallback-dated bought items must appear under their fallback month archive')
     })
