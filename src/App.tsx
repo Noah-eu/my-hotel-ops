@@ -37,6 +37,7 @@ import {
     summarizeOperationalMergeDiagnostics
 } from './lib/importOperationalMerge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
+import { applyCarryOverResolution, buildCarryOverResolutionPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus } from './lib/opsUiInvariants'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -97,7 +98,7 @@ function extractErrorInfo(error: any): { code?: string; message: string } {
     }
 }
 
-type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception'
+type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception' | 'resolve_carry_over'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -3590,6 +3591,7 @@ export default function App() {
         if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen', ...manualOriginMeta }
         if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true, ...manualOriginMeta }
         if (action === 'clear_exception') patch = { checkoutException: false, statusNote: undefined, status: 'ceka' }
+        if (action === 'resolve_carry_over') patch = buildCarryOverResolutionPatch()
         if (runtimeMode === 'online') {
             activeStore.updateRoomPlan(tab, id, patch)
         }
@@ -3650,6 +3652,9 @@ export default function App() {
                         statusNote: r.statusNote === 'Host neodešel' ? undefined : r.statusNote,
                         status: r.status === 'problem' ? 'ceka' : r.status
                     }
+                }
+                if (action === 'resolve_carry_over') {
+                    return applyCarryOverResolution(r)
                 }
                 return r
             })
@@ -4197,7 +4202,7 @@ export default function App() {
             if ((request?.linkedTaskId || '') !== task.id) return false
             if (((request?.itemName || '').trim().toLowerCase()) !== normalizedMaterial) return false
             const status = request?.status || ''
-            return status !== 'cancelled' && status !== 'handed_over'
+            return isOpenSupplyStatus(status as SupplyRequest['status'])
         })
 
         const patch: Partial<import('./types').Task> = {
@@ -4430,6 +4435,26 @@ export default function App() {
             supplyRequests.filter((s) => s.itemName === itemName).forEach((s) => activeStore.updateSupplyStatus(s.id, status))
         }
         setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
+    }
+
+    function handleSetSupplyRequestStatus(requestId: string, status: SupplyRequest['status']) {
+        if (!currentUser || !canManageSupplyLifecycle(currentUser.role)) return
+
+        setSupplyRequests((prev) => {
+            const target = prev.find((request) => request.id === requestId)
+            if (!target) return prev
+            if (!canSetSupplyStatus(target.status, status)) return prev
+
+            if (runtimeMode === 'online') {
+                activeStore.updateSupplyStatus(requestId, status)
+            }
+
+            return prev.map((request) => (
+                request.id === requestId
+                    ? { ...request, status }
+                    : request
+            ))
+        })
     }
 
     function handleSaveCustomSupplyChip(name: string, section: 'uklid' | 'vybaveni' | 'ostatni') {
@@ -6303,6 +6328,7 @@ export default function App() {
                                     onCreateRequest={handleCreateSupplyRequest}
                                     onSaveCustomChip={handleSaveCustomSupplyChip}
                                     onCancelRequest={handleCancelSupplyRequest}
+                                    onSetRequestStatus={handleSetSupplyRequestStatus}
                                 />
                             )}
                         </div>

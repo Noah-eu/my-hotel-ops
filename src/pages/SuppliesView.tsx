@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { SupplyRequest, UserRole } from '../types'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
+import { buildSupplyRequestUiBuckets, canManageSupplyLifecycle, canSetSupplyStatus } from '../lib/opsUiInvariants'
 
 type Props = {
     userName: string
@@ -18,6 +19,7 @@ type Props = {
     }) => void
     onSaveCustomChip: (name: string, section: 'uklid' | 'vybaveni' | 'ostatni') => void
     onCancelRequest: (requestId: string) => void
+    onSetRequestStatus: (requestId: string, status: SupplyRequest['status']) => void
 }
 
 const uklidChips = [
@@ -116,7 +118,8 @@ export default function SuppliesView({
     customChips,
     onCreateRequest,
     onSaveCustomChip,
-    onCancelRequest
+    onCancelRequest,
+    onSetRequestStatus
 }: Props) {
     const [feedback, setFeedback] = useState('')
     const [selectedCategory, setSelectedCategory] = useState<'uklid' | 'vybaveni' | 'ostatni'>('uklid')
@@ -130,9 +133,14 @@ export default function SuppliesView({
     const [maintenancePriority, setMaintenancePriority] = useState<SupplyRequest['priority']>('normal')
     const [maintenanceNote, setMaintenanceNote] = useState('')
 
-    const newRequests = useMemo(() => requests.filter((r) => r.status === 'new' || r.status === 'approved'), [requests])
-    const maintenanceRequests = useMemo(() => newRequests.filter((r) => !!r.linkedTaskId || (r.requestedByRole || '') === 'maintenance'), [newRequests])
-    const normalNewRequests = useMemo(() => newRequests.filter((r) => !(!!r.linkedTaskId || (r.requestedByRole || '') === 'maintenance')), [newRequests])
+    const {
+        newRequests,
+        maintenanceRequests,
+        normalNewRequests,
+        orderedRequests,
+        completedRequests,
+        cancelledRequests
+    } = useMemo(() => buildSupplyRequestUiBuckets(requests), [requests])
     const [selectedSubsection, setSelectedSubsection] = useState<'normal' | 'maintenance'>('normal')
 
     // localStorage seen tracking
@@ -210,9 +218,7 @@ export default function SuppliesView({
         setSeenMap(updated)
         saveSeen(updated)
     }
-    const orderedRequests = useMemo(() => requests.filter((r) => r.status === 'ordered'), [requests])
-    const completedRequests = useMemo(() => requests.filter((r) => r.status === 'delivered' || r.status === 'handed_over'), [requests])
-    const cancelledRequests = useMemo(() => requests.filter((r) => r.status === 'cancelled'), [requests])
+    const canManageLifecycle = canManageSupplyLifecycle(role)
 
     const shouldShowCleaningChips = (isAdminRole(role) || isCleaningLeadRole(role)) && !isMaintenanceRole(role)
     const shouldShowMaintenanceForm = isMaintenanceRole(role)
@@ -486,11 +492,17 @@ export default function SuppliesView({
                                             <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
                                             {request.linkedTaskId && <div className="room-meta" style={{ marginTop: 6 }}>Úkol: {request.linkedTaskId}</div>}
                                             {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
-                                            {canCancel(role, userName, request) && (
-                                                <div style={{ marginTop: 8 }}>
+                                            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                {canManageLifecycle && canSetSupplyStatus(request.status, 'ordered') && (
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'ordered')}>Objednáno</button>
+                                                )}
+                                                {canManageLifecycle && canSetSupplyStatus(request.status, 'delivered') && (
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>Koupeno</button>
+                                                )}
+                                                {canCancel(role, userName, request) && (
                                                     <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
-                                                </div>
-                                            )}
+                                                )}
+                                            </div>
                                         </div>
                                         {request.priority === 'urgent' && <div className="status red">URGENT</div>}
                                     </div>
@@ -514,11 +526,17 @@ export default function SuppliesView({
                                             <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
                                             {/* room number is intentionally hidden in supplies UI */}
                                             {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
-                                            {canCancel(role, userName, request) && (
-                                                <div style={{ marginTop: 8 }}>
+                                            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                {canManageLifecycle && canSetSupplyStatus(request.status, 'ordered') && (
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'ordered')}>Objednáno</button>
+                                                )}
+                                                {canManageLifecycle && canSetSupplyStatus(request.status, 'delivered') && (
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>Koupeno</button>
+                                                )}
+                                                {canCancel(role, userName, request) && (
                                                     <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
-                                                </div>
-                                            )}
+                                                )}
+                                            </div>
                                         </div>
                                         {request.priority === 'urgent' && <div className="status red">URGENT</div>}
                                     </div>
@@ -538,6 +556,11 @@ export default function SuppliesView({
                             <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: 800 }}>{request.itemName}</div>
                                 <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                {canManageLifecycle && canSetSupplyStatus(request.status, 'delivered') && (
+                                    <div style={{ marginTop: 8 }}>
+                                        <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>Koupeno</button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}

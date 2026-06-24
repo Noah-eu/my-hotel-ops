@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react'
 import { RoomPlan } from '../types'
 import { OpsTab } from '../services/opsStore'
+import { buildRoomSheetCellModel, buildSheetRoomsByDate } from '../lib/opsUiInvariants'
 
 const DEFAULT_ROOM_ORDER = [
     '001',
@@ -62,123 +63,6 @@ function formatColumnDate(dateIso: string) {
     })
 }
 
-function shortGuestName(value?: string) {
-    if (!value) return ''
-    const compact = value.replace(/\s+/g, ' ').trim()
-    if (!compact) return ''
-
-    const parts = compact.split(' ')
-    const merged = parts.slice(0, 2).join(' ')
-    if (merged.length <= 20) return merged
-    return `${merged.slice(0, 19)}…`
-}
-
-function normalizeGuestKey(value?: string) {
-    if (!value) return ''
-    return value
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/\s+/g, ' ')
-        .trim()
-}
-
-function formatGuestCount(value?: number) {
-    if (typeof value !== 'number') return ''
-    return `${value}p`
-}
-
-function extractBoxLabel(raw?: string, notes?: string[]) {
-    const direct = String(raw || '').trim()
-    if (direct) {
-        const match = direct.match(/BOX\s*([A-Z0-9-]+)/i)
-        if (match) return `BOX ${match[1].toUpperCase()}`
-        return direct
-    }
-
-    const joined = (notes || []).join(' | ')
-    const fromNotes = joined.match(/BOX\s*([A-Z0-9-]+)/i)
-    if (!fromNotes) return ''
-    return `BOX ${fromNotes[1].toUpperCase()}`
-}
-
-function joinDetailParts(parts: Array<string | undefined>) {
-    const cleaned = parts.map((part) => String(part || '').trim()).filter(Boolean)
-    if (cleaned.length === 0) return undefined
-    return cleaned.join(' • ')
-}
-
-function buildCellModel(room?: RoomPlan): SheetCellModel {
-    if (!room) return { state: 'unknown', main: '—' }
-
-    const departureTime = room.departureTime || room.departure?.time
-    const arrivalTime = room.arrivalTime || room.arrival?.time
-    const departureGuest = shortGuestName(room.departure?.guestLabel || room.stayoverGuestName)
-    const arrivalGuest = shortGuestName(room.arrival?.guestLabel)
-    const departureCount = room.departure?.guestCount
-    const arrivalCount = room.arrival?.guestCount
-    const departureBox = extractBoxLabel(undefined, room.departure?.notes)
-    const arrivalBox = extractBoxLabel(room.arrival?.box || room.box, room.arrival?.notes)
-
-    const hasDeparture = Boolean(departureTime)
-    const hasArrival = Boolean(arrivalTime)
-    const hasDepartureIdentity = Boolean(departureGuest || typeof departureCount === 'number')
-    const hasArrivalIdentity = Boolean(arrivalGuest || typeof arrivalCount === 'number')
-
-    if (hasDeparture && hasArrival) {
-        const departureDetail = joinDetailParts([departureGuest, formatGuestCount(departureCount), departureBox])
-        const arrivalDetail = joinDetailParts([arrivalGuest, formatGuestCount(arrivalCount), arrivalBox])
-        const detail = joinDetailParts([
-            departureDetail ? `Odj: ${departureDetail}` : undefined,
-            arrivalDetail ? `Příj: ${arrivalDetail}` : undefined
-        ])
-
-        return {
-            state: hasDepartureIdentity && hasArrivalIdentity ? 'turnover' : 'turnover-incomplete',
-            main: `Odj ${departureTime} / Příj ${arrivalTime}`,
-            detail: detail || (hasDepartureIdentity || hasArrivalIdentity ? detail : 'Neúplná data hosta')
-        }
-    }
-
-    if (hasDeparture) {
-        return {
-            state: hasDepartureIdentity ? 'departure' : 'departure-incomplete',
-            main: `Odj ${departureTime}`,
-            detail: joinDetailParts([departureGuest, formatGuestCount(departureCount), departureBox]) || 'Neúplná data hosta'
-        }
-    }
-
-    if (hasArrival) {
-        return {
-            state: hasArrivalIdentity ? 'arrival' : 'arrival-incomplete',
-            main: `Příj ${arrivalTime}`,
-            detail: joinDetailParts([arrivalGuest, formatGuestCount(arrivalCount), arrivalBox]) || 'Neúplná data hosta'
-        }
-    }
-
-    const stayoverRaw = room.stayoverGuestName || room.departure?.guestLabel || room.arrival?.guestLabel
-    const stayoverGuest = shortGuestName(stayoverRaw)
-    const occupied = Boolean(room.occupiedConfirmed || stayoverGuest)
-
-    if (occupied) {
-        return {
-            state: 'occupied',
-            main: 'Pobyt',
-            detail: stayoverGuest || undefined,
-            stayoverKey: normalizeGuestKey(stayoverRaw)
-        }
-    }
-
-    if (room.freeConfirmed) {
-        return {
-            state: 'free',
-            main: 'Volné'
-        }
-    }
-
-    return { state: 'unknown', main: '—' }
-}
-
 export default function RoomSheetView({
     roomsByDay,
     importedTabDates,
@@ -199,65 +83,18 @@ export default function RoomSheetView({
     ), [importedTabDates])
 
     const roomsByDate = useMemo(() => {
-        const next: Record<string, RoomPlan[]> = {}
-
-        // Keep import as source of truth for schedule content; only reuse base identity fallback.
-        function mergeWithBase(tab: OpsTab | null, imported: RoomPlan): RoomPlan {
-            const baseList = tab ? roomsByDay[tab] || [] : []
-            const base = baseList.find((b) => {
-                const bn = normalizeRoomNumber(b.number)
-                const rn = normalizeRoomNumber(imported.number)
-                if (b.id && imported.id && b.id === imported.id) return true
-                if (bn && rn && bn === rn) return true
-                return false
-            })
-
-            if (!base) return imported
-
-            return {
-                ...imported,
-                id: imported.id || base.id,
-                number: imported.number || base.number
-            }
-        }
-
-        // populate dates from primary tabs (preserve roomsByDay fallback)
-        tabDateEntries.forEach(({ tab, dateIso }) => {
-            const imported = importedRoomsByDate[dateIso]
-            if (imported && imported.length > 0) {
-                next[dateIso] = imported.map((r) => mergeWithBase(tab, r))
-            } else {
-                next[dateIso] = roomsByDay[tab] || []
-            }
-        })
-
-        // also ensure any other imported dates (not part of primary tabs) are included, merged with best-effort base
-        Object.entries(importedRoomsByDate).forEach(([dateIso, rooms]) => {
-            if (!rooms || rooms.length === 0) {
-                if (!next[dateIso]) next[dateIso] = []
-                return
-            }
-            // if we already populated this date from primary tabs, skip to avoid overwriting merged results
-            if (next[dateIso] && next[dateIso].length > 0) return
-
-            // try to find mapped tab for this date to use its base list, else null
-            const mappedEntry = tabDateEntries.find((t) => t.dateIso === dateIso)
-            const mappedTab = mappedEntry ? mappedEntry.tab : null
-            next[dateIso] = rooms.map((r) => mergeWithBase(mappedTab, r))
-        })
-
-        return next
+        return buildSheetRoomsByDate(tabDateEntries, roomsByDay, importedRoomsByDate)
     }, [importedRoomsByDate, roomsByDay, tabDateEntries])
 
     const visibleDateIsos = useMemo(() => {
         const todayIso = isoForOffset(0)
 
-        return Object.entries(importedRoomsByDate)
+        return Object.entries(roomsByDate)
             .filter(([dateIso, rooms]) => dateIso >= todayIso && Array.isArray(rooms) && rooms.length > 0)
             .map(([dateIso]) => dateIso)
             .sort()
             .slice(0, MAX_VISIBLE_IMPORTED_DAYS)
-    }, [importedRoomsByDate])
+    }, [roomsByDate])
 
     const hasVisibleImportedDates = visibleDateIsos.length > 0
 
@@ -321,7 +158,7 @@ export default function RoomSheetView({
     return (
         <div className="section">
             <h3>Plachta</h3>
-            <div className="room-meta sheet-note">Plachta je orientační přehled z posledního potvrzeného Stav importu.</div>
+            <div className="room-meta sheet-note">Plachta je orientační přehled z potvrzeného importu a aktuálních stavů pokojů.</div>
 
             {!hasVisibleImportedDates && (
                 <div className="room-card" style={{ marginTop: 12, borderLeft: '6px solid #dc2626' }}>
@@ -355,7 +192,7 @@ export default function RoomSheetView({
                                             <th scope="row" className="sheet-room-cell">{roomNumber}</th>
                                             {dateColumns.map((column) => {
                                                 const room = lookupByDate[column.dateIso]?.get(roomNumber)
-                                                const cell = buildCellModel(room)
+                                                const cell = buildRoomSheetCellModel(room) as SheetCellModel
 
                                                 const keepStayoverColor = Boolean(
                                                     cell.state === 'occupied'

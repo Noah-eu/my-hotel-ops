@@ -25,3 +25,11 @@
 ## Backup Model
 - Confirming imports stores rollback snapshot summary and payload.
 - Backups include affected dates and room schedules per date.
+
+## Supply Request UI Lifecycle
+- `supplyRequests.status` uses: `new | approved | ordered | delivered | handed_over | cancelled`.
+- Active `Čeká` lists are only `new` and `approved`.
+- `Objednáno` is only `ordered`.
+- `Koupeno` is `delivered` or `handed_over`.
+- Closed / bought requests must not remain visible in active `Čeká` lists.
+- Maintenance-request grouping in Nákupy is derived from `linkedTaskId` or `requestedByRole === 'maintenance'`.

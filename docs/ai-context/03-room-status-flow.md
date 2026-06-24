@@ -19,5 +19,12 @@ Confirmation must persist merge counters in job metadata:
 - mirrored into `previewSummary.diagnostics.operationalMerge`
 
 ## Plachta Invariant
-- `RoomSheetView` should reflect the latest confirmed import snapshot directly for schedule occupancy.
+- For primary selector days (`Dnes`, `Zitra`, `Pozitri`), `RoomSheetView` must resolve from the same UI-facing operational state as `DashboardToday` (`roomsByDay`) before falling back to imported snapshots.
+- Imported snapshots remain the fallback for extra imported dates that are outside the primary day tabs.
+- Plachta must not resurrect stale stayover / occupied guest data over a confirmed free operational room state.
 - Avoid synthetic cross-day occupancy interpolation that can resurrect moved/cancelled stays.
+
+## Carry-over Invariant
+- `Nedokončeno z ...` is a UI-facing carry-over alert for an otherwise eligible room (no departure, no arrival, not occupied).
+- The alert must stay actionable even when the current room state is free.
+- Resolving the alert must persist `carryOverResolvedAt` so the badge stays hidden across rerenders and import refreshes.

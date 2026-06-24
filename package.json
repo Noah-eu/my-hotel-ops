@@ -17,7 +17,8 @@
         "validate:previo-import-email-runtime": "node scripts/validate-previo-import-email-runtime.mjs",
         "validate:previo-reimport-merge": "node scripts/validate-previo-reimport-merge.mjs",
         "validate:previo-import-determinism": "node scripts/validate-previo-import-determinism.mjs",
-        "validate:previo-import-real-flow": "node scripts/validate-previo-import-real-flow.mjs"
+        "validate:previo-import-real-flow": "node scripts/validate-previo-import-real-flow.mjs",
+        "validate:ui-visible-flows": "node scripts/validate-ui-visible-flows.mjs"
     },
     "dependencies": {
         "firebase": "^12.14.0",

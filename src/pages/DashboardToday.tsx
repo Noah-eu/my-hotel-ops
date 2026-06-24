@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { MaintenanceItem, RoomPlan, Task, UserRole } from '../types'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from '../lib/roles'
-import { isTodayRoomEligibleForCarryOver } from '../lib/roomHelpers'
+import { getCarryOverBadgeLabel } from '../lib/opsUiInvariants'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -614,13 +614,19 @@ export default function DashboardToday({
                                     {(() => {
                                         const normalized = normalizeRoomNumber(room.number)
                                         const carryDate = unfinishedCarryOvers && unfinishedCarryOvers[normalized]
-                                        // show carry-over only when today's room is eligible (no departure, no arrival, not occupied)
-                                        if (carryDate && room.status !== 'hotovo' && isTodayRoomEligibleForCarryOver(room)) {
-                                            const d = new Date(`${carryDate}T00:00:00`)
-                                            const label = `Nedokončeno z ${d.getDate()}.${d.getMonth() + 1}.`
+                                        const label = getCarryOverBadgeLabel(room, carryDate)
+                                        if (label) {
                                             return (
-                                                <div style={{ marginTop: 6, padding: '2px 8px', borderRadius: 999, background: '#fff1f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, fontWeight: 800 }}>
-                                                    {label}
+                                                <div style={{ marginTop: 6, padding: '2px 8px', borderRadius: 999, background: '#fff1f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                                    <span>{label}</span>
+                                                    <button
+                                                        className="chip"
+                                                        style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.1 }}
+                                                        onClick={() => onAction(room.id, 'resolve_carry_over')}
+                                                        disabled={readOnly}
+                                                    >
+                                                        Vyřešeno
+                                                    </button>
                                                 </div>
                                             )
                                         }
