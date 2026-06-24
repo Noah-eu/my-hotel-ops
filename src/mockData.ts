@@ -159,6 +159,8 @@ export const supplyRequests: SupplyRequest[] = [
         requestedBy: 'David',
         requestedByRole: 'admin',
         createdAt: '07:55',
+        updatedAt: '2026-06-24T07:55:00.000Z',
+        boughtAt: '2026-06-24T07:55:00.000Z',
         status: 'delivered',
         priority: 'normal'
     }

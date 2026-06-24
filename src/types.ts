@@ -379,6 +379,8 @@ export interface SupplyRequest extends OriginMetadata {
     requestedBy: string
     requestedByRole: UserRole
     createdAt: string
+    updatedAt?: string
+    boughtAt?: string
     status: 'new' | 'approved' | 'ordered' | 'delivered' | 'handed_over' | 'cancelled'
     priority: 'normal' | 'urgent'
 }

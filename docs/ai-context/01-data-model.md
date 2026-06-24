@@ -28,8 +28,11 @@
 
 ## Supply Request UI Lifecycle
 - `supplyRequests.status` uses: `new | approved | ordered | delivered | handed_over | cancelled`.
+- Bought/archive timestamps use `boughtAt` when present, otherwise `updatedAt`, then a safely parseable `createdAt`.
 - Active `Čeká` lists are only `new` and `approved`.
 - `Objednáno` is only `ordered`.
 - `Koupeno` is `delivered` or `handed_over`.
 - Closed / bought requests must not remain visible in active `Čeká` lists.
 - Maintenance-request grouping in Nákupy is derived from `linkedTaskId` or `requestedByRole === 'maintenance'`.
+- Custom supply chips are stored in `customSupplyChips` as section-prefixed strings (`uklid::`, `vybaveni::`, `ostatni::`).
+- Legacy chips without a stored section default to `Ostatní`; if a scoped chip with the same label already exists, the legacy duplicate should not be shown in another category.

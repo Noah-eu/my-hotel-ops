@@ -581,6 +581,8 @@ export function createFirebaseOpsStore(): OpsStore {
                 requestedBy: input.requestedBy,
                 requestedByRole: input.requestedByRole,
                 createdAt: input.createdAt,
+                updatedAt: input.updatedAt,
+                boughtAt: input.boughtAt,
                 status: 'new',
                 priority: input.priority,
                 source: input.source,
@@ -607,9 +609,10 @@ export function createFirebaseOpsStore(): OpsStore {
             if (!firestoreDb) return
             void runWrite('cancelSupplyRequest', () => deleteDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', requestId)))
         },
-        updateSupplyStatus(requestId: string, status: SupplyRequest['status']) {
+        updateSupplyStatus(requestId: string, status: SupplyRequest['status'], patch?: Partial<SupplyRequest>) {
             if (!firestoreDb) return
-            void runWrite('updateSupplyStatus', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', requestId), { status }))
+            const { cleaned } = sanitizeForFirestore({ status, ...(patch || {}) }, `supplyRequests.${requestId}.statusPatch`)
+            void runWrite('updateSupplyStatus', () => updateDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'supplyRequests', requestId), cleaned as Record<string, unknown>))
         },
         createMaintenanceItem(input: CreateMaintenanceItemInput) {
             if (!firestoreDb) return null

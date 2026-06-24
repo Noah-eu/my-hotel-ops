@@ -62,6 +62,8 @@ export interface CreateSupplyRequestInput {
     requestedBy: string
     requestedByRole: UserRole
     createdAt: string
+    updatedAt?: string
+    boughtAt?: string
     source?: SupplyRequest['source']
     createdByUid?: string
     createdByName?: string
@@ -129,7 +131,7 @@ export interface OpsStore {
     updateTaskStatus(taskId: string, status: Task['status']): void
     createSupplyRequest(input: CreateSupplyRequestInput): SupplyRequest | null
     cancelSupplyRequest(requestId: string): void
-    updateSupplyStatus(requestId: string, status: SupplyRequest['status']): void
+    updateSupplyStatus(requestId: string, status: SupplyRequest['status'], patch?: Partial<SupplyRequest>): void
     createMaintenanceItem(input: CreateMaintenanceItemInput): MaintenanceItem | null
     updateMaintenanceItem(itemId: string, patch: Partial<MaintenanceItem>): void
     setStaffAvailability(id: string, availability: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'): void

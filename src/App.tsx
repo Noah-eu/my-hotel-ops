@@ -37,7 +37,7 @@ import {
     summarizeOperationalMergeDiagnostics
 } from './lib/importOperationalMerge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
-import { applyCarryOverResolution, buildCarryOverResolutionPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus } from './lib/opsUiInvariants'
+import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolutionPatch, buildCustomSupplyChipKey, buildSupplyStatusPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus, type SupplyChipSection } from './lib/opsUiInvariants'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -4432,9 +4432,9 @@ export default function App() {
     function handleSetSupplyGroupStatus(itemName: string, status: SupplyRequest['status']) {
         if (!currentUser || !isAdminRole(currentUser.role)) return
         if (runtimeMode === 'online') {
-            supplyRequests.filter((s) => s.itemName === itemName).forEach((s) => activeStore.updateSupplyStatus(s.id, status))
+            supplyRequests.filter((s) => s.itemName === itemName).forEach((s) => activeStore.updateSupplyStatus(s.id, status, buildSupplyStatusPatch(s, status)))
         }
-        setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? { ...s, status } : s)))
+        setSupplyRequests((prev) => prev.map((s) => (s.itemName === itemName ? applySupplyStatusUpdate(s, status) : s)))
     }
 
     function handleSetSupplyRequestStatus(requestId: string, status: SupplyRequest['status']) {
@@ -4444,23 +4444,24 @@ export default function App() {
             const target = prev.find((request) => request.id === requestId)
             if (!target) return prev
             if (!canSetSupplyStatus(target.status, status)) return prev
+            const nextPatch = buildSupplyStatusPatch(target, status)
 
             if (runtimeMode === 'online') {
-                activeStore.updateSupplyStatus(requestId, status)
+                activeStore.updateSupplyStatus(requestId, status, nextPatch)
             }
 
             return prev.map((request) => (
                 request.id === requestId
-                    ? { ...request, status }
+                    ? applySupplyStatusUpdate(request, status, nextPatch.updatedAt)
                     : request
             ))
         })
     }
 
-    function handleSaveCustomSupplyChip(name: string, section: 'uklid' | 'vybaveni' | 'ostatni') {
+    function handleSaveCustomSupplyChip(name: string, section: SupplyChipSection) {
         const cleaned = name.trim()
         if (!cleaned) return
-        const key = `${section}::${cleaned}`
+        const key = buildCustomSupplyChipKey(cleaned, section)
         setCustomSupplyChips((prev) => {
             const exists = prev.some((chip) => chip.toLowerCase() === key.toLowerCase())
             if (exists) return prev

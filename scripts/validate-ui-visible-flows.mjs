@@ -75,11 +75,17 @@ async function withTranspiledUiHelpers(run) {
 }
 
 async function main() {
+    const suppliesViewSource = await fs.readFile(path.join(process.cwd(), 'src/pages/SuppliesView.tsx'), 'utf8')
+
     await withTranspiledUiHelpers(async ({
+        applySupplyStatusUpdate,
         applyCarryOverResolution,
+        buildBoughtArchiveModel,
         buildCarryOverResolutionPatch,
         buildRoomSheetCellModel,
         buildSheetRoomsByDate,
+        getCustomSupplyChipsForSection,
+        getSupplyRequestArchiveDate,
         buildSupplyRequestUiBuckets,
         canManageSupplyLifecycle,
         canSetSupplyStatus,
@@ -127,6 +133,19 @@ async function main() {
         assert(canManageSupplyLifecycle('admin') === true, 'Admin should be able to manage supply lifecycle')
         assert(canSetSupplyStatus(pendingRequest.status, 'ordered') === true, 'Pending supply must expose Objednáno transition')
         assert(canSetSupplyStatus(pendingRequest.status, 'delivered') === true, 'Pending supply must expose Koupeno transition')
+        assert(!suppliesViewSource.includes('>Vlastní<') && !suppliesViewSource.includes('Vlastní:'), 'Supplies UI must no longer render the Vlastní label')
+
+        const customChips = [
+            'uklid::Test úklid',
+            'vybaveni::Test vybavení',
+            'ostatni::Test ostatní',
+            'Legacy chip',
+            'uklid::Legacy chip'
+        ]
+
+        assert(getCustomSupplyChipsForSection(customChips, 'uklid').map((chip) => chip.name).join('|') === 'Test úklid|Legacy chip', 'Úklid custom chips must remain scoped to Úklid')
+        assert(getCustomSupplyChipsForSection(customChips, 'vybaveni').map((chip) => chip.name).join('|') === 'Test vybavení', 'Vybavení custom chips must remain scoped to Vybavení')
+        assert(getCustomSupplyChipsForSection(customChips, 'ostatni').map((chip) => chip.name).join('|') === 'Test ostatní', 'Ostatní custom chips must remain scoped to Ostatní and legacy duplicates must not leak in')
 
         const pendingBuckets = buildSupplyRequestUiBuckets([pendingRequest])
         assert(pendingBuckets.newRequests.some((request) => request.id === pendingRequest.id), 'Pending supply must appear in active Čeká list')
@@ -134,24 +153,43 @@ async function main() {
         assert(pendingBuckets.orderedRequests.length === 0, 'Pending supply must not appear in Objednáno')
         assert(pendingBuckets.completedRequests.length === 0, 'Pending supply must not appear in Koupeno')
 
-        const orderedRequest = { ...pendingRequest, status: 'ordered' }
+        const orderedRequest = applySupplyStatusUpdate(pendingRequest, 'ordered', '2026-06-24T09:00:00.000Z')
         const orderedBuckets = buildSupplyRequestUiBuckets([orderedRequest])
         assert(!orderedBuckets.newRequests.some((request) => request.id === orderedRequest.id), 'Ordered supply must leave active Čeká list')
         assert(orderedBuckets.orderedRequests.some((request) => request.id === orderedRequest.id), 'Ordered supply must move to Objednáno')
         assert(canSetSupplyStatus(orderedRequest.status, 'delivered') === true, 'Ordered supply must expose Koupeno transition')
 
-        const boughtRequest = { ...orderedRequest, status: 'delivered' }
+        const boughtRequest = applySupplyStatusUpdate(orderedRequest, 'delivered', '2026-06-24T09:30:00.000Z')
         const boughtBuckets = buildSupplyRequestUiBuckets([boughtRequest])
         assert(!boughtBuckets.newRequests.some((request) => request.id === boughtRequest.id), 'Bought supply must not appear in active Čeká list')
         assert(!boughtBuckets.normalNewRequests.some((request) => request.id === boughtRequest.id), 'Bought supply must not appear in active normal Čeká list')
         assert(!boughtBuckets.orderedRequests.some((request) => request.id === boughtRequest.id), 'Bought supply must leave Objednáno')
         assert(boughtBuckets.completedRequests.some((request) => request.id === boughtRequest.id), 'Bought supply must move to Koupeno')
+
+        const olderBoughtWithoutBoughtAt = {
+            ...baseSupplyRequest({
+                id: 's-older',
+                itemName: 'Older item',
+                status: 'delivered',
+                updatedAt: '2025-11-04T08:00:00.000Z',
+                boughtAt: undefined
+            })
+        }
+
+        const archiveModel = buildBoughtArchiveModel([boughtRequest, olderBoughtWithoutBoughtAt])
+        assert(getSupplyRequestArchiveDate(olderBoughtWithoutBoughtAt)?.toISOString() === '2025-11-04T08:00:00.000Z', 'Older bought item without boughtAt must fall back to updatedAt safely')
+        assert(archiveModel.totalCount === 2, 'Bought archive count must include bought items only')
+        assert(archiveModel.years[0]?.year === 2026, 'Bought archive must sort years newest first')
+        assert(archiveModel.years[0]?.months[0]?.key === '2026-06', 'Newest bought item must appear under current year/month archive')
+        assert(archiveModel.years[0]?.months[0]?.requests[0]?.id === boughtRequest.id, 'Newest bought item must appear in selected month archive')
+        assert(archiveModel.years[1]?.year === 2025, 'Fallback-dated bought items must appear under their fallback year')
+        assert(archiveModel.years[1]?.months[0]?.key === '2025-11', 'Fallback-dated bought items must appear under their fallback month archive')
     })
 
     console.log('[validate:ui-visible-flows] PASS')
     console.log('- Plachta follows primary-day operational free state over stale imported stayover data')
     console.log('- Carry-over resolution sets carryOverResolvedAt and hides the alert')
-    console.log('- Supplies lifecycle transitions move requests between Čeká, Objednáno, and Koupeno')
+    console.log('- Supplies lifecycle transitions move requests between Čeká, Objednáno, and Koupeno archive buckets')
 }
 
 main().catch((error) => {

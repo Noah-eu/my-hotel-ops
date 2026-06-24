@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { SupplyRequest, UserRole } from '../types'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
-import { buildSupplyRequestUiBuckets, canManageSupplyLifecycle, canSetSupplyStatus } from '../lib/opsUiInvariants'
+import { buildBoughtArchiveModel, buildSupplyRequestUiBuckets, canManageSupplyLifecycle, canSetSupplyStatus, getCustomSupplyChipsForSection, getSupplyRequestArchiveDate, type SupplyChipSection } from '../lib/opsUiInvariants'
 
 type Props = {
     userName: string
@@ -91,7 +91,7 @@ function quantityText(level: SupplyRequest['quantityLevel'], customQuantity?: st
     if (level === 'low') return 'Málo'
     if (level === 'medium') return 'Středně'
     if (level === 'high') return 'Hodně'
-    return `Vlastní: ${customQuantity || '-'}`
+    return `Množství: ${customQuantity || '-'}`
 }
 
 function statusText(status: SupplyRequest['status']) {
@@ -122,7 +122,10 @@ export default function SuppliesView({
     onSetRequestStatus
 }: Props) {
     const [feedback, setFeedback] = useState('')
-    const [selectedCategory, setSelectedCategory] = useState<'uklid' | 'vybaveni' | 'ostatni'>('uklid')
+    const [selectedCategory, setSelectedCategory] = useState<SupplyChipSection>('uklid')
+    const [boughtArchiveOpen, setBoughtArchiveOpen] = useState(false)
+    const [selectedArchiveYear, setSelectedArchiveYear] = useState<number | null>(null)
+    const [selectedArchiveMonthKey, setSelectedArchiveMonthKey] = useState<string | null>(null)
 
     const [customItem, setCustomItem] = useState('')
     const [customPriority, setCustomPriority] = useState<SupplyRequest['priority']>('normal')
@@ -219,26 +222,34 @@ export default function SuppliesView({
         saveSeen(updated)
     }
     const canManageLifecycle = canManageSupplyLifecycle(role)
+    const boughtArchive = useMemo(() => buildBoughtArchiveModel(requests), [requests])
 
     const shouldShowCleaningChips = (isAdminRole(role) || isCleaningLeadRole(role)) && !isMaintenanceRole(role)
     const shouldShowMaintenanceForm = isMaintenanceRole(role)
+    const selectedCustomChips = useMemo(() => getCustomSupplyChipsForSection(customChips, selectedCategory), [customChips, selectedCategory])
+    const selectedArchiveYearModel = useMemo(() => boughtArchive.years.find((year) => year.year === selectedArchiveYear) || null, [boughtArchive.years, selectedArchiveYear])
+    const selectedArchiveMonthModel = useMemo(() => selectedArchiveYearModel?.months.find((month) => month.key === selectedArchiveMonthKey) || null, [selectedArchiveMonthKey, selectedArchiveYearModel])
 
-    // parse customChips which may be legacy strings or prefixed with section like 'uklid::Jar'
-    const parsedCustomChips = useMemo(() => {
-        const arr = customChips || []
-        return arr.map((c) => {
-            if (!c) return { name: '', section: 'uklid' as const }
-            const parts = String(c).split('::')
-            if (parts.length === 2) {
-                const sec = parts[0] as 'uklid' | 'vybaveni' | 'ostatni'
-                const name = parts[1]
-                return { name, section: (['uklid', 'vybaveni', 'ostatni'].includes(sec) ? sec : 'uklid') as 'uklid' | 'vybaveni' | 'ostatni' }
-            }
-            // legacy: no section stored; infer category
-            const inferred = itemToUiCategory(c)
-            return { name: c, section: inferred }
-        }).filter(p => p.name && p.name.trim())
-    }, [customChips])
+    useEffect(() => {
+        if (!boughtArchiveOpen) return
+        const firstYear = boughtArchive.years[0] || null
+        if (!firstYear) {
+            setSelectedArchiveYear(null)
+            setSelectedArchiveMonthKey(null)
+            return
+        }
+
+        if (selectedArchiveYear !== firstYear.year && !boughtArchive.years.some((year) => year.year === selectedArchiveYear)) {
+            setSelectedArchiveYear(firstYear.year)
+            setSelectedArchiveMonthKey(firstYear.months[0]?.key || null)
+            return
+        }
+
+        const activeYear = boughtArchive.years.find((year) => year.year === selectedArchiveYear) || firstYear
+        if (!activeYear.months.some((month) => month.key === selectedArchiveMonthKey)) {
+            setSelectedArchiveMonthKey(activeYear.months[0]?.key || null)
+        }
+    }, [boughtArchive, boughtArchiveOpen, selectedArchiveMonthKey, selectedArchiveYear])
 
     function setFeedbackText(text: string) {
         setFeedback(text)
@@ -249,6 +260,12 @@ export default function SuppliesView({
 
     function inferCategory(itemName: string): SupplyRequest['category'] {
         return categoryByItem[itemName] || 'other'
+    }
+
+    function defaultCategoryForSection(section: SupplyChipSection): SupplyRequest['category'] {
+        if (section === 'uklid') return 'cleaning'
+        if (section === 'vybaveni') return 'other'
+        return 'other'
     }
 
     function itemToUiCategory(itemName: string) {
@@ -271,13 +288,25 @@ export default function SuppliesView({
         setFeedbackText(`Přidáno: ${item}`)
     }
 
+    function handleCustomChipQuickAdd(item: string, section: SupplyChipSection) {
+        onCreateRequest({
+            itemName: item,
+            category: defaultCategoryForSection(section),
+            quantityLevel: 'medium',
+            priority: 'normal',
+            note: undefined,
+            roomNumber: undefined
+        })
+        setFeedbackText(`Přidáno: ${item}`)
+    }
+
     function handleAddCustomRequest() {
         const itemName = customItem.trim()
         if (!itemName) return
 
         onCreateRequest({
             itemName,
-            category: inferCategory(itemName),
+            category: defaultCategoryForSection(selectedCategory),
             quantityLevel: 'medium',
             priority: customPriority,
             note: customNote.trim() || undefined,
@@ -353,23 +382,10 @@ export default function SuppliesView({
                                 <button key={chip} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#f8fafc' }} onClick={() => handleQuickAdd(chip)}>{chip}</button>
                             ))}
 
-                            {/* include custom chips that map to this category */}
-                            {parsedCustomChips.filter(p => p.section === selectedCategory).map((p) => (
-                                <button key={`${p.section}::${p.name}`} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(p.name)}>{p.name}</button>
+                            {selectedCustomChips.map((chip) => (
+                                <button key={`${chip.section}::${chip.name}`} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleCustomChipQuickAdd(chip.name, chip.section)}>{chip.name}</button>
                             ))}
                         </div>
-
-                        {/* Vlastní row for custom chips that don't map to selected category */}
-                        {parsedCustomChips.filter(p => p.section !== selectedCategory).length > 0 && (
-                            <div style={{ marginTop: 8 }}>
-                                <div style={{ fontSize: 13, color: '#334155', marginBottom: 6 }}>Vlastní</div>
-                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                    {parsedCustomChips.filter(p => p.section !== selectedCategory).map((p) => (
-                                        <button key={`${p.section}::${p.name}`} className="chip" style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff9f0' }} onClick={() => handleQuickAdd(p.name)}>{p.name}</button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
 
                         <div style={{ marginTop: 12 }} className="section" >
                             <h3 style={{ marginBottom: 8 }}>Jiný požadavek</h3>
@@ -568,18 +584,90 @@ export default function SuppliesView({
             </div>
 
             <div className="section">
-                <h3>Koupeno</h3>
-                <div className="room-list">
-                    {completedRequests.length === 0 && <div className="room-card">Zatím nic</div>}
-                    {completedRequests.map((request) => (
-                        <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #059669' }}>
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                <button
+                    type="button"
+                    className="btn"
+                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    onClick={() => setBoughtArchiveOpen((prev) => !prev)}
+                >
+                    <span>Koupeno</span>
+                    <span>{boughtArchive.totalCount}</span>
+                </button>
+
+                {boughtArchiveOpen && (
+                    <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+                        {boughtArchive.years.length === 0 && boughtArchive.undatedRequests.length === 0 && (
+                            <div className="room-card">Zatím nic</div>
+                        )}
+
+                        {boughtArchive.years.length > 0 && (
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {boughtArchive.years.map((year) => (
+                                    <button
+                                        key={year.year}
+                                        className={`chip ${selectedArchiveYear === year.year ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setSelectedArchiveYear(year.year)
+                                            setSelectedArchiveMonthKey(year.months[0]?.key || null)
+                                        }}
+                                        style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
+                                    >
+                                        {year.year}
+                                    </button>
+                                ))}
                             </div>
-                        </div>
-                    ))}
-                </div>
+                        )}
+
+                        {selectedArchiveYearModel && (
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {selectedArchiveYearModel.months.map((month) => (
+                                    <button
+                                        key={month.key}
+                                        className={`chip ${selectedArchiveMonthKey === month.key ? 'active' : ''}`}
+                                        onClick={() => setSelectedArchiveMonthKey(month.key)}
+                                        style={{ fontWeight: 700, border: '1px solid #dbe7f3', background: '#fff' }}
+                                    >
+                                        {month.label} ({month.count})
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {selectedArchiveMonthModel && (
+                            <div className="room-list">
+                                {selectedArchiveMonthModel.requests.map((request) => {
+                                    const archiveDate = getSupplyRequestArchiveDate(request)
+                                    return (
+                                        <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #059669' }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 800 }}>{request.itemName}</div>
+                                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                                <div className="room-meta">{archiveDate ? archiveDate.toLocaleString('cs-CZ') : 'Bez data nákupu'}</div>
+                                                {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
+
+                        {boughtArchive.undatedRequests.length > 0 && (
+                            <div>
+                                <h3 style={{ marginBottom: 8 }}>Bez data</h3>
+                                <div className="room-list">
+                                    {boughtArchive.undatedRequests.map((request) => (
+                                        <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #64748b' }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 800 }}>{request.itemName}</div>
+                                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {cancelledRequests.length > 0 && (

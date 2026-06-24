@@ -166,6 +166,8 @@ export function createLocalOpsStore(): OpsStore {
                 requestedBy: input.requestedBy,
                 requestedByRole: input.requestedByRole,
                 createdAt: input.createdAt,
+                updatedAt: input.updatedAt,
+                boughtAt: input.boughtAt,
                 status: 'new',
                 priority: input.priority,
                 source: input.source,
@@ -184,10 +186,10 @@ export function createLocalOpsStore(): OpsStore {
                 supplyRequests: state.supplyRequests.filter((request) => request.id !== requestId)
             }))
         },
-        updateSupplyStatus(requestId: string, status: SupplyRequest['status']) {
+        updateSupplyStatus(requestId: string, status: SupplyRequest['status'], patch?: Partial<SupplyRequest>) {
             withState((state) => ({
                 ...state,
-                supplyRequests: state.supplyRequests.map((request) => (request.id === requestId ? { ...request, status } : request))
+                supplyRequests: state.supplyRequests.map((request) => (request.id === requestId ? { ...request, status, ...patch } : request))
             }))
         },
         createMaintenanceItem(input: CreateMaintenanceItemInput) {

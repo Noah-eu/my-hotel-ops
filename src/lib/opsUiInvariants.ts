@@ -26,6 +26,34 @@ type SupplyRequestUiBuckets = {
     cancelledRequests: SupplyRequest[]
 }
 
+export type SupplyChipSection = 'uklid' | 'vybaveni' | 'ostatni'
+
+export type ParsedCustomSupplyChip = {
+    name: string
+    section: SupplyChipSection
+}
+
+export type BoughtArchiveMonth = {
+    key: string
+    year: number
+    month: number
+    label: string
+    count: number
+    requests: SupplyRequest[]
+}
+
+export type BoughtArchiveYear = {
+    year: number
+    count: number
+    months: BoughtArchiveMonth[]
+}
+
+export type BoughtArchiveModel = {
+    years: BoughtArchiveYear[]
+    undatedRequests: SupplyRequest[]
+    totalCount: number
+}
+
 function shortGuestName(value?: string) {
     if (!value) return ''
     const compact = value.replace(/\s+/g, ' ').trim()
@@ -70,6 +98,38 @@ function joinDetailParts(parts: Array<string | undefined>) {
     const cleaned = parts.map((part) => String(part || '').trim()).filter(Boolean)
     if (cleaned.length === 0) return undefined
     return cleaned.join(' • ')
+}
+
+function normalizeChipLabel(value: string) {
+    return String(value || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
+}
+
+function isSupplyChipSection(value: string): value is SupplyChipSection {
+    return value === 'uklid' || value === 'vybaveni' || value === 'ostatni'
+}
+
+function parseSupplyArchiveDate(raw?: string) {
+    const value = String(raw || '').trim()
+    if (!value) return null
+
+    if (/^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(value)) {
+        const normalized = value.includes('T') ? value : value.replace(' ', 'T')
+        const date = new Date(normalized)
+        return Number.isNaN(date.getTime()) ? null : date
+    }
+
+    if (/^\d{1,2}\.\d{1,2}\.\d{4}(?:\s+\d{1,2}:\d{2})?$/.test(value)) {
+        const [datePart, timePart = '00:00'] = value.split(/\s+/)
+        const [day, month, year] = datePart.split('.')
+        const isoLike = `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${timePart}`
+        const date = new Date(isoLike)
+        return Number.isNaN(date.getTime()) ? null : date
+    }
+
+    return null
 }
 
 export function buildSheetRoomsByDate(
@@ -192,6 +252,51 @@ export function canManageSupplyLifecycle(role: UserRole) {
     return isAdminRole(role) || isCleaningLeadRole(role) || isCleanerRole(role) || isMaintenanceRole(role)
 }
 
+export function buildCustomSupplyChipKey(name: string, section: SupplyChipSection) {
+    return `${section}::${String(name || '').trim()}`
+}
+
+export function parseCustomSupplyChips(customChips: string[]): ParsedCustomSupplyChip[] {
+    const scopedNameSet = new Set<string>()
+    const rawEntries = (customChips || []).map((chip) => {
+        const raw = String(chip || '').trim()
+        if (!raw) return null
+
+        const parts = raw.split('::')
+        if (parts.length === 2 && isSupplyChipSection(parts[0])) {
+            const scoped = {
+                name: parts[1].trim(),
+                section: parts[0]
+            }
+            if (scoped.name) scopedNameSet.add(normalizeChipLabel(scoped.name))
+            return scoped.name ? scoped : null
+        }
+
+        return {
+            name: raw,
+            section: 'ostatni' as SupplyChipSection,
+            legacy: true
+        }
+    }).filter(Boolean) as Array<(ParsedCustomSupplyChip & { legacy?: boolean })>
+
+    const seenPerSection = new Set<string>()
+
+    return rawEntries.filter((entry) => {
+        const normalizedName = normalizeChipLabel(entry.name)
+        if (!normalizedName) return false
+        if (entry.legacy && scopedNameSet.has(normalizedName)) return false
+
+        const sectionKey = `${entry.section}::${normalizedName}`
+        if (seenPerSection.has(sectionKey)) return false
+        seenPerSection.add(sectionKey)
+        return true
+    }).map(({ name, section }) => ({ name, section }))
+}
+
+export function getCustomSupplyChipsForSection(customChips: string[], section: SupplyChipSection) {
+    return parseCustomSupplyChips(customChips).filter((chip) => chip.section === section)
+}
+
 export function canSetSupplyStatus(currentStatus: SupplyRequest['status'], nextStatus: SupplyRequest['status']) {
     if (nextStatus === 'ordered') {
         return currentStatus === 'new' || currentStatus === 'approved'
@@ -206,6 +311,29 @@ export function canSetSupplyStatus(currentStatus: SupplyRequest['status'], nextS
 
 export function isOpenSupplyStatus(status: SupplyRequest['status']) {
     return status !== 'cancelled' && status !== 'handed_over' && status !== 'delivered'
+}
+
+export function getSupplyRequestArchiveDate(request: SupplyRequest) {
+    return parseSupplyArchiveDate(request.boughtAt)
+        || parseSupplyArchiveDate(request.updatedAt)
+        || parseSupplyArchiveDate(request.createdAt)
+}
+
+export function buildSupplyStatusPatch(request: SupplyRequest, status: SupplyRequest['status'], changedAt = new Date().toISOString()) {
+    return {
+        status,
+        updatedAt: changedAt,
+        boughtAt: status === 'delivered' || status === 'handed_over'
+            ? (request.boughtAt || changedAt)
+            : request.boughtAt
+    }
+}
+
+export function applySupplyStatusUpdate(request: SupplyRequest, status: SupplyRequest['status'], changedAt = new Date().toISOString()): SupplyRequest {
+    return {
+        ...request,
+        ...buildSupplyStatusPatch(request, status, changedAt)
+    }
 }
 
 export function buildSupplyRequestUiBuckets(requests: SupplyRequest[]): SupplyRequestUiBuckets {
@@ -223,5 +351,68 @@ export function buildSupplyRequestUiBuckets(requests: SupplyRequest[]): SupplyRe
         orderedRequests,
         completedRequests,
         cancelledRequests
+    }
+}
+
+export function buildBoughtArchiveModel(requests: SupplyRequest[]): BoughtArchiveModel {
+    const completedRequests = requests
+        .filter((request) => request.status === 'delivered' || request.status === 'handed_over')
+        .slice()
+        .sort((left, right) => {
+            const leftDate = getSupplyRequestArchiveDate(left)
+            const rightDate = getSupplyRequestArchiveDate(right)
+            const leftTime = leftDate ? leftDate.getTime() : -Infinity
+            const rightTime = rightDate ? rightDate.getTime() : -Infinity
+            if (leftTime !== rightTime) return rightTime - leftTime
+            return (right.itemName || '').localeCompare(left.itemName || '', 'cs')
+        })
+
+    const grouped = new Map<number, Map<number, SupplyRequest[]>>()
+    const undatedRequests: SupplyRequest[] = []
+
+    completedRequests.forEach((request) => {
+        const date = getSupplyRequestArchiveDate(request)
+        if (!date) {
+            undatedRequests.push(request)
+            return
+        }
+
+        const year = date.getFullYear()
+        const month = date.getMonth() + 1
+        if (!grouped.has(year)) grouped.set(year, new Map<number, SupplyRequest[]>())
+        const byMonth = grouped.get(year)!
+        if (!byMonth.has(month)) byMonth.set(month, [])
+        byMonth.get(month)!.push(request)
+    })
+
+    const years = Array.from(grouped.entries())
+        .sort((left, right) => right[0] - left[0])
+        .map(([year, months]) => {
+            const monthModels = Array.from(months.entries())
+                .sort((left, right) => right[0] - left[0])
+                .map(([month, monthRequests]) => ({
+                    key: `${year}-${String(month).padStart(2, '0')}`,
+                    year,
+                    month,
+                    label: new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString('cs-CZ', {
+                        month: 'long',
+                        year: 'numeric',
+                        timeZone: 'UTC'
+                    }),
+                    count: monthRequests.length,
+                    requests: monthRequests
+                }))
+
+            return {
+                year,
+                count: monthModels.reduce((sum, monthModel) => sum + monthModel.count, 0),
+                months: monthModels
+            }
+        })
+
+    return {
+        years,
+        undatedRequests,
+        totalCount: completedRequests.length
     }
 }
