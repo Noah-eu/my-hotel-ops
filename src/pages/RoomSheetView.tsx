@@ -201,7 +201,7 @@ export default function RoomSheetView({
     const roomsByDate = useMemo(() => {
         const next: Record<string, RoomPlan[]> = {}
 
-        // helper to merge an imported room with the base room from roomsByDay when possible
+        // Keep import as source of truth for schedule content; only reuse base identity fallback.
         function mergeWithBase(tab: OpsTab | null, imported: RoomPlan): RoomPlan {
             const baseList = tab ? roomsByDay[tab] || [] : []
             const base = baseList.find((b) => {
@@ -214,30 +214,11 @@ export default function RoomSheetView({
 
             if (!base) return imported
 
-            // merge but do not overwrite base fields with undefined/null from imported
-            const result: any = { ...base }
-            Object.keys(imported).forEach((key) => {
-                const val: any = (imported as any)[key]
-                if (typeof val === 'undefined' || val === null) return
-                result[key] = val
-            })
-
-            // handle nested arrival/departure: prefer imported sub-object when defined
-            if ((imported as any).arrival !== undefined && (imported as any).arrival !== null) {
-                result.arrival = (imported as any).arrival
+            return {
+                ...imported,
+                id: imported.id || base.id,
+                number: imported.number || base.number
             }
-            if ((imported as any).departure !== undefined && (imported as any).departure !== null) {
-                result.departure = (imported as any).departure
-            }
-
-            // Preserve occupancy-related base flags unless import explicitly and positively sets alternatives.
-            if (base.occupiedConfirmed) result.occupiedConfirmed = true
-            if (base.stayoverGuestName) result.stayoverGuestName = base.stayoverGuestName
-
-            // If occupied is true, ensure freeConfirmed is not set
-            if (result.occupiedConfirmed) result.freeConfirmed = false
-
-            return result as RoomPlan
         }
 
         // populate dates from primary tabs (preserve roomsByDay fallback)
@@ -337,50 +318,6 @@ export default function RoomSheetView({
         return next
     }, [visibleRoomsByDate])
 
-    const spanOverlays = useMemo(() => {
-        const overlays: Record<string, Map<string, Partial<RoomPlan>>> = {}
-        const dates = dateColumns.map((c) => c.dateIso)
-
-        for (let rn = 0; rn < roomNumbers.length; rn++) {
-            const roomNumber = roomNumbers[rn]
-            const seq = dates.map((dateIso) => lookupByDate[dateIso]?.get(roomNumber) || null)
-
-            for (let i = 0; i < seq.length; i++) {
-                const current = seq[i]
-                if (!current) continue
-
-                const hasArrival = Boolean(current.arrivalTime || (current.arrival && current.arrival.time))
-                if (!hasArrival) continue
-
-                const startGuest = current.arrival?.guestLabel || current.arrivalGuestName || current.stayoverGuestName || ''
-
-                // find next date with a departure for this room
-                let end = i
-                for (let j = i + 1; j < seq.length; j++) {
-                    const next = seq[j]
-                    if (next && (next.departureTime || (next.departure && next.departure.time))) {
-                        end = j
-                        break
-                    }
-                }
-
-                // mark intermediate days as occupied (stayover)
-                for (let k = i + 1; k < end; k++) {
-                    const dateIso = dates[k]
-                    if (!overlays[dateIso]) overlays[dateIso] = new Map()
-                    overlays[dateIso].set(roomNumber, {
-                        occupiedConfirmed: true,
-                        stayoverGuestName: startGuest
-                    })
-                }
-
-                i = Math.max(i, end)
-            }
-        }
-
-        return overlays
-    }, [lookupByDate, dateColumns, roomNumbers])
-
     return (
         <div className="section">
             <h3>Plachta</h3>
@@ -417,10 +354,8 @@ export default function RoomSheetView({
                                         <tr key={`sheet-row-${roomNumber}`}>
                                             <th scope="row" className="sheet-room-cell">{roomNumber}</th>
                                             {dateColumns.map((column) => {
-                                                const baseRoom = lookupByDate[column.dateIso]?.get(roomNumber)
-                                                const overlay = spanOverlays[column.dateIso]?.get(roomNumber)
-                                                const effectiveRoom = overlay ? { ...(baseRoom || {}), ...overlay } as RoomPlan : baseRoom
-                                                const cell = buildCellModel(effectiveRoom)
+                                                const room = lookupByDate[column.dateIso]?.get(roomNumber)
+                                                const cell = buildCellModel(room)
 
                                                 const keepStayoverColor = Boolean(
                                                     cell.state === 'occupied'

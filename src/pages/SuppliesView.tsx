@@ -93,11 +93,9 @@ function quantityText(level: SupplyRequest['quantityLevel'], customQuantity?: st
 }
 
 function statusText(status: SupplyRequest['status']) {
-    if (status === 'new') return 'Nové'
-    if (status === 'approved') return 'Schválené'
+    if (status === 'new' || status === 'approved') return 'Čeká'
     if (status === 'ordered') return 'Objednáno'
-    if (status === 'delivered') return 'Doručeno'
-    if (status === 'handed_over') return 'Předáno'
+    if (status === 'delivered' || status === 'handed_over') return 'Koupeno'
     return 'Zrušeno'
 }
 
@@ -501,7 +499,7 @@ export default function SuppliesView({
                         </div>
                     ) : (
                         <div>
-                            <h3>Nové požadavky</h3>
+                            <h3>Čeká</h3>
                             <div className="room-list">
                                 {normalNewRequests.length === 0 && <div className="room-card">Bez nových požadavků</div>}
                                 {normalNewRequests.map((request) => (
@@ -547,7 +545,7 @@ export default function SuppliesView({
             </div>
 
             <div className="section">
-                <h3>Doručeno / předáno</h3>
+                <h3>Koupeno</h3>
                 <div className="room-list">
                     {completedRequests.length === 0 && <div className="room-card">Zatím nic</div>}
                     {completedRequests.map((request) => (

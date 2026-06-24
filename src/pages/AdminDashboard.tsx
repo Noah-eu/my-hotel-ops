@@ -2,11 +2,9 @@ import React from 'react'
 import { RoomPlan, SupplyRequest, Task } from '../types'
 
 function statusText(status: SupplyRequest['status']) {
-    if (status === 'new') return 'Nové'
-    if (status === 'approved') return 'Schválené'
+    if (status === 'new' || status === 'approved') return 'Čeká'
     if (status === 'ordered') return 'Objednáno'
-    if (status === 'delivered') return 'Doručeno'
-    if (status === 'handed_over') return 'Předáno'
+    if (status === 'delivered' || status === 'handed_over') return 'Koupeno'
     return 'Zrušeno'
 }
 
@@ -34,7 +32,11 @@ export default function AdminDashboard({
     const urgentniUkoly = tasks.filter((t) => t.priority === 'urgent' && t.status !== 'done' && t.status !== 'cancelled')
     const udrzbaUkoly = tasks.filter((t) => t.assignedToRole === 'maintenance' && t.status !== 'done' && t.status !== 'cancelled')
     const uklidUkoly = tasks.filter((t) => (t.assignedToRole === 'cleaner' || t.assignedToRole === 'lead') && t.status !== 'done' && t.status !== 'cancelled')
-    const supplyOpen = supplyRequests.filter((s) => s.status !== 'cancelled' && s.status !== 'handed_over')
+    const supplyOpen = supplyRequests.filter((s) => (
+        s.status !== 'cancelled'
+        && s.status !== 'delivered'
+        && s.status !== 'handed_over'
+    ))
 
     const grouped = Object.values(
         supplyOpen.reduce<Record<string, {
@@ -111,12 +113,10 @@ export default function AdminDashboard({
                                 <div className="room-meta">Stavy: {Array.from(new Set(group.statuses.map(statusText))).join(', ')}</div>
                             </div>
                             {canManageSupplies && (
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: 170 }}>
-                                    <button className="btn" onClick={() => onSetSupplyGroupStatus(group.itemName, 'approved')}>Schválit</button>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6, width: 170 }}>
                                     <button className="btn" onClick={() => onSetSupplyGroupStatus(group.itemName, 'ordered')}>Objednáno</button>
-                                    <button className="btn" onClick={() => onSetSupplyGroupStatus(group.itemName, 'delivered')}>Doručeno</button>
-                                    <button className="btn" onClick={() => onSetSupplyGroupStatus(group.itemName, 'handed_over')}>Předáno</button>
-                                    <button className="btn danger" style={{ gridColumn: '1 / span 2' }} onClick={() => onSetSupplyGroupStatus(group.itemName, 'cancelled')}>Zrušit</button>
+                                    <button className="btn" onClick={() => onSetSupplyGroupStatus(group.itemName, 'delivered')}>Koupeno</button>
+                                    <button className="btn danger" onClick={() => onSetSupplyGroupStatus(group.itemName, 'cancelled')}>Zrušit</button>
                                 </div>
                             )}
                         </div>

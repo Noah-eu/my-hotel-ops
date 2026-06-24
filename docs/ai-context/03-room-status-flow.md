@@ -17,3 +17,7 @@ This merge is implemented in `src/lib/importOperationalMerge.ts` and used by imp
 Confirmation must persist merge counters in job metadata:
 - `confirmationDiagnostics.operationalMerge`
 - mirrored into `previewSummary.diagnostics.operationalMerge`
+
+## Plachta Invariant
+- `RoomSheetView` should reflect the latest confirmed import snapshot directly for schedule occupancy.
+- Avoid synthetic cross-day occupancy interpolation that can resurrect moved/cancelled stays.
