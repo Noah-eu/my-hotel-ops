@@ -47,11 +47,13 @@ function makeJob(overrides = {}) {
 
 async function main() {
     const tempRoot = await transpileModuleTree([
+        'src/lib/importAutoConfirm.ts',
         'src/lib/importJobAdminDiagnostics.ts',
         'src/types.ts'
     ])
 
     try {
+        const { isLikelyTestImportJob } = require(path.join(tempRoot, 'src/lib/importAutoConfirm.js'))
         const { buildImportJobAdminRenderState } = require(path.join(tempRoot, 'src/lib/importJobAdminDiagnostics.js'))
         const appSource = await fs.readFile(path.join(process.cwd(), 'src/App.tsx'), 'utf8')
 
@@ -84,6 +86,9 @@ async function main() {
         }))
         assert(oldDryRunJob.autoConfirmMode === 'dry-run', 'Legacy dry-run metadata must still render safely')
 
+        const testLikeJob = makeJob({ fileName: 'demo-test-import.xlsx', parserVersion: 'sample-build' })
+        assert(isLikelyTestImportJob(testLikeJob), 'Shared test-import helper must classify obvious test/demo imports safely')
+
         const malformedBackupJob = buildImportJobAdminRenderState(makeJob({
             backupSummary: { createdAt: '2026-06-25T10:05:00.000Z', affectedDates: undefined, affectedRoomCount: 1 }
         }))
@@ -92,12 +97,15 @@ async function main() {
 
         assert(!appSource.includes('job.warnings.length'), 'Admin UI should no longer dereference warnings length directly')
         assert(!appSource.includes('job.backupSummary.affectedDates.join'), 'Admin UI should no longer join backup dates directly')
+        assert(!appSource.includes('likelyTestImportJob('), 'App must not reference the old component-scoped likelyTestImportJob identifier')
+        assert(appSource.includes('isLikelyTestImportJob(job)'), 'App must use the shared test-import helper in Admin/import code paths')
 
         console.info('[validate:admin-import-card-runtime] PASS')
         console.info('- New import jobs with auto-confirm metadata render safely')
         console.info('- Old jobs without automation or preview data render safely')
         console.info('- Missing warnings or backup dates degrade safely instead of crashing Admin')
         console.info('- Legacy dry-run metadata renders safely without breaking Admin')
+        console.info('- Shared test-import helper is defined and App no longer references the old local identifier')
     } finally {
         await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => { })
     }

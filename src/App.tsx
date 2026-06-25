@@ -35,7 +35,7 @@ import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib
 import { buildDateSelectorItems, getPrimaryTabDateIso, parseIsoDateForDisplay, resolveEffectiveDateIso, toLocalDateIso } from './lib/dateTabs'
 import { applyRoomOperationalPatch, buildOperationalStatusMeta, buildResetRoomToWaitingPatch } from './lib/roomOperationalState'
 import { buildImportJobAdminRenderState } from './lib/importJobAdminDiagnostics'
-import { evaluateImportAutoConfirm, resolveImportAutoConfirmConfig } from './lib/importAutoConfirm'
+import { evaluateImportAutoConfirm, isLikelyTestImportJob, resolveImportAutoConfirmConfig } from './lib/importAutoConfirm'
 import {
     mergeImportedByDateWithExistingOperationalState,
     mergeImportedRoomDayWithExistingOperationalState,
@@ -316,7 +316,7 @@ function evaluateImportJobAutoConfirm(params: {
         hasByDate,
         hasParsedTabDates,
         safety,
-        likelyTestImport: likelyTestImportJob(job)
+        likelyTestImport: isLikelyTestImportJob(job)
     }) satisfies ImportAutoConfirmEvaluation
 }
 
@@ -3077,11 +3077,6 @@ export default function App() {
         ))))
     }
 
-    function likelyTestImportJob(job: ImportJob) {
-        const normalized = normalizeTaskTitleForCleanup(`${job.fileName || ''} ${job.parserVersion || ''}`)
-        return normalized.includes('test') || normalized.includes('demo') || normalized.includes('sample')
-    }
-
     function olderThanDays(dateValue: string | undefined, days: number) {
         if (!dateValue) return false
         const receivedAt = new Date(dateValue)
@@ -3099,7 +3094,7 @@ export default function App() {
             return importJobs.filter((job) => {
                 if (job.id === protectedJobId) return false
                 if (job.id === protectedNewestJobId) return false
-                return job.status !== 'confirmed' || likelyTestImportJob(job)
+                return job.status !== 'confirmed' || isLikelyTestImportJob(job)
             })
         }
 
@@ -3340,7 +3335,7 @@ export default function App() {
 
         const allCandidates = importJobs.filter((job) => {
             if (mode === 'test_unconfirmed') {
-                return job.status !== 'confirmed' || likelyTestImportJob(job)
+                return job.status !== 'confirmed' || isLikelyTestImportJob(job)
             }
             return olderThanDays(job.receivedAt, IMPORT_CLEANUP_OLD_DAYS)
         })

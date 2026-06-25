@@ -17,6 +17,15 @@ export type ResolvedImportAutoConfirmConfig = {
     legacyDryRun: boolean | null
 }
 
+function normalizeImportTestHint(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
 type EvaluateImportAutoConfirmInput = {
     job: ImportJob
     mode: ImportJobAutoConfirmMode
@@ -93,6 +102,11 @@ export function resolveImportAutoConfirmConfig(input: ResolveImportAutoConfirmCo
         legacyEnabled,
         legacyDryRun
     }
+}
+
+export function isLikelyTestImportJob(job: ImportJob) {
+    const normalized = normalizeImportTestHint(`${job.fileName || ''} ${job.parserVersion || ''}`)
+    return normalized.includes('test') || normalized.includes('demo') || normalized.includes('sample')
 }
 
 function isSpreadsheetPrimaryImport(job: ImportJob) {
