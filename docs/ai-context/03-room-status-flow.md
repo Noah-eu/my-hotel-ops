@@ -10,6 +10,7 @@ When confirming a new import, imported reservation facts are merged with existin
 - preserve estimate fields
 - preserve problem note/checkout exception
 - preserve carry-over resolved marker
+- preserve only operational state for the same normalized date + room; previous-day `hotovo` must not carry into today
 
 This merge is implemented in `src/lib/importOperationalMerge.ts` and used by import confirmation paths.
 
@@ -32,3 +33,7 @@ Confirmation must persist merge counters in job metadata:
 - `Nedokončeno z ...` is a UI-facing carry-over alert for an otherwise eligible room (no departure, no arrival, not occupied).
 - The alert must stay actionable even when the current room state is free.
 - Resolving the alert must persist `carryOverResolvedAt` so the badge stays hidden across rerenders and import refreshes.
+
+## Reset-to-Waiting Invariant
+- `Zpět na čeká` / Ukrainian equivalent is date-scoped and only clears the visible cleaning completion state for the selected room day.
+- Reset must not delete reservation facts, guest/box/Previo notes, manual tasks, supply requests, or maintenance tickets.

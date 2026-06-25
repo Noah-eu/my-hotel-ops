@@ -63,6 +63,9 @@ export interface RoomPlan {
     stayoverGuestName?: string
     stayoverUntil?: string
     carryOverResolvedAt?: string
+    operationalStatusDateIso?: string
+    operationalStatusUpdatedAt?: string
+    operationalStatusUpdatedBy?: string
     source?: RecordSource
     createdByUid?: string
     createdByName?: string

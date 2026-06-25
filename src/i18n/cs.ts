@@ -41,6 +41,7 @@ const cs = {
     'buttons.needMaterial': 'Potřebuji materiál',
     'buttons.cannotToday': 'Nelze dnes',
     'buttons.goToRoom': 'Přejít na pokoj',
+    'buttons.resetToWaiting': 'Zpět na čeká',
     'rooms.waiting': 'Čeká',
     'rooms.problem': 'Problém',
     'rooms.occupiedStayover': 'Obsazeno / pobyt',

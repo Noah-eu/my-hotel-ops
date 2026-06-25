@@ -823,6 +823,11 @@ export default function DashboardToday({
                                     >
                                         {t('buttons.done')}
                                     </button>
+                                    {room.status === 'hotovo' && (
+                                        <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={workflowDisabled} onClick={() => onAction(room.id, 'reset_to_waiting')}>
+                                            {t('buttons.resetToWaiting')}
+                                        </button>
+                                    )}
                                     <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={taskAndProblemDisabled} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => openProblemPanel(room.id)}>{t('buttons.problem')}</button>
                                     {canCreateTask && <button className="chip" disabled={taskAndProblemDisabled} onClick={() => openTaskPanel(room.id)}>{t('buttons.addTask')}</button>}
 

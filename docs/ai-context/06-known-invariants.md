@@ -7,6 +7,7 @@
 ## Identity Invariants
 - Merge and preservation must resolve rooms by stable date + room identity.
 - Room number normalization is required where number formatting differs.
+- Operational cleaning state is date-scoped; a previous-day `hotovo` state must not be reused for a new operational date.
 
 ## Processing Invariants
 - Fresh ingest and regeneration must share the same parser + preview artifact builder.

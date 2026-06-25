@@ -41,6 +41,7 @@ const uk = {
     'buttons.needMaterial': 'Потрібен матеріал',
     'buttons.cannotToday': 'Сьогодні неможливо',
     'buttons.goToRoom': 'Перейти до кімнати',
+    'buttons.resetToWaiting': 'Назад до очікування',
     'rooms.waiting': 'Очікує',
     'rooms.problem': 'Проблема',
     'rooms.occupiedStayover': 'Зайнято / проживання',

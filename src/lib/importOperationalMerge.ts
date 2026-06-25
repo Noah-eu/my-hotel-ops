@@ -6,6 +6,7 @@ export type OperationalMergeDiagnosticKind =
     | 'estimate_preserved'
     | 'problem_preserved'
     | 'carry_over_preserved'
+    | 'stale_operational_state_ignored'
     | 'possible_inconsistent_state'
 
 export interface OperationalMergeDiagnostic {
@@ -38,12 +39,26 @@ export interface OperationalMergeSummary {
     estimatePreservedCount: number
     problemPreservedCount: number
     carryOverPreservedCount: number
+    staleOperationalStateIgnoredCount: number
     inconsistencyWarningCount: number
     inconsistencyRooms: string[]
 }
 
 const IN_PROGRESS_STATUSES = new Set<RoomPlan['status']>(['prevzato', 'probihá', 'odhad'])
 const TOUCHED_STATUSES = new Set<RoomPlan['status']>(['prevzato', 'probihá', 'odhad', 'hotovo', 'problem'])
+
+function normalizeDateIso(value?: string | null) {
+    if (!value) return null
+    const trimmed = String(value).trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+
+    const parsed = new Date(trimmed)
+    if (Number.isNaN(parsed.getTime())) return null
+    const year = parsed.getFullYear()
+    const month = String(parsed.getMonth() + 1).padStart(2, '0')
+    const day = String(parsed.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
 
 export function normalizeRoomNumberForOperationalMerge(rawValue?: string) {
     const value = String(rawValue || '').trim()
@@ -69,12 +84,23 @@ function roomHasTurnover(room: RoomPlan) {
 
 function roomTouchedOperationally(room: RoomPlan) {
     if (TOUCHED_STATUSES.has(room.status)) return true
+    if (room.operationalStatusDateIso) return true
     if (room.occupiedConfirmed || room.freeConfirmed) return true
     if (Boolean(room.assigned)) return true
     if (Boolean(room.estimatedReady || room.estimateSetAt)) return true
     if (Boolean(room.checkoutException || room.statusNote)) return true
     if (Boolean(room.carryOverResolvedAt)) return true
     return false
+}
+
+function operationalStateMatchesDate(dateIso: string, room: RoomPlan) {
+    const operationalDateIso = normalizeDateIso(room.operationalStatusDateIso)
+    if (operationalDateIso) return operationalDateIso === dateIso
+
+    const planDateIso = normalizeDateIso(room.planDateIso)
+    if (planDateIso) return planDateIso === dateIso
+
+    return true
 }
 
 function roomNumberLabel(room: RoomPlan) {
@@ -90,6 +116,17 @@ export function mergeImportedRoomDayWithExistingOperationalState(input: MergeRoo
     }
 
     const roomNumber = roomNumberLabel(importedRoom)
+
+    if (!operationalStateMatchesDate(dateIso, existingRoom)) {
+        diagnostics.push({
+            dateIso,
+            roomNumber,
+            kind: 'stale_operational_state_ignored',
+            message: `${dateIso}/${roomNumber}: ignorován provozní stav z jiného dne`
+        })
+        return { room: importedRoom, diagnostics }
+    }
+
     const merged: RoomPlan = {
         ...importedRoom
     }
@@ -145,6 +182,10 @@ export function mergeImportedRoomDayWithExistingOperationalState(input: MergeRoo
             message: `${dateIso}/${roomNumber}: zachován příznak vyřešeného carry-over`
         })
     }
+
+    if (existingRoom.operationalStatusDateIso) merged.operationalStatusDateIso = existingRoom.operationalStatusDateIso
+    if (existingRoom.operationalStatusUpdatedAt) merged.operationalStatusUpdatedAt = existingRoom.operationalStatusUpdatedAt
+    if (existingRoom.operationalStatusUpdatedBy) merged.operationalStatusUpdatedBy = existingRoom.operationalStatusUpdatedBy
 
     if (!roomHasTurnover(importedRoom) && IN_PROGRESS_STATUSES.has(merged.status)) {
         diagnostics.push({
@@ -208,6 +249,7 @@ export function summarizeOperationalMergeDiagnostics(diagnostics: OperationalMer
     let estimatePreservedCount = 0
     let problemPreservedCount = 0
     let carryOverPreservedCount = 0
+    let staleOperationalStateIgnoredCount = 0
     let inconsistencyWarningCount = 0
 
     diagnostics.forEach((diagnostic) => {
@@ -219,6 +261,7 @@ export function summarizeOperationalMergeDiagnostics(diagnostics: OperationalMer
         if (diagnostic.kind === 'estimate_preserved') estimatePreservedCount += 1
         if (diagnostic.kind === 'problem_preserved') problemPreservedCount += 1
         if (diagnostic.kind === 'carry_over_preserved') carryOverPreservedCount += 1
+        if (diagnostic.kind === 'stale_operational_state_ignored') staleOperationalStateIgnoredCount += 1
 
         if (diagnostic.kind === 'possible_inconsistent_state') {
             inconsistencyWarningCount += 1
@@ -233,6 +276,7 @@ export function summarizeOperationalMergeDiagnostics(diagnostics: OperationalMer
         estimatePreservedCount,
         problemPreservedCount,
         carryOverPreservedCount,
+        staleOperationalStateIgnoredCount,
         inconsistencyWarningCount,
         inconsistencyRooms: Array.from(inconsistencyRooms).slice(0, 5)
     }

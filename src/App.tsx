@@ -33,6 +33,7 @@ import {
 } from './lib/firebase'
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
 import { buildDateSelectorItems, getPrimaryTabDateIso, parseIsoDateForDisplay, resolveEffectiveDateIso, toLocalDateIso } from './lib/dateTabs'
+import { applyRoomOperationalPatch, buildOperationalStatusMeta, buildResetRoomToWaitingPatch } from './lib/roomOperationalState'
 import {
     mergeImportedByDateWithExistingOperationalState,
     mergeImportedRoomDayWithExistingOperationalState,
@@ -103,7 +104,7 @@ function extractErrorInfo(error: any): { code?: string; message: string } {
     }
 }
 
-type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception' | 'resolve_carry_over'
+type RoomAction = 'prevzit' | 'odhad' | 'hotovo' | 'problem' | 'host_zustava' | 'clear_exception' | 'resolve_carry_over' | 'reset_to_waiting'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -3590,6 +3591,7 @@ export default function App() {
     function handleAction(id: string, action: RoomAction, payload?: RoomActionPayload) {
         const assignedName = currentUser?.name
         const now = new Date()
+        const nowIso = now.toISOString()
         const setAt = formatNowHHmm(now)
         const computedEstimate = payload?.estimateTime
             ? payload.estimateTime
@@ -3597,17 +3599,20 @@ export default function App() {
                 ? addMinutes(now, payload.relativeMinutes)
                 : undefined
         const manualOriginMeta = buildManualOriginMeta()
+        const operationalUpdatedBy = currentUser?.id || currentUser?.name || userId
+        const operationalStatusMeta = buildOperationalStatusMeta(effectiveDateIso, nowIso, operationalUpdatedBy)
 
         let patch: Partial<any> = {}
         if (action === 'hotovo') {
-            patch = { status: 'hotovo', carryOverResolvedAt: new Date().toISOString() }
+            patch = { status: 'hotovo', carryOverResolvedAt: nowIso, ...operationalStatusMeta }
         }
-        if (action === 'prevzit') patch = { status: 'prevzato', assigned: assignedName }
-        if (action === 'odhad') patch = { status: 'odhad', estimatedReady: computedEstimate || '12:30', estimateSetAt: setAt, assigned: assignedName }
-        if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen', ...manualOriginMeta }
-        if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true, ...manualOriginMeta }
-        if (action === 'clear_exception') patch = { checkoutException: false, statusNote: undefined, status: 'ceka' }
+        if (action === 'prevzit') patch = { status: 'prevzato', assigned: assignedName, ...operationalStatusMeta }
+        if (action === 'odhad') patch = { status: 'odhad', estimatedReady: computedEstimate || '12:30', estimateSetAt: setAt, assigned: assignedName, ...operationalStatusMeta }
+        if (action === 'problem') patch = { status: 'problem', statusNote: payload?.problemText?.trim() || 'Problém nahlášen', ...manualOriginMeta, ...operationalStatusMeta }
+        if (action === 'host_zustava') patch = { status: 'problem', statusNote: 'Host neodešel', checkoutException: true, ...manualOriginMeta, ...operationalStatusMeta }
+        if (action === 'clear_exception') patch = { checkoutException: false, statusNote: undefined, status: 'ceka', ...operationalStatusMeta }
         if (action === 'resolve_carry_over') patch = buildCarryOverResolutionPatch()
+        if (action === 'reset_to_waiting') patch = buildResetRoomToWaitingPatch(effectiveDateIso, nowIso, operationalUpdatedBy)
         if (runtimeMode === 'online') {
             activeStore.updateRoomPlan(tab, id, patch)
         }
@@ -3621,7 +3626,8 @@ export default function App() {
                     return {
                         ...r,
                         status: 'hotovo',
-                        carryOverResolvedAt: new Date().toISOString(),
+                        carryOverResolvedAt: nowIso,
+                        ...operationalStatusMeta,
                         statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
@@ -3630,6 +3636,7 @@ export default function App() {
                         ...r,
                         status: 'prevzato',
                         assigned: assignedName || r.assigned,
+                        ...operationalStatusMeta,
                         statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
@@ -3640,6 +3647,7 @@ export default function App() {
                         estimatedReady: computedEstimate || r.estimatedReady || '12:30',
                         estimateSetAt: setAt,
                         assigned: assignedName || r.assigned,
+                        ...operationalStatusMeta,
                         statusNote: r.checkoutException ? r.statusNote : undefined
                     }
                 }
@@ -3648,7 +3656,8 @@ export default function App() {
                         ...r,
                         status: 'problem',
                         statusNote: payload?.problemText?.trim() || 'Problém nahlášen',
-                        ...manualOriginMeta
+                        ...manualOriginMeta,
+                        ...operationalStatusMeta
                     }
                 }
                 if (action === 'host_zustava') {
@@ -3658,7 +3667,8 @@ export default function App() {
                         status: 'problem',
                         statusNote: 'Host neodešel',
                         checkoutException: true,
-                        ...manualOriginMeta
+                        ...manualOriginMeta,
+                        ...operationalStatusMeta
                     }
                 }
                 if (action === 'clear_exception') {
@@ -3666,11 +3676,15 @@ export default function App() {
                         ...r,
                         checkoutException: false,
                         statusNote: r.statusNote === 'Host neodešel' ? undefined : r.statusNote,
-                        status: r.status === 'problem' ? 'ceka' : r.status
+                        status: r.status === 'problem' ? 'ceka' : r.status,
+                        ...operationalStatusMeta
                     }
                 }
                 if (action === 'resolve_carry_over') {
                     return applyCarryOverResolution(r)
+                }
+                if (action === 'reset_to_waiting') {
+                    return applyRoomOperationalPatch(r, buildResetRoomToWaitingPatch(effectiveDateIso, nowIso, operationalUpdatedBy))
                 }
                 return r
             })
