@@ -34,6 +34,7 @@ import {
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
 import { buildDateSelectorItems, getPrimaryTabDateIso, parseIsoDateForDisplay, resolveEffectiveDateIso, toLocalDateIso } from './lib/dateTabs'
 import { applyRoomOperationalPatch, buildOperationalStatusMeta, buildResetRoomToWaitingPatch } from './lib/roomOperationalState'
+import { evaluateImportAutoConfirm } from './lib/importAutoConfirm'
 import {
     mergeImportedByDateWithExistingOperationalState,
     mergeImportedRoomDayWithExistingOperationalState,
@@ -235,13 +236,11 @@ function readBooleanViteEnv(value: unknown, fallback: boolean) {
     return fallback
 }
 
-const AUTO_CONFIRM_STAV_IMPORTS_ENABLED = readBooleanViteEnv(import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS, false)
-const AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN = readBooleanViteEnv(import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN, true)
-const AUTO_CONFIRM_STAV_IMPORTS_MODE: ImportJobAutoConfirmMode = AUTO_CONFIRM_STAV_IMPORTS_ENABLED
-    ? 'enabled'
-    : AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN
-        ? 'dry-run'
-        : 'off'
+const AUTO_CONFIRM_STAV_IMPORTS_ENABLED = readBooleanViteEnv(
+    import.meta.env.VITE_PREVIO_AUTO_CONFIRM,
+    readBooleanViteEnv(import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS, false)
+)
+const AUTO_CONFIRM_STAV_IMPORTS_MODE: ImportJobAutoConfirmMode = AUTO_CONFIRM_STAV_IMPORTS_ENABLED ? 'enabled' : 'off'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CONFIRM_SUPERSEDED_MESSAGE = 'Tento import je starší než novější Stav PDF. Nepotvrzujte ho.'
@@ -249,7 +248,6 @@ const IMPORT_CLEANUP_OLD_DAYS = 30
 
 function importAutoConfirmModeLabel(mode: ImportJobAutoConfirmMode) {
     if (mode === 'enabled') return 'Zapnuto'
-    if (mode === 'dry-run') return 'Dry-run'
     return 'Vypnuto'
 }
 
@@ -309,52 +307,16 @@ function evaluateImportJobAutoConfirm(params: {
         safety
     } = params
 
-    const dynamicBlockedReasons: string[] = []
-    const parsedButSuspicious = job.status === 'parsed' && Boolean(safety?.blocked)
-
-    if (job.type !== 'previo-state-pdf') {
-        dynamicBlockedReasons.push('Podporován je jen Stav PDF import.')
-    }
-    if (job.status === 'confirmed') {
-        dynamicBlockedReasons.push('Import je už potvrzen.')
-    }
-    if (job.status === 'cancelled') {
-        dynamicBlockedReasons.push('Import je zrušený.')
-    }
-    if (parsedButSuspicious) {
-        dynamicBlockedReasons.push('Náhled vytvořen, ale import je podezřelý.')
-    } else if (job.status !== 'needs_review') {
-        dynamicBlockedReasons.push('Import není ve stavu čeká na kontrolu.')
-    }
-    if (isSupersededPrevioStateJob || !isNewestPrevioStateJob) {
-        dynamicBlockedReasons.push('Import není nejnovější.')
-    }
-    if (!hasByDate) {
-        dynamicBlockedReasons.push('Není dostupné byDate pro potvrzení.')
-    }
-    if (!hasParsedTabDates) {
-        dynamicBlockedReasons.push('Není dostupné parsedTabDates pro potvrzení.')
-    }
-    if (!safety) {
-        dynamicBlockedReasons.push('Chybí bezpečnostní kontrola importu.')
-    } else if (safety.blocked) {
-        dynamicBlockedReasons.push('Bezpečnostní kontrola import blokuje.')
-            ; (safety.blocks || []).slice(0, 3).forEach((reason) => {
-                if (!dynamicBlockedReasons.includes(reason)) dynamicBlockedReasons.push(reason)
-            })
-    }
-
-    const storedBlockedReasons = (job.automation?.autoConfirm?.blockedReasons || []).filter((reason) => !dynamicBlockedReasons.includes(reason))
-    const blockedReasons = [...dynamicBlockedReasons, ...storedBlockedReasons]
-    const eligible = dynamicBlockedReasons.length === 0
-    const wouldConfirm = mode !== 'off' && eligible
-
-    return {
+    return evaluateImportAutoConfirm({
+        job,
         mode,
-        eligible,
-        wouldConfirm,
-        blockedReasons
-    } satisfies ImportAutoConfirmEvaluation
+        isNewestPrevioStateJob,
+        isSupersededPrevioStateJob,
+        hasByDate,
+        hasParsedTabDates,
+        safety,
+        likelyTestImport: likelyTestImportJob(job)
+    }) satisfies ImportAutoConfirmEvaluation
 }
 
 if (import.meta.env.DEV) {
@@ -5495,21 +5457,19 @@ export default function App() {
                                                                     </div>
                                                                 )}
                                                                 <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                    Auto-confirm režim: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
+                                                                    Automatické potvrzení: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
                                                                 </div>
                                                                 {job.automation?.autoConfirmedAt && (
                                                                     <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
-                                                                        Auto-potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
+                                                                        Automaticky potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
                                                                         {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
                                                                     </div>
                                                                 )}
-                                                                {(autoConfirmEvaluation.mode === 'dry-run' || autoConfirmEvaluation.mode === 'enabled') && job.status !== 'confirmed' && (
+                                                                {autoConfirmEvaluation.mode === 'enabled' && job.status !== 'confirmed' && (
                                                                     <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, ...autoConfirmInfoStyle }}>
                                                                         {autoConfirmEvaluation.wouldConfirm
-                                                                            ? (autoConfirmEvaluation.mode === 'dry-run'
-                                                                                ? 'Automatická kontrola: OK. Tento import by byl automaticky potvrzen.'
-                                                                                : 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.')
-                                                                            : 'Automatická kontrola: blokováno.'}
+                                                                            ? 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.'
+                                                                            : 'Automatické potvrzení blokováno:'}
                                                                         {!autoConfirmEvaluation.wouldConfirm && autoConfirmEvaluation.blockedReasons.length > 0 && (
                                                                             <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
                                                                                 {Array.from(new Set(autoConfirmEvaluation.blockedReasons)).slice(0, 6).map((reason) => (
@@ -5866,21 +5826,19 @@ export default function App() {
                                                                         </div>
                                                                     )}
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                        Auto-confirm režim: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
+                                                                        Automatické potvrzení: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
                                                                     </div>
                                                                     {job.automation?.autoConfirmedAt && (
                                                                         <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
-                                                                            Auto-potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
+                                                                            Automaticky potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
                                                                             {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
                                                                         </div>
                                                                     )}
-                                                                    {(autoConfirmEvaluation.mode === 'dry-run' || autoConfirmEvaluation.mode === 'enabled') && job.status !== 'confirmed' && (
+                                                                    {autoConfirmEvaluation.mode === 'enabled' && job.status !== 'confirmed' && (
                                                                         <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, ...autoConfirmInfoStyle }}>
                                                                             {autoConfirmEvaluation.wouldConfirm
-                                                                                ? (autoConfirmEvaluation.mode === 'dry-run'
-                                                                                    ? 'Automatická kontrola: OK. Tento import by byl automaticky potvrzen.'
-                                                                                    : 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.')
-                                                                                : 'Automatická kontrola: blokováno.'}
+                                                                                ? 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.'
+                                                                                : 'Automatické potvrzení blokováno:'}
                                                                             {!autoConfirmEvaluation.wouldConfirm && autoConfirmEvaluation.blockedReasons.length > 0 && (
                                                                                 <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
                                                                                     {Array.from(new Set(autoConfirmEvaluation.blockedReasons)).slice(0, 6).map((reason) => (

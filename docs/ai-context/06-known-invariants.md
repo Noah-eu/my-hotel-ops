@@ -16,3 +16,4 @@
 ## Safety Invariants
 - `needs_review` only when preview passes safety checks and no blocking mismatch exists.
 - Blocked/suspicious previews must not auto-confirm.
+- Automatic and manual confirmation must go through the same confirm/apply path.
