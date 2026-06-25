@@ -99,6 +99,7 @@ export default function MaintenanceView({
     currentUserId,
     role,
     onCreateMaintenance,
+    onCreateSelfTask,
     onUpdateMaintenance,
     onMaterialNeeded,
     onAcknowledgeTask,
@@ -115,6 +116,7 @@ export default function MaintenanceView({
     currentUserId: string
     role: UserRole
     onCreateMaintenance: (input: { roomNumber?: string; title: string; category: MaintenanceItem['category']; priority: MaintenanceItem['priority']; note?: string }) => void
+    onCreateSelfTask: (input: { roomNumber?: string; title: string; note?: string; priority: Task['priority'] }) => void
     onUpdateMaintenance: (itemId: string, patch: Partial<MaintenanceItem>) => void
     onMaterialNeeded: (itemId: string, materialText: string) => void
     onAcknowledgeTask: (taskId: string) => void
@@ -127,11 +129,16 @@ export default function MaintenanceView({
     t: TranslateFn
 }) {
     const [creating, setCreating] = useState(false)
+    const [creatingSelfTask, setCreatingSelfTask] = useState(false)
     const [newRoom, setNewRoom] = useState('')
     const [newTitle, setNewTitle] = useState('')
     const [newCategory, setNewCategory] = useState<MaintenanceItem['category']>('other')
     const [newPriority, setNewPriority] = useState<MaintenanceItem['priority']>('normal')
     const [newNote, setNewNote] = useState('')
+    const [newSelfTaskRoom, setNewSelfTaskRoom] = useState('')
+    const [newSelfTaskTitle, setNewSelfTaskTitle] = useState('')
+    const [newSelfTaskPriority, setNewSelfTaskPriority] = useState<Task['priority']>('normal')
+    const [newSelfTaskNote, setNewSelfTaskNote] = useState('')
     const [materialInput, setMaterialInput] = useState<Record<string, string>>({})
     const [materialOpenItemId, setMaterialOpenItemId] = useState<string | null>(null)
     const [materialOpenTaskId, setMaterialOpenTaskId] = useState<string | null>(null)
@@ -234,6 +241,21 @@ export default function MaintenanceView({
         setNewPriority('normal')
         setNewCategory('other')
         setCreating(false)
+    }
+
+    function handleCreateSelfTask() {
+        if (!newSelfTaskTitle.trim()) return
+        onCreateSelfTask({
+            roomNumber: newSelfTaskRoom.trim() || undefined,
+            title: newSelfTaskTitle,
+            note: newSelfTaskNote,
+            priority: newSelfTaskPriority
+        })
+        setNewSelfTaskRoom('')
+        setNewSelfTaskTitle('')
+        setNewSelfTaskPriority('normal')
+        setNewSelfTaskNote('')
+        setCreatingSelfTask(false)
     }
 
     // Safe wrappers for incoming props to avoid runtime undefined errors
@@ -451,6 +473,43 @@ export default function MaintenanceView({
                     </div>
                 )}
 
+                {(isMaintenance || isAdmin) && (
+                    <div style={{ marginBottom: 8 }}>
+                        {!creatingSelfTask ? (
+                            <button className="action-large" onClick={() => setCreatingSelfTask(true)}>{t('maintenance.addSelfTask')}</button>
+                        ) : (
+                            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <input
+                                    className="material-input"
+                                    placeholder={t('maintenance.selfTaskTitlePlaceholder')}
+                                    value={newSelfTaskTitle}
+                                    onChange={(e) => setNewSelfTaskTitle(e.target.value)}
+                                />
+                                <input
+                                    className="material-input"
+                                    placeholder={t('maintenance.selfTaskRoomPlaceholder')}
+                                    value={newSelfTaskRoom}
+                                    onChange={(e) => setNewSelfTaskRoom(e.target.value)}
+                                />
+                                <select value={newSelfTaskPriority} onChange={(e) => setNewSelfTaskPriority(e.target.value as Task['priority'])}>
+                                    <option value="normal">{t('maintenance.priority.normal')}</option>
+                                    <option value="urgent">{t('maintenance.priority.urgent')}</option>
+                                </select>
+                                <textarea
+                                    className="new-issue-textarea"
+                                    placeholder={t('maintenance.selfTaskNotePlaceholder')}
+                                    value={newSelfTaskNote}
+                                    onChange={(e) => setNewSelfTaskNote(e.target.value)}
+                                />
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button className="action-large" onClick={handleCreateSelfTask}>{t('maintenance.createSelfTask')}</button>
+                                    <button className="btn" onClick={() => { setCreatingSelfTask(false); setNewSelfTaskTitle('') }}>{t('buttons.cancel')}</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 <h4 className="section-heading">{t('maintenance.roomIssues')}</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {sortedItems.length === 0 && visibleRoomTasks.length === 0 && (
@@ -486,6 +545,11 @@ export default function MaintenanceView({
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                                 <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                                     {task.roomNumber || t('maintenance.unknownRoom')} – {task.title || t('rooms.untitledTask')}
+                                                    {task.createdSource === 'maintenance_self' && (
+                                                        <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: '#e0f2fe', color: '#075985' }}>
+                                                            {t('maintenance.selfCreated')}
+                                                        </span>
+                                                    )}
                                                     <OriginBadge
                                                         input={{
                                                             source: task.source,

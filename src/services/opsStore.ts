@@ -32,6 +32,8 @@ export interface CreateTaskInput {
     category: Task['category']
     priority: Task['priority']
     assignedToRole: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>
+    assignedToUid?: string
+    assignedToName?: string
     note?: string
     createdBy: string
     createdAt: string
@@ -48,6 +50,10 @@ export interface CreateTaskInput {
     createdByRole?: Task['createdByRole']
     importJobId?: string
     importedAt?: string
+    createdSource?: Task['createdSource']
+    completedAt?: string
+    completedByUid?: string
+    completedByName?: string
 }
 
 export interface CreateSupplyRequestInput {

@@ -542,6 +542,8 @@ export function createFirebaseOpsStore(): OpsStore {
                 category: input.category,
                 priority: input.priority,
                 assignedToRole: input.assignedToRole,
+                assignedToUid: input.assignedToUid,
+                assignedToName: input.assignedToName,
                 status: 'new',
                 note: input.note,
                 createdBy: input.createdBy,
@@ -558,7 +560,11 @@ export function createFirebaseOpsStore(): OpsStore {
                 createdByName: input.createdByName,
                 createdByRole: input.createdByRole,
                 importJobId: input.importJobId,
-                importedAt: input.importedAt
+                importedAt: input.importedAt,
+                createdSource: input.createdSource,
+                completedAt: input.completedAt,
+                completedByUid: input.completedByUid,
+                completedByName: input.completedByName
             }
             const { cleaned } = sanitizeForFirestore(task, `tasks.${task.id}`)
             void runWrite('createTask', () => setDoc(doc(firestoreDb, 'hotels', ONLINE_HOTEL_ID, 'tasks', task.id), cleaned))

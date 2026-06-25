@@ -44,6 +44,7 @@ import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, is
 import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolutionPatch, buildCustomSupplyChipKey, buildSupplyStatusPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus, type SupplyChipSection } from './lib/opsUiInvariants'
 import { AppLanguage, createTranslator, getLanguageLocale, LANGUAGE_STORAGE_KEY, resolveLanguage } from './i18n'
 import { canManageStaffAvailability, resolveStaffAvailabilityForDate, upsertStaffAvailabilityRecord } from './lib/teamAvailability'
+import { applyMaintenanceTaskStatus, canCreateMaintenanceSelfTask, createMaintenanceSelfTask } from './lib/maintenanceSelfTask'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -3693,12 +3694,20 @@ export default function App() {
 
     function handleUpdateTaskStatus(taskId: string, status: Task['status']) {
         const now = new Date().toISOString()
-        const actor = currentUser?.name || currentUser?.id || 'staff'
+        const actorName = currentUser?.name || currentUser?.id || 'staff'
+        const actorUid = currentUser?.id
         if (status === 'read') {
             activeStore.updateTask(taskId, {
                 status,
                 acknowledgedAt: now,
-                acknowledgedBy: actor
+                acknowledgedBy: actorName
+            })
+        } else if (status === 'done') {
+            activeStore.updateTask(taskId, {
+                status,
+                completedAt: now,
+                completedByUid: actorUid,
+                completedByName: actorName
             })
         } else {
             activeStore.updateTaskStatus(taskId, status)
@@ -3710,7 +3719,16 @@ export default function App() {
                     ...task,
                     status,
                     acknowledgedAt: task.acknowledgedAt || now,
-                    acknowledgedBy: task.acknowledgedBy || actor
+                    acknowledgedBy: task.acknowledgedBy || actorName
+                }
+            }
+            if (status === 'done') {
+                return {
+                    ...task,
+                    status,
+                    completedAt: now,
+                    completedByUid: actorUid || task.completedByUid,
+                    completedByName: actorName || task.completedByName
                 }
             }
             return { ...task, status }
@@ -4205,19 +4223,74 @@ export default function App() {
     }
 
     function handleMaintenanceTaskAction(taskId: string, action: 'accepted' | 'done' | 'problem' | 'cancelled') {
+        const nowIso = new Date().toISOString()
+        const actorUid = currentUser?.id
+        const actorName = currentUser?.name
+
+        const currentTask = tasks.find((task) => task.id === taskId)
+        if (!currentTask) return
+
+        const nextTask = applyMaintenanceTaskStatus(currentTask, action, { uid: actorUid, name: actorName }, nowIso)
+
         if (runtimeMode === 'online') {
-            activeStore.updateTaskStatus(taskId, action)
+            activeStore.updateTask(taskId, {
+                status: nextTask.status,
+                assignedToUid: nextTask.assignedToUid,
+                assignedToName: nextTask.assignedToName,
+                completedAt: nextTask.completedAt,
+                completedByUid: nextTask.completedByUid,
+                completedByName: nextTask.completedByName
+            })
         }
         setTasks((prev) =>
             prev.map((task) => {
                 if (task.id !== taskId) return task
-                return {
-                    ...task,
-                    status: action,
-                    assignedToName: currentUser?.name || task.assignedToName
-                }
+                return applyMaintenanceTaskStatus(task, action, { uid: actorUid, name: actorName }, nowIso)
             })
         )
+    }
+
+    function handleCreateMaintenanceSelfTask(input: { roomNumber?: string; title: string; note?: string; priority: Task['priority'] }) {
+        if (!currentUser) return
+        if (!canCreateMaintenanceSelfTask(currentUser.role)) return
+        if (!input.title.trim()) return
+
+        const createdAt = formatNowHHmm(new Date())
+        const newTask = createMaintenanceSelfTask({
+            title: input.title,
+            roomNumber: input.roomNumber,
+            note: input.note,
+            priority: input.priority,
+            taskDateIso: effectiveDateIso,
+            createdAt,
+            createdByUid: currentUser.id,
+            createdByName: currentUser.name,
+            createdByRole: currentUser.role
+        })
+
+        if (runtimeMode === 'online') {
+            activeStore.createTask({
+                id: newTask.id,
+                roomNumber: newTask.roomNumber,
+                title: newTask.title,
+                category: newTask.category,
+                priority: newTask.priority,
+                assignedToRole: newTask.assignedToRole,
+                assignedToUid: newTask.assignedToUid,
+                assignedToName: newTask.assignedToName,
+                note: newTask.note,
+                createdBy: newTask.createdBy,
+                createdAt: newTask.createdAt,
+                taskDateIso: newTask.taskDateIso,
+                source: newTask.source,
+                createdSource: newTask.createdSource,
+                createdByUid: newTask.createdByUid,
+                createdByName: newTask.createdByName,
+                createdByRole: newTask.createdByRole
+            })
+        }
+
+        setTasks((prev) => [newTask, ...prev])
     }
 
     function handleRequestMaterial(taskId: string, materialText: string) {
@@ -6365,6 +6438,7 @@ export default function App() {
                                     maintenanceItems={maintenanceItems}
                                     tasks={maintenanceTasks}
                                     onCreateMaintenance={handleCreateMaintenanceItem}
+                                    onCreateSelfTask={handleCreateMaintenanceSelfTask}
                                     onUpdateMaintenance={handleUpdateMaintenanceItem}
                                     onMaterialNeeded={handleMaterialNeeded}
                                     onAcknowledgeTask={handleAcknowledgeMaintenanceTask}

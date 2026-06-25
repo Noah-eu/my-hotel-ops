@@ -350,6 +350,7 @@ export interface Task extends OriginMetadata {
     category: 'cleaning' | 'maintenance' | 'guest_request' | 'supplies' | 'other'
     priority: 'normal' | 'urgent'
     assignedToRole: UserRole
+    assignedToUid?: string
     assignedToName?: string
     status: 'new' | 'read' | 'accepted' | 'in_progress' | 'done' | 'problem' | 'waiting_material' | 'cancelled'
     note?: string
@@ -366,6 +367,10 @@ export interface Task extends OriginMetadata {
     materialNote?: string
     materialRequestedAt?: string
     materialRequestedByName?: string
+    createdSource?: 'maintenance_self'
+    completedAt?: string
+    completedByUid?: string
+    completedByName?: string
 }
 
 export type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'

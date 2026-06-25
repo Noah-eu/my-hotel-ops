@@ -122,6 +122,8 @@ export function createLocalOpsStore(): OpsStore {
                 category: input.category,
                 priority: input.priority,
                 assignedToRole: input.assignedToRole,
+                assignedToUid: input.assignedToUid,
+                assignedToName: input.assignedToName,
                 status: 'new',
                 note: input.note,
                 createdBy: input.createdBy,
@@ -138,7 +140,11 @@ export function createLocalOpsStore(): OpsStore {
                 createdByName: input.createdByName,
                 createdByRole: input.createdByRole,
                 importJobId: input.importJobId,
-                importedAt: input.importedAt
+                importedAt: input.importedAt,
+                createdSource: input.createdSource,
+                completedAt: input.completedAt,
+                completedByUid: input.completedByUid,
+                completedByName: input.completedByName
             }
             withState((state) => ({ ...state, tasks: [task, ...state.tasks] }))
             return task

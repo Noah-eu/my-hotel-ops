@@ -37,3 +37,7 @@ Confirmation must persist merge counters in job metadata:
 ## Reset-to-Waiting Invariant
 - `Zpět na čeká` / Ukrainian equivalent is date-scoped and only clears the visible cleaning completion state for the selected room day.
 - Reset must not delete reservation facts, guest/box/Previo notes, manual tasks, supply requests, or maintenance tickets.
+
+## Maintenance Self-Task Flow
+- Maintenance (and admin) can create self-assigned maintenance tasks from the Maintenance screen; creators are stored in task metadata (`createdByUid`, `createdByName`, `createdByRole`, `createdSource=maintenance_self`).
+- Self-created maintenance tasks use the same task lifecycle as other maintenance tasks; when marked `done`, they move to the same `Hotovo` list and persist completion metadata (`completedAt`, `completedByUid`, `completedByName`).
