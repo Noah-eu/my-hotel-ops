@@ -161,6 +161,10 @@ const cs = {
     'roles.cleaner': 'Úklid',
     'roles.maintenance': 'Údržba',
     'roles.admin': 'Admin',
+    'sheet.help': 'Plachta je orientační přehled z potvrzeného importu a aktuálních stavů pokojů.',
+    'sheet.missingTitle': 'Chybí aktuální data',
+    'sheet.missingDescription': 'Plachta nemá aktuální potvrzená data od dneška. Zkontrolujte import v Adminu.',
+    'sheet.ariaLabel': 'Přehled pokojů napříč importovanými dny',
     'validation.fallbackProbe': 'Záložní čeština'
 } as const
 

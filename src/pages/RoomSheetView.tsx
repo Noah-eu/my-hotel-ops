@@ -2,6 +2,7 @@ import React, { useMemo } from 'react'
 import { RoomPlan } from '../types'
 import { OpsTab } from '../services/opsStore'
 import { buildRoomSheetCellModel, buildSheetRoomsByDate } from '../lib/opsUiInvariants'
+import { createTranslator, resolveLanguage, LANGUAGE_STORAGE_KEY } from '../i18n'
 
 const DEFAULT_ROOM_ORDER = [
     '001',
@@ -22,10 +23,10 @@ const DEFAULT_ROOM_ORDER = [
     '305'
 ]
 
-const PRIMARY_TABS: Array<{ tab: OpsTab; label: string; offset: number }> = [
-    { tab: 'Dnes', label: 'Dnes', offset: 0 },
-    { tab: 'Zitra', label: 'Zítra', offset: 1 },
-    { tab: 'Pozitri', label: 'Pozítří', offset: 2 }
+const PRIMARY_TABS: Array<{ tab: OpsTab; labelKey: string; offset: number }> = [
+    { tab: 'Dnes', labelKey: 'dates.today', offset: 0 },
+    { tab: 'Zitra', labelKey: 'dates.tomorrow', offset: 1 },
+    { tab: 'Pozitri', labelKey: 'dates.dayAfterTomorrow', offset: 2 }
 ]
 
 const MAX_VISIBLE_IMPORTED_DAYS = 7
@@ -74,13 +75,16 @@ export default function RoomSheetView({
     importedRoomsByDate: Record<string, RoomPlan[]>
     activeRoomNumbers: string[]
 }) {
+    const language = useMemo(() => resolveLanguage(typeof window !== 'undefined' ? localStorage.getItem(LANGUAGE_STORAGE_KEY) : undefined), [])
+    const t = useMemo(() => createTranslator(language), [language])
     const tabDateEntries = useMemo(() => (
-        PRIMARY_TABS.map(({ tab, label, offset }) => ({
+        PRIMARY_TABS.map(({ tab, labelKey, offset }) => ({
             tab,
-            label,
+            labelKey,
+            tabLabel: t(labelKey as any),
             dateIso: importedTabDates[tab] || isoForOffset(offset)
         }))
-    ), [importedTabDates])
+    ), [importedTabDates, t])
 
     const roomsByDate = useMemo(() => {
         return buildSheetRoomsByDate(tabDateEntries, roomsByDay, importedRoomsByDate)
@@ -157,27 +161,27 @@ export default function RoomSheetView({
 
     return (
         <div className="section">
-            <h3>Plachta</h3>
-            <div className="room-meta sheet-note">Plachta je orientační přehled z potvrzeného importu a aktuálních stavů pokojů.</div>
+            <h3>{t('nav.sheet' as any)}</h3>
+            <div className="room-meta sheet-note">{t('sheet.help' as any)}</div>
 
             {!hasVisibleImportedDates && (
                 <div className="room-card" style={{ marginTop: 12, borderLeft: '6px solid #dc2626' }}>
-                    <div className="room-number">Chybí aktuální data</div>
-                    <div className="room-meta">Plachta nemá aktuální potvrzená data od dneška. Zkontrolujte import v Adminu.</div>
+                    <div className="room-number">{t('sheet.missingTitle' as any)}</div>
+                    <div className="room-meta">{t('sheet.missingDescription' as any)}</div>
                 </div>
             )}
 
             {hasVisibleImportedDates && (
                 <div className="sheet-wrap">
-                    <div className="sheet-scroll" role="region" aria-label="Přehled pokojů napříč importovanými dny">
+                    <div className="sheet-scroll" role="region" aria-label={t('sheet.ariaLabel' as any)}>
                         <table className="sheet-table">
                             <thead>
                                 <tr>
-                                    <th className="sheet-head-room">Pokoj</th>
+                                        <th className="sheet-head-room">{t('rooms.column.room' as any)}</th>
                                     {dateColumns.map((column) => (
                                         <th key={`sheet-head-${column.dateIso}`} className="sheet-head-date">
                                             <div className="sheet-head-date-main">{column.label}</div>
-                                            {column.tabLabel && <div className="sheet-head-date-tag">{column.tabLabel}</div>}
+                                                {column.tabLabel && <div className="sheet-head-date-tag">{column.tabLabel}</div>}
                                         </th>
                                     ))}
                                 </tr>
