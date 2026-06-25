@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react'
+import { TranslateFn } from '../i18n'
 import { SupplyRequest, UserRole } from '../types'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
 import { buildBoughtArchiveModel, buildSupplyRequestUiBuckets, canManageSupplyLifecycle, canSetSupplyStatus, getCustomSupplyChipsForSection, getSupplyCategoryForChipSection, getSupplyRequestArchiveDate, type SupplyChipSection } from '../lib/opsUiInvariants'
@@ -6,6 +7,7 @@ import { buildBoughtArchiveModel, buildSupplyRequestUiBuckets, canManageSupplyLi
 type Props = {
     userName: string
     role: UserRole
+    t: TranslateFn
     requests: SupplyRequest[]
     customChips: string[]
     onCreateRequest: (input: {
@@ -87,18 +89,18 @@ const categoryByItem: Record<string, SupplyRequest['category']> = {
     Vody: 'other'
 }
 
-function quantityText(level: SupplyRequest['quantityLevel'], customQuantity?: string) {
-    if (level === 'low') return 'Málo'
-    if (level === 'medium') return 'Středně'
-    if (level === 'high') return 'Hodně'
-    return `Množství: ${customQuantity || '-'}`
+function quantityText(t: TranslateFn, level: SupplyRequest['quantityLevel'], customQuantity?: string) {
+    if (level === 'low') return t('supplies.quantity.low')
+    if (level === 'medium') return t('supplies.quantity.medium')
+    if (level === 'high') return t('supplies.quantity.high')
+    return t('supplies.quantity.custom', { value: customQuantity || '-' })
 }
 
-function statusText(status: SupplyRequest['status']) {
-    if (status === 'new' || status === 'approved') return 'Čeká'
-    if (status === 'ordered') return 'Objednáno'
-    if (status === 'delivered' || status === 'handed_over') return 'Koupeno'
-    return 'Zrušeno'
+function statusText(t: TranslateFn, status: SupplyRequest['status']) {
+    if (status === 'new' || status === 'approved') return t('supplies.pending')
+    if (status === 'ordered') return t('supplies.ordered')
+    if (status === 'delivered' || status === 'handed_over') return t('supplies.bought')
+    return t('supplies.cancelled')
 }
 
 function canCancel(role: UserRole, userName: string, request: SupplyRequest) {
@@ -114,6 +116,7 @@ function canCancel(role: UserRole, userName: string, request: SupplyRequest) {
 export default function SuppliesView({
     userName,
     role,
+    t,
     requests,
     customChips,
     onCreateRequest,
@@ -269,7 +272,7 @@ export default function SuppliesView({
             note: undefined,
             roomNumber: undefined
         })
-        setFeedbackText(`Přidáno: ${item}`)
+        setFeedbackText(t('supplies.added', { item }))
     }
 
     function handleCustomChipQuickAdd(item: string, section: SupplyChipSection) {
@@ -281,7 +284,7 @@ export default function SuppliesView({
             note: undefined,
             roomNumber: undefined
         })
-        setFeedbackText(`Přidáno: ${item}`)
+        setFeedbackText(t('supplies.added', { item }))
     }
 
     function handleAddCustomRequest() {
@@ -305,7 +308,7 @@ export default function SuppliesView({
         setCustomPriority('normal')
         setCustomNote('')
         setSaveCustomChip(false)
-        setFeedbackText(`Přidáno: ${itemName}`)
+        setFeedbackText(t('supplies.added', { item: itemName }))
     }
 
     function handleAddMaintenanceRequest() {
@@ -324,11 +327,11 @@ export default function SuppliesView({
         setMaintenanceItem('')
         setMaintenancePriority('normal')
         setMaintenanceNote('')
-        setFeedbackText(`Přidáno: ${itemName}`)
+        setFeedbackText(t('supplies.added', { item: itemName }))
     }
 
     function getCancelLabel(request: SupplyRequest) {
-        return request.status === 'new' ? 'Smazat' : 'Zrušit'
+        return request.status === 'new' ? t('supplies.deleteOrCancel.new') : t('supplies.deleteOrCancel.other')
     }
 
     return (
@@ -349,15 +352,15 @@ export default function SuppliesView({
                                 <button
                                     className={`btn ${selectedCategory === 'uklid' ? 'active' : ''}`}
                                     onClick={() => setSelectedCategory('uklid')}
-                                >Úklid</button>
+                                >{t('supplies.cleaning')}</button>
                                 <button
                                     className={`btn ${selectedCategory === 'vybaveni' ? 'active' : ''}`}
                                     onClick={() => setSelectedCategory('vybaveni')}
-                                >Vybavení</button>
+                                >{t('supplies.equipment')}</button>
                                 <button
                                     className={`btn ${selectedCategory === 'ostatni' ? 'active' : ''}`}
                                     onClick={() => setSelectedCategory('ostatni')}
-                                >Ostatní</button>
+                                >{t('supplies.other')}</button>
                             </div>
                         )}
 
@@ -372,17 +375,17 @@ export default function SuppliesView({
                         </div>
 
                         <div style={{ marginTop: 12 }} className="section" >
-                            <h3 style={{ marginBottom: 8 }}>Jiný požadavek</h3>
+                            <h3 style={{ marginBottom: 8 }}>{t('supplies.otherRequest')}</h3>
                             <input
                                 value={customItem}
                                 onChange={(e) => setCustomItem(e.target.value)}
-                                placeholder="Např. rukavice, nový mop, vůně do koupelny…"
+                                placeholder={t('supplies.customItemPlaceholder')}
                                 style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                             />
                             <input
                                 value={customNote}
                                 onChange={(e) => setCustomNote(e.target.value)}
-                                placeholder="Poznámka (volitelně)"
+                                placeholder={t('supplies.notePlaceholder')}
                                 style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                             />
                             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -391,14 +394,14 @@ export default function SuppliesView({
                                     style={{ border: customPriority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: customPriority === 'normal' ? '#ecfeff' : '#fff' }}
                                     onClick={() => setCustomPriority('normal')}
                                 >
-                                    Normální
+                                    {t('maintenance.priority.normal')}
                                 </button>
                                 <button
                                     className="btn"
                                     style={{ border: customPriority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: customPriority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
                                     onClick={() => setCustomPriority('urgent')}
                                 >
-                                    Urgentní
+                                    {t('maintenance.priority.urgent')}
                                 </button>
                             </div>
                             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, color: '#334155' }}>
@@ -407,9 +410,9 @@ export default function SuppliesView({
                                     checked={saveCustomChip}
                                     onChange={(e) => setSaveCustomChip(e.target.checked)}
                                 />
-                                Uložit jako chip pro příště
+                                {t('supplies.saveChip')}
                             </label>
-                            <button className="action-large" style={{ width: '100%' }} onClick={handleAddCustomRequest}>Přidat požadavek</button>
+                            <button className="action-large" style={{ width: '100%' }} onClick={handleAddCustomRequest}>{t('buttons.addRequest')}</button>
                         </div>
                     </div>
                 </>
@@ -417,18 +420,18 @@ export default function SuppliesView({
 
             {shouldShowMaintenanceForm && (
                 <div className="section" style={{ background: '#fff', border: '1px solid #dbe7f3', borderRadius: 12, padding: 12 }}>
-                    <h3 style={{ marginBottom: 8 }}>Zapsat materiál pro údržbu</h3>
+                    <h3 style={{ marginBottom: 8 }}>{t('supplies.materialNeededTitle')}</h3>
                     <input
                         value={maintenanceItem}
                         onChange={(e) => setMaintenanceItem(e.target.value)}
-                        placeholder="Např. silikon, sifon, žárovka, baterie do zámku…"
+                        placeholder={t('supplies.maintenanceItemPlaceholder')}
                         style={{ width: '100%', minHeight: 42, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                     />
                     {/* room field removed for maintenance requests */}
                     <input
                         value={maintenanceNote}
                         onChange={(e) => setMaintenanceNote(e.target.value)}
-                        placeholder="Poznámka (volitelně)"
+                        placeholder={t('supplies.notePlaceholder')}
                         style={{ width: '100%', minHeight: 38, borderRadius: 10, border: '1px solid #dbe7f3', padding: '8px 10px', marginBottom: 8 }}
                     />
                     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -437,17 +440,17 @@ export default function SuppliesView({
                             style={{ border: maintenancePriority === 'normal' ? '2px solid #0ea5a4' : '1px solid #dbe7f3', background: maintenancePriority === 'normal' ? '#ecfeff' : '#fff' }}
                             onClick={() => setMaintenancePriority('normal')}
                         >
-                            Normální
+                            {t('maintenance.priority.normal')}
                         </button>
                         <button
                             className="btn"
                             style={{ border: maintenancePriority === 'urgent' ? '2px solid #dc2626' : '1px solid #dbe7f3', background: maintenancePriority === 'urgent' ? '#fef2f2' : '#fff', color: '#991b1b' }}
                             onClick={() => setMaintenancePriority('urgent')}
                         >
-                            Urgentní
+                            {t('maintenance.priority.urgent')}
                         </button>
                     </div>
-                    <button className="action-large" style={{ width: '100%' }} onClick={handleAddMaintenanceRequest}>Přidat materiál</button>
+                    <button className="action-large" style={{ width: '100%' }} onClick={handleAddMaintenanceRequest}>{t('buttons.addMaterial')}</button>
                 </div>
             )}
 
@@ -459,7 +462,7 @@ export default function SuppliesView({
                             onClick={() => { setSelectedSubsection('normal'); markSeen('normal') }}
                             style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
                         >
-                            Úklid / běžné nákupy
+                            {t('supplies.cleaningPurchases')}
                             {normalUnseenCount > 0 && <span className="chip-badge">{normalUnseenCount}</span>}
                         </button>
                     )}
@@ -469,7 +472,7 @@ export default function SuppliesView({
                         onClick={() => { setSelectedSubsection('maintenance'); markSeen('maintenance') }}
                         style={{ fontWeight: 800, border: '1px solid #dbe7f3', background: '#fff' }}
                     >
-                        Materiál pro údržbu
+                        {t('supplies.materialForMaintenance')}
                         {maintenanceUnseenCount > 0 && <span className="chip-badge">{maintenanceUnseenCount}</span>}
                     </button>
 
@@ -479,16 +482,16 @@ export default function SuppliesView({
                         style={{ fontWeight: 800, border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#166534' }}
                         onClick={() => setBoughtArchiveOpen(true)}
                     >
-                        Koupeno ({boughtArchive.totalCount})
+                        {t('supplies.bought')} ({boughtArchive.totalCount})
                     </button>
                 </div>
 
                 <div style={{ marginTop: 10 }}>
                     {selectedSubsection === 'maintenance' ? (
                         <div>
-                            <h3>Materiál pro údržbu</h3>
+                            <h3>{t('supplies.materialForMaintenance')}</h3>
                             <div className="room-list">
-                                {maintenanceRequests.length === 0 && <div className="room-card">Žádný materiál pro údržbu</div>}
+                                {maintenanceRequests.length === 0 && <div className="room-card">{t('supplies.noMaintenanceMaterial')}</div>}
                                 {maintenanceRequests.map((request) => (
                                     <div
                                         key={request.id || `${request.itemName}-${request.createdAt}`}
@@ -497,16 +500,16 @@ export default function SuppliesView({
                                     >
                                         <div style={{ flex: 1 }}>
                                             <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                            <div className="room-meta">{request.roomNumber ? `Pokoj ${request.roomNumber}` : 'Zdroj: Údržba'} • {quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
-                                            <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
-                                            {request.linkedTaskId && <div className="room-meta" style={{ marginTop: 6 }}>Úkol: {request.linkedTaskId}</div>}
+                                            <div className="room-meta">{request.roomNumber ? t('supplies.roomLabel', { roomNumber: request.roomNumber }) : t('supplies.sourceMaintenance')} • {quantityText(t, request.quantityLevel, request.customQuantity)} • {statusText(t, request.status)}</div>
+                                            <div className="room-meta">{t('supplies.requestedBy')}: {request.requestedBy} • {request.createdAt}</div>
+                                            {request.linkedTaskId && <div className="room-meta" style={{ marginTop: 6 }}>{t('supplies.taskLabel')}: {request.linkedTaskId}</div>}
                                             {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
                                             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                 {canManageLifecycle && canSetSupplyStatus(request.status, 'ordered') && (
-                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'ordered')}>Objednáno</button>
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'ordered')}>{t('buttons.ordered')}</button>
                                                 )}
                                                 {canManageLifecycle && canSetSupplyStatus(request.status, 'delivered') && (
-                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>Koupeno</button>
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>{t('buttons.bought')}</button>
                                                 )}
                                                 {canCancel(role, userName, request) && (
                                                     <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
@@ -520,9 +523,9 @@ export default function SuppliesView({
                         </div>
                     ) : (
                         <div>
-                            <h3>Čeká</h3>
+                            <h3>{t('supplies.pending')}</h3>
                             <div className="room-list">
-                                {normalNewRequests.length === 0 && <div className="room-card">Bez nových požadavků</div>}
+                                {normalNewRequests.length === 0 && <div className="room-card">{t('supplies.noNewRequests')}</div>}
                                 {normalNewRequests.map((request) => (
                                     <div
                                         key={request.id || `${request.itemName}-${request.createdAt}`}
@@ -531,16 +534,16 @@ export default function SuppliesView({
                                     >
                                         <div style={{ flex: 1 }}>
                                             <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                            <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
-                                            <div className="room-meta">Žádal: {request.requestedBy} • {request.createdAt}</div>
+                                            <div className="room-meta">{quantityText(t, request.quantityLevel, request.customQuantity)} • {statusText(t, request.status)}</div>
+                                            <div className="room-meta">{t('supplies.requestedBy')}: {request.requestedBy} • {request.createdAt}</div>
                                             {/* room number is intentionally hidden in supplies UI */}
                                             {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
                                             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                                 {canManageLifecycle && canSetSupplyStatus(request.status, 'ordered') && (
-                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'ordered')}>Objednáno</button>
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'ordered')}>{t('buttons.ordered')}</button>
                                                 )}
                                                 {canManageLifecycle && canSetSupplyStatus(request.status, 'delivered') && (
-                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>Koupeno</button>
+                                                    <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>{t('buttons.bought')}</button>
                                                 )}
                                                 {canCancel(role, userName, request) && (
                                                     <button className="btn danger" onClick={() => onCancelRequest(request.id)}>{getCancelLabel(request)}</button>
@@ -557,17 +560,17 @@ export default function SuppliesView({
             </div>
 
             <div className="section">
-                <h3>Objednáno</h3>
+                <h3>{t('supplies.ordered')}</h3>
                 <div className="room-list">
-                    {orderedRequests.length === 0 && <div className="room-card">Nic není objednáno</div>}
+                    {orderedRequests.length === 0 && <div className="room-card">{t('supplies.nothingOrdered')}</div>}
                     {orderedRequests.map((request) => (
                         <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #2563eb' }}>
                             <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                <div className="room-meta">{quantityText(t, request.quantityLevel, request.customQuantity)} • {statusText(t, request.status)}</div>
                                 {canManageLifecycle && canSetSupplyStatus(request.status, 'delivered') && (
                                     <div style={{ marginTop: 8 }}>
-                                        <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>Koupeno</button>
+                                        <button className="btn" onClick={() => onSetRequestStatus(request.id, 'delivered')}>{t('buttons.bought')}</button>
                                     </div>
                                 )}
                             </div>
@@ -578,13 +581,13 @@ export default function SuppliesView({
 
             {cancelledRequests.length > 0 && (
                 <div className="section" style={{ opacity: 0.6 }}>
-                    <h3>Zrušené</h3>
+                    <h3>{t('supplies.cancelled')}</h3>
                     <div className="room-list">
                         {cancelledRequests.map((request) => (
                             <div key={request.id} className="room-card">
                                 <div style={{ flex: 1 }}>
                                     <div style={{ fontWeight: 700 }}>{request.itemName}</div>
-                                    <div className="room-meta">{statusText(request.status)}</div>
+                                    <div className="room-meta">{statusText(t, request.status)}</div>
                                 </div>
                             </div>
                         ))}
@@ -596,7 +599,7 @@ export default function SuppliesView({
                 <div
                     role="dialog"
                     aria-modal="true"
-                    aria-label="Koupeno"
+                    aria-label={t('supplies.bought')}
                     style={{
                         position: 'fixed',
                         inset: 0,
@@ -615,12 +618,12 @@ export default function SuppliesView({
                         onClick={(event) => event.stopPropagation()}
                     >
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
-                            <h3 style={{ margin: 0 }}>Koupeno</h3>
-                            <button type="button" className="btn" onClick={() => setBoughtArchiveOpen(false)}>Zavřít</button>
+                            <h3 style={{ margin: 0 }}>{t('supplies.bought')}</h3>
+                            <button type="button" className="btn" onClick={() => setBoughtArchiveOpen(false)}>{t('buttons.close')}</button>
                         </div>
 
                         {boughtArchive.years.length === 0 ? (
-                            <div className="room-card">Zatím nic</div>
+                            <div className="room-card">{t('supplies.noneYet')}</div>
                         ) : (
                             <div style={{ display: 'grid', gap: 10 }}>
                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -662,7 +665,7 @@ export default function SuppliesView({
                                                 <div key={request.id} className="room-card" style={{ borderLeft: '6px solid #059669' }}>
                                                     <div style={{ flex: 1 }}>
                                                         <div style={{ fontWeight: 800 }}>{request.itemName}</div>
-                                                        <div className="room-meta">{quantityText(request.quantityLevel, request.customQuantity)} • {statusText(request.status)}</div>
+                                                            <div className="room-meta">{quantityText(t, request.quantityLevel, request.customQuantity)} • {statusText(t, request.status)}</div>
                                                         <div className="room-meta">{archiveDate.toLocaleString('cs-CZ')}</div>
                                                         {request.note && <div className="note-chip" style={{ marginTop: 6 }}>{request.note}</div>}
                                                     </div>

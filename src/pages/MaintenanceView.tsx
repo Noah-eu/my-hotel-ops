@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Task, MaintenanceItem, UserRole } from '../types'
+import { TranslateFn } from '../i18n'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleaningLeadRole, isMaintenanceRole } from '../lib/roles'
 
@@ -9,22 +10,22 @@ type MaintenanceFocusRequest = {
     targetKind: 'task' | 'item'
 }
 
-function statusLabel(status: MaintenanceItem['status']) {
+function statusLabel(t: TranslateFn, status: MaintenanceItem['status']) {
     switch (status) {
         case 'new':
-            return 'Nový'
+            return t('maintenance.status.new')
         case 'accepted':
-            return 'Převzato'
+            return t('maintenance.status.accepted')
         case 'in_progress':
-            return 'Probíhá'
+            return t('maintenance.status.inProgress')
         case 'done':
-            return 'Hotovo'
+            return t('maintenance.status.done')
         case 'waiting_material':
-            return 'Čeká na materiál'
+            return t('maintenance.status.waitingMaterial')
         case 'cannot_today':
-            return 'Nelze dnes'
+            return t('maintenance.status.cannotToday')
         case 'cancelled':
-            return 'Zrušeno'
+            return t('maintenance.status.cancelled')
         default:
             return status
     }
@@ -106,7 +107,8 @@ export default function MaintenanceView({
     onRequestMaterial,
     onJumpToRoom,
     focusRequest,
-    onFocusResult
+    onFocusResult,
+    t
 }: {
     maintenanceItems: MaintenanceItem[]
     tasks: Task[]
@@ -122,6 +124,7 @@ export default function MaintenanceView({
     onJumpToRoom: (roomNumber?: string) => void
     focusRequest?: MaintenanceFocusRequest | null
     onFocusResult?: (result: { requestId: number; targetId: string; targetKind: 'task' | 'item'; found: boolean }) => void
+    t: TranslateFn
 }) {
     const [creating, setCreating] = useState(false)
     const [newRoom, setNewRoom] = useState('')
@@ -142,27 +145,27 @@ export default function MaintenanceView({
     function categoryLabel(category: MaintenanceItem['category']) {
         switch (category) {
             case 'water':
-                return 'Voda'
+                return t('maintenance.categories.water')
             case 'drain':
-                return 'Odpad'
+                return t('maintenance.categories.drain')
             case 'electricity':
-                return 'Elektrika'
+                return t('maintenance.categories.electricity')
             case 'lock':
-                return 'Zámek'
+                return t('maintenance.categories.lock')
             case 'safe':
-                return 'Sejf'
+                return t('maintenance.categories.safe')
             case 'tv_wifi':
-                return 'TV / WiFi'
+                return t('maintenance.categories.tvWifi')
             case 'heating':
-                return 'Topení'
+                return t('maintenance.categories.heating')
             case 'furniture':
-                return 'Nábytek'
+                return t('maintenance.categories.furniture')
             case 'appliance':
-                return 'Spotřebič'
+                return t('maintenance.categories.appliance')
             case 'room_issue':
-                return 'Problém pokoje'
+                return t('maintenance.categories.roomIssue')
             default:
-                return 'Jiné'
+                return t('maintenance.categories.other')
         }
     }
 
@@ -322,12 +325,12 @@ export default function MaintenanceView({
             >
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                        <div style={{ fontWeight: 800, fontSize: 17, color: '#0f172a' }}>{m.roomNumber ? `Pokoj ${m.roomNumber}` : 'Místo'}</div>
+                        <div style={{ fontWeight: 800, fontSize: 17, color: '#0f172a' }}>{m.roomNumber ? t('supplies.roomLabel', { roomNumber: m.roomNumber }) : t('maintenance.place')}</div>
                         <div style={{ padding: '2px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: m.priority === 'urgent' ? '#fee2e2' : '#ecfeff', color: m.priority === 'urgent' ? '#991b1b' : '#0f766e' }}>
-                            {m.priority === 'urgent' ? 'Urgentní' : 'Normální'}
+                            {m.priority === 'urgent' ? t('maintenance.priority.urgent') : t('maintenance.priority.normal')}
                         </div>
                         <div style={{ padding: '2px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: '#f1f5f9', color: cardStatusColor }}>
-                            {statusLabel(m.status)}
+                            {statusLabel(t, m.status)}
                         </div>
                         <div style={{ fontSize: 12, color: '#475569' }}>{categoryLabel(m.category)}</div>
                     </div>
@@ -349,41 +352,41 @@ export default function MaintenanceView({
                     </div>
 
                     {m.note && <div style={{ fontSize: 14, color: '#334155' }}>{m.note}</div>}
-                    {m.materialNeeded && <div style={{ fontSize: 14, color: '#6b21a8', fontWeight: 600 }}>Materiál: {m.materialNeeded}</div>}
+                    {m.materialNeeded && <div style={{ fontSize: 14, color: '#6b21a8', fontWeight: 600 }}>{t('maintenance.materialLabel')}: {m.materialNeeded}</div>}
                     <div style={{ fontSize: 12, color: '#64748b' }}>
-                        Nahlásil: {m.reportedBy || 'Neznámý'} • Vytvořeno: {formatCreatedAt(m.createdAt)}
-                        {m.assignedTo ? ` • Řeší: ${m.assignedTo}` : ''}
-                        {m.updatedAt ? ` • Aktualizace: ${m.updatedAt}` : ''}
+                        {t('maintenance.reportedBy')}: {m.reportedBy || t('maintenance.unknownReporter')} • {t('maintenance.createdAt')}: {formatCreatedAt(m.createdAt)}
+                        {m.assignedTo ? ` • ${t('maintenance.assignedTo')}: ${m.assignedTo}` : ''}
+                        {m.updatedAt ? ` • ${t('maintenance.updatedAt')}: ${m.updatedAt}` : ''}
                     </div>
 
                     {m.roomNumber && (
-                        <button className="chip" style={{ width: 'fit-content' }} onClick={() => onJumpToRoom(m.roomNumber)}>Přejít na pokoj</button>
+                        <button className="chip" style={{ width: 'fit-content' }} onClick={() => onJumpToRoom(m.roomNumber)}>{t('buttons.goToRoom')}</button>
                     )}
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {unreadForMaintenance && (
-                            <button className="chip" style={{ padding: '8px 10px', borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeMaintenanceItem(m.id)}>Přečteno</button>
+                            <button className="chip" style={{ padding: '8px 10px', borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeMaintenanceItem(m.id)}>{t('buttons.read')}</button>
                         )}
                         {canActAsMaintenance && !m.assignedTo && (
-                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'accepted', assignedTo: currentUserId })}>Převzít</button>
+                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'accepted', assignedTo: currentUserId })}>{t('buttons.takeOver')}</button>
                         )}
                         {canActAsMaintenance && m.status !== 'in_progress' && (
-                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'in_progress' })}>Probíhá</button>
+                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'in_progress' })}>{t('buttons.inProgress')}</button>
                         )}
                         {(isAdmin || isLead || canActAsMaintenance) && (
-                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'done' })}>Hotovo</button>
-                        )}
-
-                        {(isAdmin || isLead || canActAsMaintenance) && (
-                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => setMaterialOpenItemId(materialOpenItemId === m.id ? null : m.id)}>Potřebuji materiál</button>
+                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'done' })}>{t('buttons.done')}</button>
                         )}
 
                         {(isAdmin || isLead || canActAsMaintenance) && (
-                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'cannot_today' })}>Nelze dnes</button>
+                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => setMaterialOpenItemId(materialOpenItemId === m.id ? null : m.id)}>{t('buttons.needMaterial')}</button>
+                        )}
+
+                        {(isAdmin || isLead || canActAsMaintenance) && (
+                            <button className="chip" style={{ padding: '8px 10px' }} onClick={() => onUpdateMaintenance(m.id, { status: 'cannot_today' })}>{t('buttons.cannotToday')}</button>
                         )}
 
                         {isAdmin && (
-                            <button className="chip" style={{ padding: '8px 10px', color: '#b91c1c', borderColor: '#fecaca', background: '#fff1f2' }} onClick={() => onUpdateMaintenance(m.id, { status: 'cancelled' })}>Zrušit</button>
+                            <button className="chip" style={{ padding: '8px 10px', color: '#b91c1c', borderColor: '#fecaca', background: '#fff1f2' }} onClick={() => onUpdateMaintenance(m.id, { status: 'cancelled' })}>{t('buttons.cancel')}</button>
                         )}
                     </div>
 
@@ -391,7 +394,7 @@ export default function MaintenanceView({
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: 8, border: '1px solid #e2e8f0', borderRadius: 8, background: '#faf5ff' }}>
                             <input
                                 className="material-input"
-                                placeholder="Např. silikon, sifon, žárovka…"
+                                placeholder={t('maintenance.materialPlaceholder')}
                                 value={materialInput[m.id] || ''}
                                 onChange={(e) => setMaterialInput((prev) => ({ ...prev, [m.id]: e.target.value }))}
                                 style={{ minWidth: 160, flex: 1 }}
@@ -404,9 +407,9 @@ export default function MaintenanceView({
                                     setMaterialOpenItemId(null)
                                 }}
                             >
-                                Uložit materiál
+                                {t('buttons.saveMaterial')}
                             </button>
-                            <button className="btn" onClick={() => setMaterialOpenItemId(null)}>Zavřít</button>
+                            <button className="btn" onClick={() => setMaterialOpenItemId(null)}>{t('buttons.close')}</button>
                         </div>
                     )}
                 </div>
@@ -417,134 +420,134 @@ export default function MaintenanceView({
     return (
         <div>
             <div className="section">
-                <h3>Údržba</h3>
+                <h3>{t('maintenance.section')}</h3>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                    <button className={`chip ${activeFilter === 'active' ? 'active' : ''}`} onClick={() => setActiveFilter('active')}>Aktivní</button>
-                    <button className={`chip ${activeFilter === 'new' ? 'active' : ''}`} onClick={() => setActiveFilter('new')}>Nové: <strong>{counts.nove}</strong></button>
-                    <button className={`chip ${activeFilter === 'urgent' ? 'active' : ''}`} onClick={() => setActiveFilter('urgent')}>Urgentní: <strong>{counts.urgent}</strong></button>
-                    <button className={`chip ${activeFilter === 'waiting' ? 'active' : ''}`} onClick={() => setActiveFilter('waiting')}>Čeká na materiál: <strong>{counts.waiting}</strong></button>
-                    <button className={`chip ${activeFilter === 'done' ? 'active' : ''}`} onClick={() => setActiveFilter('done')}>Hotovo: <strong>{counts.done}</strong></button>
+                    <button className={`chip ${activeFilter === 'active' ? 'active' : ''}`} onClick={() => setActiveFilter('active')}>{t('maintenance.filters.active')}</button>
+                    <button className={`chip ${activeFilter === 'new' ? 'active' : ''}`} onClick={() => setActiveFilter('new')}>{t('maintenance.filters.new')}: <strong>{counts.nove}</strong></button>
+                    <button className={`chip ${activeFilter === 'urgent' ? 'active' : ''}`} onClick={() => setActiveFilter('urgent')}>{t('maintenance.filters.urgent')}: <strong>{counts.urgent}</strong></button>
+                    <button className={`chip ${activeFilter === 'waiting' ? 'active' : ''}`} onClick={() => setActiveFilter('waiting')}>{t('maintenance.filters.waiting')}: <strong>{counts.waiting}</strong></button>
+                    <button className={`chip ${activeFilter === 'done' ? 'active' : ''}`} onClick={() => setActiveFilter('done')}>{t('maintenance.filters.done')}: <strong>{counts.done}</strong></button>
                 </div>
 
                 {(isAdmin || isLead) && (
                     <div style={{ marginBottom: 8 }}>
                         {!creating ? (
-                            <button className="action-large" onClick={() => setCreating(true)}>Nová závada</button>
+                            <button className="action-large" onClick={() => setCreating(true)}>{t('maintenance.addIssue')}</button>
                         ) : (
                             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
                                 <textarea
                                     className="new-issue-textarea"
-                                    placeholder="Co je potřeba opravit?"
+                                    placeholder={t('maintenance.fixPrompt')}
                                     value={newTitle}
                                     onChange={(e) => setNewTitle(e.target.value)}
                                 />
                                 <div style={{ display: 'flex', gap: 8 }}>
-                                    <button className="action-large" onClick={handleCreate}>Vytvořit závadu</button>
-                                    <button className="btn" onClick={() => { setCreating(false); setNewTitle('') }}>Zrušit</button>
+                                    <button className="action-large" onClick={handleCreate}>{t('maintenance.createIssue')}</button>
+                                    <button className="btn" onClick={() => { setCreating(false); setNewTitle('') }}>{t('buttons.cancel')}</button>
                                 </div>
                             </div>
                         )}
                     </div>
                 )}
 
-                <h4 className="section-heading">Závady</h4>
+                <h4 className="section-heading">{t('maintenance.roomIssues')}</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {sortedItems.length === 0 && visibleRoomTasks.length === 0 && (
-                        <div className="room-card" style={{ color: '#475569' }}>Žádné nahlášené problémy.</div>
+                        <div className="room-card" style={{ color: '#475569' }}>{t('maintenance.noIssues')}</div>
                     )}
                     {sortedItems.map(renderItemCard)}
                 </div>
 
                 {maintenanceRoomTasks.length > 0 && (
                     <div style={{ marginTop: 12 }}>
-                        <h4 className="section-heading">Úkoly z pokojů</h4>
+                        <h4 className="section-heading">{t('maintenance.roomTasks')}</h4>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {visibleRoomTasks
                                 .filter((task) => (task?.status || '') !== 'cancelled')
-                                .map((t) => {
-                                    const unreadForMaintenance = (t.status || '') !== 'done' && (t.status || '') !== 'waiting_material' && !t.maintenanceAcknowledgedAt
-                                    const taskColor = t.status === 'done' ? '#16a34a'
-                                        : t.status === 'waiting_material' ? '#7e22ce'
-                                            : t.status === 'in_progress' ? '#ea580c'
-                                                : (t.priority === 'urgent' ? '#dc2626' : '#0ea5a4')
+                                .map((task) => {
+                                    const unreadForMaintenance = (task.status || '') !== 'done' && (task.status || '') !== 'waiting_material' && !task.maintenanceAcknowledgedAt
+                                    const taskColor = task.status === 'done' ? '#16a34a'
+                                        : task.status === 'waiting_material' ? '#7e22ce'
+                                            : task.status === 'in_progress' ? '#ea580c'
+                                                : (task.priority === 'urgent' ? '#dc2626' : '#0ea5a4')
 
                                     return (
                                         <div
-                                            key={t.id}
-                                            data-maintenance-task-id={t.id}
+                                            key={task.id}
+                                            data-maintenance-task-id={task.id}
                                             className="room-card"
                                             style={{
                                                 borderLeft: `6px solid ${taskColor}`,
                                                 padding: 12,
-                                                ...(highlightTargetKey === `task:${t.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {})
+                                                ...(highlightTargetKey === `task:${task.id}` ? { outline: '2px solid #ef4444', boxShadow: '0 0 0 8px rgba(239,68,68,0.12)' } : {})
                                             }}
                                         >
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                                 <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                    {t.roomNumber || 'Pokoj ?'} – {t.title || 'Bez názvu úkolu'}
+                                                    {task.roomNumber || t('maintenance.unknownRoom')} – {task.title || t('rooms.untitledTask')}
                                                     <OriginBadge
                                                         input={{
-                                                            source: t.source,
-                                                            createdByUid: t.createdByUid,
-                                                            createdByName: t.createdByName,
-                                                            createdByRole: t.createdByRole,
-                                                            createdBy: t.createdBy,
-                                                            importJobId: t.importJobId,
-                                                            importedAt: t.importedAt
+                                                            source: task.source,
+                                                            createdByUid: task.createdByUid,
+                                                            createdByName: task.createdByName,
+                                                            createdByRole: task.createdByRole,
+                                                            createdBy: task.createdBy,
+                                                            importJobId: task.importJobId,
+                                                            importedAt: task.importedAt
                                                         }}
                                                     />
                                                 </div>
                                                 <div style={{ fontSize: 13, color: '#64748b' }}>
-                                                    {t.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {t.status} • Vytvořil: {t.createdBy || 'Neznámý'} • {formatCreatedAt(t.createdAt)}
+                                                    {task.priority === 'urgent' ? t('maintenance.priority.urgent') : t('maintenance.priority.normal')} • {statusLabel(t, task.status)} • {t('maintenance.createdBy')}: {task.createdBy || t('maintenance.unknownReporter')} • {formatCreatedAt(task.createdAt)}
                                                 </div>
-                                                {(t.note || '').trim() && (
+                                                {(task.note || '').trim() && (
                                                     <div style={{ marginTop: 6, color: '#334155', fontSize: 13, lineHeight: 1.35 }}>
-                                                        {(t.note || '').trim()}
+                                                        {(task.note || '').trim()}
                                                     </div>
                                                 )}
-                                                {t.status === 'waiting_material' && (t.materialNote || '').trim() && (
+                                                {task.status === 'waiting_material' && (task.materialNote || '').trim() && (
                                                     <div style={{ marginTop: 6, color: '#6b21a8', fontSize: 13, fontWeight: 700 }}>
-                                                        Materiál: {(t.materialNote || '').trim()}
+                                                        {t('maintenance.materialLabel')}: {(task.materialNote || '').trim()}
                                                     </div>
                                                 )}
                                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                                     {unreadForMaintenance && (
-                                                        <button className="chip" style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeTask(t.id)}>Přečteno</button>
+                                                        <button className="chip" style={{ borderColor: '#fdba74', color: '#9a3412', background: '#ffedd5' }} onClick={() => onAcknowledgeTask(task.id)}>{t('buttons.read')}</button>
                                                     )}
-                                                    {t.status !== 'done' && (
-                                                        <button className="chip" onClick={() => onTaskAction(t.id, 'done')}>Hotovo</button>
+                                                    {task.status !== 'done' && (
+                                                        <button className="chip" onClick={() => onTaskAction(task.id, 'done')}>{t('buttons.done')}</button>
                                                     )}
-                                                    {t.status !== 'accepted' && t.status !== 'in_progress' && t.status !== 'done' && (
-                                                        <button className="chip" onClick={() => onTaskAction(t.id, 'accepted')}>Převzato</button>
+                                                    {task.status !== 'accepted' && task.status !== 'in_progress' && task.status !== 'done' && (
+                                                        <button className="chip" onClick={() => onTaskAction(task.id, 'accepted')}>{t('maintenance.status.accepted')}</button>
                                                     )}
-                                                    {t.roomNumber && (
-                                                        <button className="chip" onClick={() => onJumpToRoom(t.roomNumber)}>Přejít na pokoj</button>
+                                                    {task.roomNumber && (
+                                                        <button className="chip" onClick={() => onJumpToRoom(task.roomNumber)}>{t('buttons.goToRoom')}</button>
                                                     )}
-                                                    {(isAdmin || isLead || isMaintenance || isTaskAssignedToMaintenance(t)) && (t.status !== 'done' && t.status !== 'cancelled') && (
-                                                        <button className="chip" onClick={() => setMaterialOpenTaskId(materialOpenTaskId === t.id ? null : t.id)}>Potřebuji materiál</button>
+                                                    {(isAdmin || isLead || isMaintenance || isTaskAssignedToMaintenance(task)) && (task.status !== 'done' && task.status !== 'cancelled') && (
+                                                        <button className="chip" onClick={() => setMaterialOpenTaskId(materialOpenTaskId === task.id ? null : task.id)}>{t('buttons.needMaterial')}</button>
                                                     )}
                                                 </div>
-                                                {materialOpenTaskId === t.id && (
+                                                {materialOpenTaskId === task.id && (
                                                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingTop: 6 }}>
                                                         <input
                                                             className="material-input"
-                                                            placeholder="Co chybí? Např. silikon, žárovka"
-                                                            value={materialInput[t.id] || ''}
-                                                            onChange={(e) => setMaterialInput((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                                                            placeholder={t('maintenance.materialTaskPlaceholder')}
+                                                            value={materialInput[task.id] || ''}
+                                                            onChange={(e) => setMaterialInput((prev) => ({ ...prev, [task.id]: e.target.value }))}
                                                             style={{ minWidth: 180, flex: 1 }}
                                                         />
                                                         <button
                                                             className="btn"
                                                             onClick={() => {
-                                                                onRequestMaterial?.(t.id, materialInput[t.id] || '')
-                                                                setMaterialInput((prev) => ({ ...prev, [t.id]: '' }))
+                                                                onRequestMaterial?.(task.id, materialInput[task.id] || '')
+                                                                setMaterialInput((prev) => ({ ...prev, [task.id]: '' }))
                                                                 setMaterialOpenTaskId(null)
                                                             }}
                                                         >
-                                                            Uložit materiál
+                                                            {t('buttons.saveMaterial')}
                                                         </button>
-                                                        <button className="btn" onClick={() => setMaterialOpenTaskId(null)}>Zavřít</button>
+                                                        <button className="btn" onClick={() => setMaterialOpenTaskId(null)}>{t('buttons.close')}</button>
                                                     </div>
                                                 )}
                                             </div>

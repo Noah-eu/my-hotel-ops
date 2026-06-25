@@ -40,6 +40,7 @@ import {
 } from './lib/importOperationalMerge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
 import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolutionPatch, buildCustomSupplyChipKey, buildSupplyStatusPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus, type SupplyChipSection } from './lib/opsUiInvariants'
+import { AppLanguage, createTranslator, getLanguageLocale, LANGUAGE_STORAGE_KEY, resolveLanguage } from './i18n'
 import { canManageStaffAvailability, resolveStaffAvailabilityForDate, upsertStaffAvailabilityRecord } from './lib/teamAvailability'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
@@ -1056,6 +1057,14 @@ export default function App() {
     const [customSupplyChips, setCustomSupplyChips] = useState<string[]>(() => saved?.customSupplyChips ?? [])
     const [dailyAvailabilityRecords, setDailyAvailabilityRecords] = useState<StaffAvailabilityRecord[]>(() => saved?.dailyAvailabilityRecords ?? [])
     const [staff, setStaff] = useState<StaffMember[]>(() => saved?.staff ?? users)
+    const [language, setLanguage] = useState<AppLanguage>(() => {
+        if (typeof window === 'undefined') return 'cs'
+        try {
+            return resolveLanguage(window.localStorage.getItem(LANGUAGE_STORAGE_KEY))
+        } catch (e) {
+            return 'cs'
+        }
+    })
     const [roomCatalog, setRoomCatalog] = useState<RoomCatalogItem[]>(() => getDefaultRoomCatalog())
     const [importPdfStatus, setImportPdfStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
     const [importPdfError, setImportPdfError] = useState<string | null>(null)
@@ -1137,6 +1146,8 @@ export default function App() {
     const realUserRole = (currentUser?.role || 'cleaner') as UserRole
     const isRealAdminUser = isAdminRole(realUserRole)
     const isAdminUser = isRealAdminUser
+    const t = useMemo(() => createTranslator(language), [language])
+    const languageLocale = useMemo(() => getLanguageLocale(language), [language])
     const debugEnabled = useMemo(() => {
         if (typeof window === 'undefined') return Boolean(import.meta.env.DEV)
         try {
@@ -1178,10 +1189,16 @@ export default function App() {
             try { window.localStorage.removeItem(PREVIEW_ROLE_KEY) } catch (e) { }
         }
     }, [isRealAdminUser])
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        try {
+            window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language)
+        } catch (e) { }
+    }, [language])
     const enableDangerousReset = isRealAdminUser && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_DANGEROUS_ACTIONS === 'true')
     const showInstallHint = isRealAdminUser && !isStandalone && !installHintDismissed
 
-    const dayTitle = tab === 'Dnes' ? 'Dnes' : tab === 'Zitra' ? 'Zítra' : 'Pozítří'
+    const dayTitle = tab === 'Dnes' ? t('dates.today') : tab === 'Zitra' ? t('dates.tomorrow') : t('dates.dayAfterTomorrow')
     const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
     const fallbackTabDate = new Date(Date.now() + tabOffsetDays * 24 * 60 * 60 * 1000)
     const selectedTabDateIso = importedTabDates[tab] || fallbackTabDate.toISOString().slice(0, 10)
@@ -1193,16 +1210,16 @@ export default function App() {
     const effectiveDate = new Date(effectiveDateIso)
     const showOrientationNote = tab !== 'Dnes' || isExtraImportedDay
     const dayLabelPrefix = isExtraImportedDay ? 'Další den' : dayTitle
-    const dayLabel = `${dayLabelPrefix} • ${effectiveDate.toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
+    const dayLabel = `${dayLabelPrefix} • ${effectiveDate.toLocaleDateString(languageLocale, { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
     const displayedRooms = selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso]
         ? importedRoomsByDate[selectedImportedDateIso]
         : roomsByDay[tab]
 
     const dateSelectorItems = useMemo(() => {
         const primaryTabs: Array<{ tab: OpsTab; label: string }> = [
-            { tab: 'Dnes', label: 'Dnes' },
-            { tab: 'Zitra', label: 'Zítra' },
-            { tab: 'Pozitri', label: 'Pozítří' }
+            { tab: 'Dnes', label: t('dates.today') },
+            { tab: 'Zitra', label: t('dates.tomorrow') },
+            { tab: 'Pozitri', label: t('dates.dayAfterTomorrow') }
         ]
 
         const primaryDateSet = new Set(
@@ -1242,7 +1259,7 @@ export default function App() {
         }))
 
         return [...primaryItems, ...extraItems]
-    }, [importedRoomsByDate, importedTabDates, selectedImportedDateIso, tab])
+    }, [importedRoomsByDate, importedTabDates, selectedImportedDateIso, tab, t])
 
     // Normalize selectedImportedDateIso if it points to a past date (never allow past selection)
     useEffect(() => {
@@ -4939,13 +4956,25 @@ export default function App() {
         }
     }
 
+    function roleLabelForUi(role: UserRole) {
+        if (role === 'admin') return t('roles.admin')
+        if (role === 'lead' || role === 'iryna') return t('roles.lead')
+        if (role === 'maintenance') return t('roles.maintenance')
+        return t('roles.cleaner')
+    }
+
     return (
         <div className="app">
             <div className="topbar">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <div className="title">{APP_SHORT_NAME}</div>
                     <div style={{ fontSize: 11, color: '#64748b', border: '1px solid #cbd5e1', borderRadius: 999, padding: '2px 8px' }}>
                         {diagnostics.activeMode === 'online' ? 'Online režim' : diagnostics.activeMode === 'fallback' ? 'Fallback režim' : 'Demo režim'}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginLeft: 8 }}>
+                        <span style={{ fontSize: 12, color: '#475569' }}>{t('language.switch')}</span>
+                        <button className={`chip ${language === 'cs' ? 'active' : ''}`} onClick={() => setLanguage('cs')}>{t('language.cs')}</button>
+                        <button className={`chip ${language === 'uk' ? 'active' : ''}`} onClick={() => setLanguage('uk')}>{t('language.uk')}</button>
                     </div>
                     {isAdminUser && (
                         <div style={{ marginLeft: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -5011,7 +5040,7 @@ export default function App() {
                         <div style={{ fontSize: 13, color: '#334155' }}>
                             {onlineProfile ? (
                                 <>
-                                    <strong>{onlineProfile.name}</strong> • {roleLabel(onlineProfile.role)}
+                                    <strong>{onlineProfile.name}</strong> • {roleLabelForUi(onlineProfile.role)}
                                 </>
                             ) : authUser?.isAnonymous ? (
                                 <>Anonymní přihlášení</>
@@ -5125,14 +5154,14 @@ export default function App() {
 
                         <div className="main-nav" aria-label="Hlavní navigace">
                             <div className="main-nav-track">
-                                <button className={`nav-tab ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>Pokoje</button>
-                                <button className={`nav-tab ${view === 'sheet' ? 'active' : ''}`} onClick={() => setView('sheet')}>Plachta</button>
-                                <button className={`nav-tab ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}>Tým</button>
+                                <button className={`nav-tab ${view === 'today' ? 'active' : ''}`} onClick={() => setView('today')}>{t('nav.rooms')}</button>
+                                <button className={`nav-tab ${view === 'sheet' ? 'active' : ''}`} onClick={() => setView('sheet')}>{t('nav.sheet')}</button>
+                                <button className={`nav-tab ${view === 'team' ? 'active' : ''}`} onClick={() => setView('team')}>{t('nav.team')}</button>
                                 {isAdminUser && (
                                     <button className={`nav-tab ${view === 'admin' ? 'active' : ''}`} onClick={() => setView('admin')}>Admin</button>
                                 )}
-                                <button className={`nav-tab ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>Údržba</button>
-                                <button className={`nav-tab ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>Nákupy</button>
+                                <button className={`nav-tab ${view === 'maintenance' ? 'active' : ''}`} onClick={() => setView('maintenance')}>{t('nav.maintenance')}</button>
+                                <button className={`nav-tab ${view === 'supplies' ? 'active' : ''}`} onClick={() => setView('supplies')}>{t('nav.supplies')}</button>
                             </div>
                         </div>
 
@@ -5177,6 +5206,7 @@ export default function App() {
                                     currentUserId={userId}
                                     currentUserName={currentUser?.name}
                                     staff={staffWithTodayAvailability}
+                                    t={t}
                                     focusLateTaskRoomRequest={lateTaskRoomFocusRequest}
                                     onFocusLateTaskRoomResult={handleLateTaskFocusResult}
                                     readOnly={isExtraImportedDay}
@@ -5195,6 +5225,7 @@ export default function App() {
                                     staff={staffWithEffectiveAvailability}
                                     role={realUserRole}
                                     currentUserId={currentUser?.id || userId}
+                                    t={t}
                                     onSetAvailability={setStaffAvailability}
                                 />
                             )}
@@ -6347,6 +6378,7 @@ export default function App() {
                                 <MaintenanceView
                                     role={(effectiveRole || 'cleaner') as UserRole}
                                     currentUserId={userId}
+                                    t={t}
                                     maintenanceItems={maintenanceItems}
                                     tasks={maintenanceTasks}
                                     onCreateMaintenance={handleCreateMaintenanceItem}
@@ -6365,6 +6397,7 @@ export default function App() {
                                 <SuppliesView
                                     userName={currentUser?.name || 'Uživatel'}
                                     role={(effectiveRole || 'cleaner') as UserRole}
+                                    t={t}
                                     requests={visibleSupplies}
                                     customChips={customSupplyChips}
                                     onCreateRequest={handleCreateSupplyRequest}

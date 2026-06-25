@@ -19,3 +19,9 @@
 - Team counters and staff cards must resolve from the same shared selected-date availability data; they must not depend on the current viewer.
 - Only real authenticated admins can change another staff member's availability. Non-admin staff can change only their own availability.
 - Preview role must never be used as authority for Team availability writes.
+
+## Staff Language Preference
+- Staff-facing UI supports Czech and Ukrainian only; admin/import/debug surfaces may remain Czech.
+- The selected language is a viewer-local preference stored in `localStorage` under `hotelOpsLanguage`.
+- Missing Ukrainian translation keys must fall back to Czech.
+- Translate only UI chrome for staff views; do not translate guest names, room numbers, Previo notes, user-entered free text, quick-task operational labels, or custom supply chip/request item labels.

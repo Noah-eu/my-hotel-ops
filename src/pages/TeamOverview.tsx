@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react'
 import { UserRole } from '../types'
-import { roleLabel } from '../lib/roles'
+import { TranslateFn } from '../i18n'
 import { canManageStaffAvailability, dedupeSharedTeamMembers, summarizeTeamAvailability } from '../lib/teamAvailability'
 
 type Availability = 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni'
@@ -16,13 +16,14 @@ type TeamOverviewProps = {
     staff: TeamMember[]
     role: UserRole
     currentUserId: string
+    t: TranslateFn
     onSetAvailability: (id: string, availability: Availability) => void
 }
 
-function availabilityLabel(availability?: Availability) {
-    if (availability === 'dnes_pracuji') return 'Pracuje dnes'
-    if (availability === 'jen_urgentni') return 'Jen urgentní'
-    return 'Nepracuje dnes'
+function availabilityLabel(t: TranslateFn, availability?: Availability) {
+    if (availability === 'dnes_pracuji') return t('team.statusWorking')
+    if (availability === 'jen_urgentni') return t('team.urgentOnly')
+    return t('team.statusNotWorking')
 }
 
 function availabilityColor(availability?: Availability) {
@@ -31,23 +32,30 @@ function availabilityColor(availability?: Availability) {
     return '#94a3b8'
 }
 
-export default function TeamOverview({ staff, role, currentUserId, onSetAvailability }: TeamOverviewProps) {
+function roleLabelForUi(t: TranslateFn, role: UserRole) {
+    if (role === 'admin') return t('roles.admin')
+    if (role === 'lead' || role === 'iryna') return t('roles.lead')
+    if (role === 'maintenance') return t('roles.maintenance')
+    return t('roles.cleaner')
+}
+
+export default function TeamOverview({ staff, role, currentUserId, t, onSetAvailability }: TeamOverviewProps) {
     const uniqueStaff = useMemo(() => dedupeSharedTeamMembers(staff), [staff])
     const summary = useMemo(() => summarizeTeamAvailability(uniqueStaff), [uniqueStaff])
 
     return (
         <div className="section">
-            <div className="team-summary-row" aria-label="Souhrn týmu">
+            <div className="team-summary-row" aria-label={t('team.summary')}>
                 <div className="team-summary-chip team-summary-working">
-                    <span className="team-summary-label">V práci</span>
+                    <span className="team-summary-label">{t('team.working')}</span>
                     <strong className="team-summary-value">{summary.working}</strong>
                 </div>
                 <div className="team-summary-chip team-summary-urgent">
-                    <span className="team-summary-label">Jen urgentní</span>
+                    <span className="team-summary-label">{t('team.urgentOnly')}</span>
                     <strong className="team-summary-value">{summary.urgentOnly}</strong>
                 </div>
                 <div className="team-summary-chip team-summary-off">
-                    <span className="team-summary-label">Nepracují</span>
+                    <span className="team-summary-label">{t('team.notWorking')}</span>
                     <strong className="team-summary-value">{summary.notWorking}</strong>
                 </div>
             </div>
@@ -62,16 +70,16 @@ export default function TeamOverview({ staff, role, currentUserId, onSetAvailabi
                                     <span className="team-dot" style={{ background: availabilityColor(member.availability) }} />
                                     <div style={{ minWidth: 0 }}>
                                         <div className="team-name">{member.name}</div>
-                                        <div className="team-role">{roleLabel(member.role)}</div>
+                                        <div className="team-role">{roleLabelForUi(t, member.role)}</div>
                                     </div>
                                 </div>
-                                <div className="team-status">{availabilityLabel(member.availability)}</div>
+                                <div className="team-status">{availabilityLabel(t, member.availability)}</div>
                             </div>
 
                             <div className="team-actions">
-                                <button className="chip" disabled={!editable} onClick={() => onSetAvailability(member.id, 'dnes_pracuji')}>Pracuji</button>
-                                <button className="chip" disabled={!editable} onClick={() => onSetAvailability(member.id, 'dnes_nepracuji')}>Nepracuji</button>
-                                <button className="chip" disabled={!editable} onClick={() => onSetAvailability(member.id, 'jen_urgentni')}>Jen urgentní</button>
+                                <button className="chip" disabled={!editable} onClick={() => onSetAvailability(member.id, 'dnes_pracuji')}>{t('buttons.working')}</button>
+                                <button className="chip" disabled={!editable} onClick={() => onSetAvailability(member.id, 'dnes_nepracuji')}>{t('buttons.notWorking')}</button>
+                                <button className="chip" disabled={!editable} onClick={() => onSetAvailability(member.id, 'jen_urgentni')}>{t('buttons.urgentOnly')}</button>
                             </div>
                         </div>
                     )

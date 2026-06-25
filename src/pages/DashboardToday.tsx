@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { MaintenanceItem, RoomPlan, Task, UserRole } from '../types'
+import { TranslateFn } from '../i18n'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from '../lib/roles'
-import { getCarryOverBadgeLabel } from '../lib/opsUiInvariants'
+import { isTodayRoomEligibleForCarryOver } from '../lib/roomHelpers'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -170,7 +171,7 @@ function normalizeRoomNumber(value?: string) {
 
 function getVisibleRoomProblemNote(room: RoomPlan, maintenanceItems: MaintenanceItem[]) {
     if (room.checkoutException) {
-        return room.statusNote?.trim() || 'Host neodešel'
+        return room.statusNote?.trim() || null
     }
 
     const roomStatusNote = room.statusNote?.trim()
@@ -189,30 +190,30 @@ function getVisibleRoomProblemNote(room: RoomPlan, maintenanceItems: Maintenance
     return hasActiveRoomIssue ? roomStatusNote : null
 }
 
-function taskStatusLabel(status: Task['status']) {
+function taskStatusLabel(t: TranslateFn, status: Task['status']) {
     switch (status) {
         case 'new':
-            return 'Nový'
+            return t('maintenance.status.new')
         case 'read':
-            return 'Přečteno'
+            return t('buttons.read')
         case 'accepted':
-            return 'Převzato'
+            return t('maintenance.status.accepted')
         case 'in_progress':
-            return 'Probíhá'
+            return t('maintenance.status.inProgress')
         case 'done':
-            return 'Hotovo'
+            return t('maintenance.status.done')
         case 'problem':
-            return 'Problém'
+            return t('rooms.problem')
         case 'cancelled':
-            return 'Zrušeno'
+            return t('maintenance.status.cancelled')
         default:
             return status
     }
 }
 
-function getTaskDetailText(task: Task) {
+function getTaskDetailText(t: TranslateFn, task: Task) {
     if ((task.status || '') === 'waiting_material' && (task.materialNote || '').trim()) {
-        return `Čeká na materiál: ${(task.materialNote || '').trim()}`
+        return `${t('maintenance.status.waitingMaterial')}: ${(task.materialNote || '').trim()}`
     }
     return task.note?.trim() || ''
 }
@@ -228,6 +229,7 @@ export default function DashboardToday({
     onReportProblem,
     role,
     dayLabel,
+    t,
     currentUserId,
     currentUserName,
     staff,
@@ -247,6 +249,7 @@ export default function DashboardToday({
     onReportProblem: (roomId: string, input: ReportRoomProblemInput) => void
     role: UserRole
     dayLabel: string
+    t: TranslateFn
     currentUserId: string
     currentUserName?: string
     staff: Array<{ id: string; name: string; role: UserRole; availability?: 'dnes_pracuji' | 'dnes_nepracuji' | 'jen_urgentni' }>
@@ -376,7 +379,7 @@ export default function DashboardToday({
         const effectiveTaskNote = isQuickTask ? textValue : undefined
 
         if (!effectiveTaskTitle) {
-            setTaskFormError('Napište, co je potřeba udělat.')
+            setTaskFormError(t('rooms.taskHint'))
             return
         }
 
@@ -398,7 +401,7 @@ export default function DashboardToday({
             setTaskFormError(null)
         } catch (error: any) {
             console.error('[task-create] save failed', error)
-            setTaskFormError(error?.message || 'Úkol se nepodařilo uložit. Zkuste to prosím znovu.')
+            setTaskFormError(error?.message || t('rooms.taskSaveFailed'))
         }
     }
 
@@ -420,7 +423,7 @@ export default function DashboardToday({
     function submitProblem(roomId: string) {
         if (readOnly) return
         if (!problemText.trim()) {
-            setProblemFormError('Popište problém.')
+            setProblemFormError(t('rooms.problemHint'))
             return
         }
 
@@ -435,7 +438,7 @@ export default function DashboardToday({
             setProblemFormError(null)
         } catch (error: any) {
             console.error('[problem-report] save failed', error)
-            setProblemFormError(error?.message || 'Problém se nepodařilo uložit. Zkuste to prosím znovu.')
+            setProblemFormError(error?.message || t('rooms.problemSaveFailed'))
         }
     }
 
@@ -460,36 +463,60 @@ export default function DashboardToday({
     function statusLabel(status: RoomPlan['status']) {
         switch (status) {
             case 'ceka':
-                return 'Čeká'
+                return t('rooms.waiting')
             case 'problem':
-                return 'Problém'
+                return t('rooms.problem')
             case 'prevzato':
-                return 'Převzato'
+                return t('maintenance.status.accepted')
             case 'probihá':
-                return 'Probíhá'
+                return t('maintenance.status.inProgress')
             case 'odhad':
-                return 'Odhad'
+                return t('buttons.estimate')
             case 'hotovo':
-                return 'Hotovo'
+                return t('buttons.done')
             default:
-                return 'Volno'
+                return t('rooms.confirmedFree')
         }
     }
 
     function nextArrivalText(room: RoomPlan) {
         if (!room.nextArrivalPreview) return null
-        const nextDayLabel = room.nextArrivalPreview.day === 'zitra' ? 'zítra' : 'pozítří'
-        return `Další příjezd: ${nextDayLabel} ${room.nextArrivalPreview.time}`
+        const nextDayLabel = room.nextArrivalPreview.day === 'zitra' ? t('dates.tomorrow').toLowerCase() : t('dates.dayAfterTomorrow').toLowerCase()
+        return t('rooms.nextArrival', { dayLabel: nextDayLabel, time: room.nextArrivalPreview.time })
     }
 
     function taskAssigneeHint(roleToAssign: Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>) {
         const candidates = staff.filter(s => s.role === roleToAssign)
         if (candidates.length === 0) return ''
         const working = candidates.filter(c => c.availability === 'dnes_pracuji')
-        if (working.length > 0) return `Dostupní: ${working.map(w => w.name).join(', ')}`
+        if (working.length > 0) return t('rooms.assigneeAvailable', { names: working.map(w => w.name).join(', ') })
         const urgentOnly = candidates.filter(c => c.availability === 'jen_urgentni')
-        if (urgentOnly.length > 0) return `Pouze urgentní: ${urgentOnly.map(w => w.name).join(', ')}`
-        return `${candidates.map(c => c.name).join(', ')} dnes nepracuje`
+        if (urgentOnly.length > 0) return t('rooms.assigneeUrgentOnly', { names: urgentOnly.map(w => w.name).join(', ') })
+        return t('rooms.assigneeNotWorking', { names: candidates.map(c => c.name).join(', ') })
+    }
+
+    function roleLabelForUi(roleValue: UserRole) {
+        switch (roleValue) {
+            case 'lead':
+                return t('roles.lead')
+            case 'cleaner':
+                return t('roles.cleaner')
+            case 'maintenance':
+                return t('roles.maintenance')
+            case 'admin':
+                return t('roles.admin')
+            default:
+                return roleLabel(roleValue)
+        }
+    }
+
+    function carryOverBadgeLabel(room: RoomPlan, carryDateIso?: string) {
+        if (!carryDateIso) return null
+        if (!isTodayRoomEligibleForCarryOver(room)) return null
+        if (room.status === 'hotovo') return null
+
+        const date = new Date(`${carryDateIso}T00:00:00`)
+        return t('rooms.carryOverFrom', { date: `${date.getDate()}.${date.getMonth() + 1}.` })
     }
 
     function isStateOnlyRoom(room: RoomPlan) {
@@ -534,19 +561,19 @@ export default function DashboardToday({
             <div className="selected-date-block">
                 <div className="selected-date-main">{dayLabelDisplay}</div>
             </div>
-            {readOnly && <div className="room-meta" style={{ marginBottom: 8, color: '#0c4a6e', fontWeight: 700 }}>Náhled importovaného dne mimo Dnes/Zítra/Pozítří je pouze pro čtení.</div>}
+            {readOnly && <div className="room-meta" style={{ marginBottom: 8, color: '#0c4a6e', fontWeight: 700 }}>{t('rooms.readOnlyImportedDay')}</div>}
 
             <div className="daily-table">
-                <div className="daily-summary" aria-label="Denní souhrn pokojů">
-                    <div className="daily-summary-chip summary-departures"><span className="daily-summary-label">Odjezdy</span><strong className="daily-summary-value">{dailySummary.departures}</strong></div>
-                    <div className="daily-summary-chip summary-arrivals"><span className="daily-summary-label">Příjezdy</span><strong className="daily-summary-value">{dailySummary.arrivals}</strong></div>
-                    <div className="daily-summary-chip summary-occupied"><span className="daily-summary-label">Obsazené</span><strong className="daily-summary-value">{dailySummary.occupied}</strong></div>
-                    <div className="daily-summary-chip summary-free"><span className="daily-summary-label">Volné</span><strong className="daily-summary-value">{dailySummary.free}</strong></div>
+                <div className="daily-summary" aria-label={t('rooms.dailySummary')}>
+                    <div className="daily-summary-chip summary-departures"><span className="daily-summary-label">{t('rooms.summary.departures')}</span><strong className="daily-summary-value">{dailySummary.departures}</strong></div>
+                    <div className="daily-summary-chip summary-arrivals"><span className="daily-summary-label">{t('rooms.summary.arrivals')}</span><strong className="daily-summary-value">{dailySummary.arrivals}</strong></div>
+                    <div className="daily-summary-chip summary-occupied"><span className="daily-summary-label">{t('rooms.summary.occupied')}</span><strong className="daily-summary-value">{dailySummary.occupied}</strong></div>
+                    <div className="daily-summary-chip summary-free"><span className="daily-summary-label">{t('rooms.summary.free')}</span><strong className="daily-summary-value">{dailySummary.free}</strong></div>
                 </div>
                 <div className="daily-table-header">
-                    <div>Pokoj</div>
-                    <div>Odjezd</div>
-                    <div>Příjezd</div>
+                    <div>{t('rooms.column.room')}</div>
+                    <div>{t('rooms.column.departure')}</div>
+                    <div>{t('rooms.column.arrival')}</div>
                 </div>
 
                 {rooms.map((room, index) => {
@@ -603,9 +630,9 @@ export default function DashboardToday({
                                 <div className="room-col">
                                     <div className="room-no">{room.number}</div>
                                     {room.occupiedConfirmed ? (
-                                        <div className="mini-badge mini-badge-stayover">Obsazeno / pobyt</div>
+                                        <div className="mini-badge mini-badge-stayover">{t('rooms.occupiedStayover')}</div>
                                     ) : room.freeConfirmed ? (
-                                        <div className="mini-badge mini-badge-free">Potvrzeně volný</div>
+                                        <div className="mini-badge mini-badge-free">{t('rooms.confirmedFree')}</div>
                                     ) : (
                                         <div className="mini-badge">{statusLabel(displayStatus)}</div>
                                     )}
@@ -614,7 +641,7 @@ export default function DashboardToday({
                                     {(() => {
                                         const normalized = normalizeRoomNumber(room.number)
                                         const carryDate = unfinishedCarryOvers && unfinishedCarryOvers[normalized]
-                                        const label = getCarryOverBadgeLabel(room, carryDate)
+                                        const label = carryOverBadgeLabel(room, carryDate)
                                         if (label) {
                                             return (
                                                 <div style={{ marginTop: 6, padding: '2px 8px', borderRadius: 999, background: '#fff1f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: 12, fontWeight: 800, display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -625,7 +652,7 @@ export default function DashboardToday({
                                                         onClick={() => onAction(room.id, 'resolve_carry_over')}
                                                         disabled={readOnly}
                                                     >
-                                                        Vyřešeno
+                                                        {t('buttons.resolved')}
                                                     </button>
                                                 </div>
                                             )
@@ -633,20 +660,20 @@ export default function DashboardToday({
                                         return null
                                     })()}
                                     {room.occupiedConfirmed && room.stayoverGuestName && <div className="mini-muted mini-muted-stayover">{room.stayoverGuestName}</div>}
-                                    {room.freeConfirmed && <div className="mini-muted mini-muted-free">Pokoj je dostupný při volné kapacitě.</div>}
+                                    {room.freeConfirmed && <div className="mini-muted mini-muted-free">{t('rooms.availableWhenCapacity')}</div>}
                                     {hasLateTaskAlert && (
                                         <div style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 999, padding: '2px 8px' }}>
                                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f97316', display: 'inline-block' }} />
-                                            Nový úkol{lateAttentionTasks.length > 1 ? ` (${lateAttentionTasks.length})` : ''}
+                                            {t('rooms.newTask')}{lateAttentionTasks.length > 1 ? ` (${lateAttentionTasks.length})` : ''}
                                         </div>
                                     )}
                                     {room.checkoutException && (
                                         <div style={{ marginTop: 6, padding: '4px 6px', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2' }}>
                                             <div style={{ fontSize: 12, fontWeight: 800, color: '#b91c1c', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                {visibleRoomProblemNote || 'Host neodešel'}
+                                                {visibleRoomProblemNote || t('rooms.guestDidNotLeave')}
                                                 <OriginBadge input={roomOrigin} />
                                             </div>
-                                            <button className="chip" style={{ marginTop: 4, fontSize: 11, padding: '4px 8px' }} onClick={() => onAction(room.id, 'clear_exception')} disabled={readOnly || stateOnlyRoom}>Vyřešeno</button>
+                                            <button className="chip" style={{ marginTop: 4, fontSize: 11, padding: '4px 8px' }} onClick={() => onAction(room.id, 'clear_exception')} disabled={readOnly || stateOnlyRoom}>{t('buttons.resolved')}</button>
                                         </div>
                                     )}
                                     {!room.checkoutException && visibleRoomProblemNote && (
@@ -718,11 +745,11 @@ export default function DashboardToday({
                                                         className="note-chip"
                                                         style={{ cursor: 'pointer', border: '1px solid #bfdbfe', background: '#eff6ff' }}
                                                         onClick={() => !readOnly && onUpdateTaskStatus(task.id, 'done')}
-                                                        title="Označit jako hotovo"
+                                                        title={t('rooms.markDone')}
                                                         disabled={readOnly}
                                                     >
                                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                                                            <span>{task.title || 'Bez názvu úkolu'}</span>
+                                                            <span>{task.title || t('rooms.untitledTask')}</span>
                                                             <OriginBadge
                                                                 input={{
                                                                     source: task.source,
@@ -738,8 +765,8 @@ export default function DashboardToday({
                                             </div>
                                             {room.estimatedReady && (
                                                 <div className="plan-ready">
-                                                    Odhad: {room.estimatedReady}
-                                                    {room.estimateSetAt ? ` (zadán v ${room.estimateSetAt})` : ''}
+                                                    {t('rooms.estimateReady')}: {room.estimatedReady}
+                                                    {room.estimateSetAt ? ` ${t('rooms.estimateSetAt', { time: room.estimateSetAt })}` : ''}
                                                 </div>
                                             )}
                                         </>
@@ -748,8 +775,8 @@ export default function DashboardToday({
                                             <div className="plan-empty">—</div>
                                             {room.estimatedReady && (
                                                 <div className="plan-ready">
-                                                    Odhad: {room.estimatedReady}
-                                                    {room.estimateSetAt ? ` (zadán v ${room.estimateSetAt})` : ''}
+                                                    {t('rooms.estimateReady')}: {room.estimatedReady}
+                                                    {room.estimateSetAt ? ` ${t('rooms.estimateSetAt', { time: room.estimateSetAt })}` : ''}
                                                 </div>
                                             )}
                                             {room.situation === 'odjezd' && nextArrivalText(room) && (
@@ -765,7 +792,7 @@ export default function DashboardToday({
                                     {hasLateTaskAlert && (
                                         <div style={{ width: '100%', border: '1px solid #fb923c', background: '#fff7ed', borderRadius: 10, padding: 8, marginBottom: 4, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                                             <div style={{ fontSize: 13, fontWeight: 800, color: '#9a3412' }}>
-                                                Nový úkol po kontrole{lateAttentionTasks.length > 1 ? ` (${lateAttentionTasks.length})` : ''}
+                                                {t('rooms.newTaskAfterCheck')}{lateAttentionTasks.length > 1 ? ` (${lateAttentionTasks.length})` : ''}
                                             </div>
                                             <button
                                                 className="chip"
@@ -773,17 +800,17 @@ export default function DashboardToday({
                                                 onClick={() => !readOnly && onAcknowledgeLateTasks(room.number)}
                                                 disabled={readOnly}
                                             >
-                                                Přečteno
+                                                {t('buttons.read')}
                                             </button>
                                         </div>
                                     )}
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={workflowDisabled} onClick={() => onAction(room.id, 'prevzit')}>Převzít</button>
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={workflowDisabled} onClick={() => onAction(room.id, 'prevzit')}>{t('buttons.takeOver')}</button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
                                         disabled={workflowDisabled}
                                         onClick={() => setEstimatingRoom(estimatingRoom === room.id ? null : room.id)}
                                     >
-                                        Odhad
+                                        {t('buttons.estimate')}
                                     </button>
                                     <button
                                         className={isCleaningRole ? 'action-large' : 'chip'}
@@ -794,16 +821,16 @@ export default function DashboardToday({
                                             setEstimatingRoom(null)
                                         }}
                                     >
-                                        Hotovo
+                                        {t('buttons.done')}
                                     </button>
-                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={taskAndProblemDisabled} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => openProblemPanel(room.id)}>Problém</button>
-                                    {canCreateTask && <button className="chip" disabled={taskAndProblemDisabled} onClick={() => openTaskPanel(room.id)}>Přidat úkol</button>}
+                                    <button className={isCleaningRole ? 'action-large' : 'chip'} disabled={taskAndProblemDisabled} style={isCleaningRole ? { background: '#ef4444' } : {}} onClick={() => openProblemPanel(room.id)}>{t('buttons.problem')}</button>
+                                    {canCreateTask && <button className="chip" disabled={taskAndProblemDisabled} onClick={() => openTaskPanel(room.id)}>{t('buttons.addTask')}</button>}
 
                                     <div style={{ width: '100%', marginTop: 8, paddingTop: 8, borderTop: '1px dashed rgba(148,163,184,0.6)' }}>
-                                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Výjimky</div>
+                                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>{t('rooms.exceptions')}</div>
                                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                                            <button className="action-secondary" disabled={workflowDisabled} onClick={() => onAction(room.id, 'host_zustava')}>Host neodešel</button>
-                                            {room.checkoutException && <button className="chip" disabled={workflowDisabled} onClick={() => onAction(room.id, 'clear_exception')}>Vyřešeno</button>}
+                                            <button className="action-secondary" disabled={workflowDisabled} onClick={() => onAction(room.id, 'host_zustava')}>{t('rooms.guestDidNotLeave')}</button>
+                                            {room.checkoutException && <button className="chip" disabled={workflowDisabled} onClick={() => onAction(room.id, 'clear_exception')}>{t('buttons.resolved')}</button>}
                                             {/* TODO: Push notifications for admin to be added after backend integration. Not shown to users. */}
                                         </div>
                                     </div>
@@ -841,7 +868,7 @@ export default function DashboardToday({
 
                                     {taskPanelRoom === room.id && (
                                         <div style={{ width: '100%', marginTop: 8, padding: 10, border: '1px solid rgba(148,163,184,0.35)', borderRadius: 10, background: 'rgba(248,250,252,0.9)' }}>
-                                            <div style={{ fontWeight: 800, marginBottom: 8 }}>Nový úkol pro pokoj {room.number}</div>
+                                            <div style={{ fontWeight: 800, marginBottom: 8 }}>{t('rooms.newTaskForRoom', { roomNumber: room.number })}</div>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
                                                 {quickTaskOptions.map((option) => (
                                                     <button
@@ -861,32 +888,32 @@ export default function DashboardToday({
                                                     setTaskTitle(e.target.value)
                                                     if (taskFormError) setTaskFormError(null)
                                                 }}
-                                                placeholder={selectedQuickTask && selectedQuickTask !== 'Vlastní úkol' ? 'Poznámka k úkolu (volitelné)' : 'Napište úkol'}
+                                                placeholder={selectedQuickTask && selectedQuickTask !== 'Vlastní úkol' ? t('rooms.taskOptionalNote') : t('rooms.taskPlaceholder')}
                                                 style={{ width: '100%', marginBottom: 8, minHeight: 72, borderRadius: 8, border: '1px solid #cbd5e1', padding: '8px 10px', resize: 'vertical', background: '#fff' }}
                                             />
 
                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                                                 <label style={{ fontSize: 12 }}>
-                                                    Komu
+                                                    {t('rooms.roleLabel')}
                                                     <select
                                                         value={taskAssignedRole}
                                                         onChange={(e) => setTaskAssignedRole(e.target.value as Extract<UserRole, 'lead' | 'cleaner' | 'maintenance'>)}
                                                         style={{ width: '100%', marginTop: 4, minHeight: 36, borderRadius: 8, border: '1px solid #cbd5e1' }}
                                                     >
-                                                        <option value="cleaner">Úklid</option>
-                                                        <option value="maintenance">Údržba</option>
-                                                        <option value="lead">Iryna</option>
+                                                        <option value="cleaner">{t('roles.cleaner')}</option>
+                                                        <option value="maintenance">{t('roles.maintenance')}</option>
+                                                        <option value="lead">{t('roles.lead')}</option>
                                                     </select>
                                                 </label>
                                                 <label style={{ fontSize: 12 }}>
-                                                    Priorita
+                                                    {t('rooms.priorityLabel')}
                                                     <select
                                                         value={taskPriority}
                                                         onChange={(e) => setTaskPriority(e.target.value as Task['priority'])}
                                                         style={{ width: '100%', marginTop: 4, minHeight: 36, borderRadius: 8, border: '1px solid #cbd5e1' }}
                                                     >
-                                                        <option value="normal">Normální</option>
-                                                        <option value="urgent">Urgentní</option>
+                                                        <option value="normal">{t('maintenance.priority.normal')}</option>
+                                                        <option value="urgent">{t('maintenance.priority.urgent')}</option>
                                                     </select>
                                                 </label>
                                             </div>
@@ -902,15 +929,15 @@ export default function DashboardToday({
                                                 style={{ width: '100%', marginTop: 8 }}
                                                 onClick={() => submitTask(room.id)}
                                             >
-                                                Vytvořit úkol
+                                                {t('buttons.createTask')}
                                             </button>
                                         </div>
                                     )}
 
                                     {isProblemPanelOpen && (
                                         <div style={{ width: '100%', marginTop: 8, padding: 10, border: '1px solid rgba(248,113,113,0.5)', borderRadius: 10, background: 'rgba(254,242,242,0.9)' }}>
-                                            <div style={{ fontWeight: 800, marginBottom: 8, color: '#991b1b' }}>Nahlásit problém</div>
-                                            <div style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 8 }}>Pokoj {room.number}</div>
+                                            <div style={{ fontWeight: 800, marginBottom: 8, color: '#991b1b' }}>{t('rooms.reportProblemTitle')}</div>
+                                            <div style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 8 }}>{t('supplies.roomLabel', { roomNumber: room.number })}</div>
 
                                             <textarea
                                                 value={problemText}
@@ -918,7 +945,7 @@ export default function DashboardToday({
                                                     setProblemText(e.target.value)
                                                     if (problemFormError) setProblemFormError(null)
                                                 }}
-                                                placeholder="Popište problém"
+                                                placeholder={t('rooms.problemHint')}
                                                 style={{ width: '100%', minHeight: 72, borderRadius: 8, border: '1px solid #fca5a5', padding: '8px 10px', resize: 'vertical', background: '#fff' }}
                                             />
 
@@ -928,14 +955,14 @@ export default function DashboardToday({
                                                     style={problemPriority === 'normal' ? { borderColor: '#fca5a5', background: '#fee2e2', color: '#7f1d1d' } : {}}
                                                     onClick={() => setProblemPriority('normal')}
                                                 >
-                                                    Normální
+                                                    {t('maintenance.priority.normal')}
                                                 </button>
                                                 <button
                                                     className="btn"
                                                     style={problemPriority === 'urgent' ? { borderColor: '#fca5a5', background: '#fee2e2', color: '#7f1d1d' } : {}}
                                                     onClick={() => setProblemPriority('urgent')}
                                                 >
-                                                    Urgentní
+                                                    {t('maintenance.priority.urgent')}
                                                 </button>
                                             </div>
 
@@ -944,25 +971,25 @@ export default function DashboardToday({
                                             )}
 
                                             <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                                                <button className="action-large" style={{ background: '#dc2626' }} onClick={() => submitProblem(room.id)}>Uložit</button>
-                                                <button className="btn" onClick={() => setProblemPanelRoom(null)}>Zrušit</button>
+                                                <button className="action-large" style={{ background: '#dc2626' }} onClick={() => submitProblem(room.id)}>{t('buttons.save')}</button>
+                                                <button className="btn" onClick={() => setProblemPanelRoom(null)}>{t('buttons.cancel')}</button>
                                             </div>
                                         </div>
                                     )}
 
                                     {activeRoomTasks.length > 0 && (
                                         <div style={{ width: '100%', marginTop: 8, padding: 10, border: '1px solid rgba(148,163,184,0.35)', borderRadius: 10, background: 'rgba(255,255,255,0.9)' }}>
-                                            <div style={{ fontWeight: 800, marginBottom: 8 }}>Aktivní úkoly pokoje</div>
+                                            <div style={{ fontWeight: 800, marginBottom: 8 }}>{t('rooms.activeRoomTasks')}</div>
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                                 {activeRoomTasks.map((task) => {
                                                     const canDelete = canDeleteTask(role, currentUserId, currentUserName, task)
-                                                    const taskDetail = getTaskDetailText(task)
+                                                    const taskDetail = getTaskDetailText(t, task)
                                                     return (
                                                         <div key={`active-task-${room.id}-${task.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 8px' }}>
                                                             <div>
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                                                     <div style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                                                        {task.title || 'Bez názvu úkolu'}
+                                                                        {task.title || t('rooms.untitledTask')}
                                                                         <OriginBadge
                                                                             input={{
                                                                                 source: task.source,
@@ -975,12 +1002,12 @@ export default function DashboardToday({
                                                                     </div>
                                                                     {task.attentionRequired && task.attentionReason === 'late_today_room_task' && task.status === 'new' && (
                                                                         <span style={{ fontSize: 10, fontWeight: 700, color: '#7c2d12', border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: 999, padding: '1px 6px' }}>
-                                                                            Nové
+                                                                            {t('maintenance.filters.new')}
                                                                         </span>
                                                                     )}
                                                                 </div>
                                                                 <div style={{ color: '#475569', fontSize: 12 }}>
-                                                                    {roleLabel((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? 'Urgentní' : 'Normální'} • {taskStatusLabel(task.status)}
+                                                                    {roleLabelForUi((task.assignedToRole || 'cleaner') as UserRole)} • {task.priority === 'urgent' ? t('maintenance.priority.urgent') : t('maintenance.priority.normal')} • {taskStatusLabel(t, task.status)}
                                                                 </div>
                                                                 {taskDetail && (
                                                                     <div style={{ marginTop: 4, color: '#334155', fontSize: 13, lineHeight: 1.35 }}>
@@ -998,10 +1025,10 @@ export default function DashboardToday({
                                                                         if (readOnly) return
                                                                         onCancelTask(task.id)
                                                                     }}
-                                                                    title="Smazat úkol"
+                                                                    title={t('buttons.delete')}
                                                                     disabled={readOnly}
                                                                 >
-                                                                    Smazat
+                                                                    {t('buttons.delete')}
                                                                 </button>
                                                             )}
                                                         </div>
@@ -1018,15 +1045,15 @@ export default function DashboardToday({
             </div>
 
             <div className="section" style={{ marginTop: 12 }}>
-                <h3>Když je čas</h3>
+                <h3>{t('rooms.whenTime')}</h3>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {rooms.filter((room) => room.freeConfirmed && !room.occupiedConfirmed).map((room) => (
                         <div key={`free-confirmed-${room.id}`} className="note-chip" style={{ border: '1px solid #86efac', background: '#f0fdf4', color: '#166534' }}>
-                            {room.number} • Potvrzeně volný
+                            {room.number} • {t('rooms.confirmedFree')}
                         </div>
                     ))}
                     {rooms.filter((room) => room.freeConfirmed && !room.occupiedConfirmed).length === 0 && (
-                        <div className="room-meta">Žádné potvrzeně volné pokoje pro tento den.</div>
+                        <div className="room-meta">{t('rooms.noConfirmedFree')}</div>
                     )}
                 </div>
             </div>
