@@ -64,9 +64,16 @@ async function main() {
     ])
 
     try {
-        const { evaluateImportAutoConfirm } = require(path.join(tempRoot, 'src/lib/importAutoConfirm.js'))
+        const { evaluateImportAutoConfirm, resolveImportAutoConfirmConfig } = require(path.join(tempRoot, 'src/lib/importAutoConfirm.js'))
         const merge = require(path.join(tempRoot, 'src/lib/importOperationalMerge.js'))
         const appSource = await fs.readFile(path.join(process.cwd(), 'src/App.tsx'), 'utf8')
+
+        const config = resolveImportAutoConfirmConfig({
+            explicitEnabledValue: 'true',
+            legacyEnabledValue: 'false',
+            legacyDryRunValue: 'true'
+        })
+        assert(config.mode === 'enabled', 'Explicit VITE_PREVIO_AUTO_CONFIRM=true must win over legacy dry-run')
 
         const baseInput = {
             mode: 'enabled',
@@ -116,6 +123,9 @@ async function main() {
 
         assert(appSource.includes('handleConfirmImportJob(candidate.id, { autoConfirmReason: \u0027newest-safe-import\u0027 })'), 'Auto-confirm must use shared handleConfirmImportJob path')
         assert(appSource.includes('onClick={() => void handleConfirmImportJob(job.id)}'), 'Manual confirm path must remain available')
+        assert(!appSource.includes('Dry-run'), 'Admin UI must not render Dry-run text in the current bundle')
+        assert(!appSource.includes('Tento import by byl automaticky potvrzen'), 'Admin UI must not render would-confirm dry-run text')
+        assert(!appSource.includes('if (autoDecision === \'blocked\' && candidate.automation?.autoConfirm?.mode === \'enabled\') return'), 'Auto-confirm must not trust stale blocked metadata over live reevaluation')
 
         const { mergeImportedRoomDayWithExistingOperationalState } = merge
         const importedWaiting = { id: 'r101', number: '101', status: 'ceka', planDateIso: '2026-06-24' }

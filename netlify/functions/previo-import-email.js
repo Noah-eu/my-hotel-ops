@@ -216,10 +216,25 @@ function readBooleanEnv(name, fallback) {
 }
 
 function resolveAutoConfirmMode() {
-    const enabled = readBooleanEnv('AUTO_CONFIRM_STAV_IMPORTS', false)
-    const dryRun = readBooleanEnv('AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN', true)
-    if (enabled) return 'enabled'
-    if (dryRun) return 'dry-run'
+    const explicitEnabledRaw = process.env.VITE_PREVIO_AUTO_CONFIRM
+    const legacyEnabledRaw = process.env.VITE_AUTO_CONFIRM_STAV_IMPORTS ?? process.env.AUTO_CONFIRM_STAV_IMPORTS
+    const legacyDryRunRaw = process.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN ?? process.env.AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN
+
+    const explicitEnabled = readBooleanEnv('VITE_PREVIO_AUTO_CONFIRM', false)
+    const hasExplicitEnabled = typeof explicitEnabledRaw === 'string' && explicitEnabledRaw.trim().length > 0
+    if (hasExplicitEnabled) return explicitEnabled ? 'enabled' : 'off'
+
+    const legacyEnabled = typeof legacyEnabledRaw === 'string'
+        ? readBooleanEnv(process.env.VITE_AUTO_CONFIRM_STAV_IMPORTS !== undefined ? 'VITE_AUTO_CONFIRM_STAV_IMPORTS' : 'AUTO_CONFIRM_STAV_IMPORTS', false)
+        : false
+    if (legacyEnabled) return 'enabled'
+
+    const hasLegacyDryRun = typeof legacyDryRunRaw === 'string' && legacyDryRunRaw.trim().length > 0
+    if (hasLegacyDryRun) {
+        const dryRun = readBooleanEnv(process.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN !== undefined ? 'VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN' : 'AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN', false)
+        if (dryRun) return 'dry-run'
+    }
+
     return 'off'
 }
 

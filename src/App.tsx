@@ -34,7 +34,7 @@ import {
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
 import { buildDateSelectorItems, getPrimaryTabDateIso, parseIsoDateForDisplay, resolveEffectiveDateIso, toLocalDateIso } from './lib/dateTabs'
 import { applyRoomOperationalPatch, buildOperationalStatusMeta, buildResetRoomToWaitingPatch } from './lib/roomOperationalState'
-import { evaluateImportAutoConfirm } from './lib/importAutoConfirm'
+import { evaluateImportAutoConfirm, resolveImportAutoConfirmConfig } from './lib/importAutoConfirm'
 import {
     mergeImportedByDateWithExistingOperationalState,
     mergeImportedRoomDayWithExistingOperationalState,
@@ -228,19 +228,12 @@ type ImportAutoPreviewStatusInfo = {
 const IMPORT_CLEANUP_PRECHECK_MESSAGE = 'Kontrola akce…'
 
 const APP_SHORT_NAME = import.meta.env.VITE_APP_SHORT_NAME || 'Chill Ops'
-function readBooleanViteEnv(value: unknown, fallback: boolean) {
-    if (typeof value !== 'string' || !value.trim()) return fallback
-    const normalized = value.trim().toLowerCase()
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true
-    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false
-    return fallback
-}
-
-const AUTO_CONFIRM_STAV_IMPORTS_ENABLED = readBooleanViteEnv(
-    import.meta.env.VITE_PREVIO_AUTO_CONFIRM,
-    readBooleanViteEnv(import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS, false)
-)
-const AUTO_CONFIRM_STAV_IMPORTS_MODE: ImportJobAutoConfirmMode = AUTO_CONFIRM_STAV_IMPORTS_ENABLED ? 'enabled' : 'off'
+const AUTO_CONFIRM_STAV_IMPORTS_CONFIG = resolveImportAutoConfirmConfig({
+    explicitEnabledValue: import.meta.env.VITE_PREVIO_AUTO_CONFIRM,
+    legacyEnabledValue: import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS,
+    legacyDryRunValue: import.meta.env.VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN
+})
+const AUTO_CONFIRM_STAV_IMPORTS_MODE: ImportJobAutoConfirmMode = AUTO_CONFIRM_STAV_IMPORTS_CONFIG.mode === 'enabled' ? 'enabled' : 'off'
 
 const IMPORT_CONFIRM_BLOCKED_MESSAGE = 'Import nelze potvrdit, protože kontrola náhledu našla chyby. Přegenerujte náhled nebo opravte parser.'
 const IMPORT_CONFIRM_SUPERSEDED_MESSAGE = 'Tento import je starší než novější Stav PDF. Nepotvrzujte ho.'
@@ -249,6 +242,13 @@ const IMPORT_CLEANUP_OLD_DAYS = 30
 function importAutoConfirmModeLabel(mode: ImportJobAutoConfirmMode) {
     if (mode === 'enabled') return 'Zapnuto'
     return 'Vypnuto'
+}
+
+function importAutoConfirmConfigSourceLabel(source: string) {
+    if (source === 'VITE_PREVIO_AUTO_CONFIRM') return 'VITE_PREVIO_AUTO_CONFIRM'
+    if (source === 'VITE_AUTO_CONFIRM_STAV_IMPORTS') return 'VITE_AUTO_CONFIRM_STAV_IMPORTS'
+    if (source === 'VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN') return 'VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN'
+    return 'default'
 }
 
 function importAutoPreviewStatusLabel(status: ImportAutoPreviewStatusInfo['status']) {
@@ -4892,9 +4892,6 @@ export default function App() {
         if (candidate.status === 'confirmed' || candidate.status === 'cancelled') return
         if (autoConfirmInFlightJobIdRef.current === candidate.id) return
 
-        const autoDecision = candidate.automation?.autoConfirm?.decision
-        if (autoDecision === 'blocked' && candidate.automation?.autoConfirm?.mode === 'enabled') return
-
         const byDate = getImportJobByDate(candidate.previewSummary)
         const parsedTabDates = getImportJobParsedTabDates(candidate.previewSummary)
         const preview = (candidate.previewSummary?.preview || null) as PrevioStateImportPreview | null
@@ -5459,18 +5456,27 @@ export default function App() {
                                                                 <div className="room-meta" style={{ marginTop: 2 }}>
                                                                     Automatické potvrzení: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
                                                                 </div>
+                                                                <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                    Auto-confirm config: {importAutoConfirmModeLabel(AUTO_CONFIRM_STAV_IMPORTS_MODE)}
+                                                                    {` • zdroj: ${importAutoConfirmConfigSourceLabel(AUTO_CONFIRM_STAV_IMPORTS_CONFIG.source)}`}
+                                                                    {job.automation?.autoConfirm?.mode ? ` • job metadata: ${job.automation.autoConfirm.mode}` : ''}
+                                                                    {job.automation?.autoConfirm?.decision ? `/${job.automation.autoConfirm.decision}` : ''}
+                                                                </div>
                                                                 {job.automation?.autoConfirmedAt && (
                                                                     <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
                                                                         Automaticky potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
                                                                         {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
                                                                     </div>
                                                                 )}
-                                                                {autoConfirmEvaluation.mode === 'enabled' && job.status !== 'confirmed' && (
+                                                                {autoConfirmEvaluation.mode === 'off' && job.status !== 'confirmed' && (
+                                                                    <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, color: '#475569', background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                                                                        Automatické potvrzení vypnuto.
+                                                                    </div>
+                                                                )}
+                                                                {autoConfirmEvaluation.mode === 'enabled' && job.status !== 'confirmed' && !autoConfirmEvaluation.wouldConfirm && (
                                                                     <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, ...autoConfirmInfoStyle }}>
-                                                                        {autoConfirmEvaluation.wouldConfirm
-                                                                            ? 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.'
-                                                                            : 'Automatické potvrzení blokováno:'}
-                                                                        {!autoConfirmEvaluation.wouldConfirm && autoConfirmEvaluation.blockedReasons.length > 0 && (
+                                                                        Automatické potvrzení blokováno:
+                                                                        {autoConfirmEvaluation.blockedReasons.length > 0 && (
                                                                             <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
                                                                                 {Array.from(new Set(autoConfirmEvaluation.blockedReasons)).slice(0, 6).map((reason) => (
                                                                                     <li key={`${job.id}-auto-block-${reason}`}>{reason}</li>
@@ -5828,18 +5834,27 @@ export default function App() {
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
                                                                         Automatické potvrzení: {importAutoConfirmModeLabel(autoConfirmEvaluation.mode)}
                                                                     </div>
+                                                                    <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
+                                                                        Auto-confirm config: {importAutoConfirmModeLabel(AUTO_CONFIRM_STAV_IMPORTS_MODE)}
+                                                                        {` • zdroj: ${importAutoConfirmConfigSourceLabel(AUTO_CONFIRM_STAV_IMPORTS_CONFIG.source)}`}
+                                                                        {job.automation?.autoConfirm?.mode ? ` • job metadata: ${job.automation.autoConfirm.mode}` : ''}
+                                                                        {job.automation?.autoConfirm?.decision ? `/${job.automation.autoConfirm.decision}` : ''}
+                                                                    </div>
                                                                     {job.automation?.autoConfirmedAt && (
                                                                         <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
                                                                             Automaticky potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
                                                                             {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
                                                                         </div>
                                                                     )}
-                                                                    {autoConfirmEvaluation.mode === 'enabled' && job.status !== 'confirmed' && (
+                                                                    {autoConfirmEvaluation.mode === 'off' && job.status !== 'confirmed' && (
+                                                                        <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, color: '#475569', background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                                                                            Automatické potvrzení vypnuto.
+                                                                        </div>
+                                                                    )}
+                                                                    {autoConfirmEvaluation.mode === 'enabled' && job.status !== 'confirmed' && !autoConfirmEvaluation.wouldConfirm && (
                                                                         <div style={{ marginTop: 6, fontSize: 12, borderRadius: 8, padding: 6, ...autoConfirmInfoStyle }}>
-                                                                            {autoConfirmEvaluation.wouldConfirm
-                                                                                ? 'Automatická kontrola: OK. Import je připraven k automatickému potvrzení.'
-                                                                                : 'Automatické potvrzení blokováno:'}
-                                                                            {!autoConfirmEvaluation.wouldConfirm && autoConfirmEvaluation.blockedReasons.length > 0 && (
+                                                                            Automatické potvrzení blokováno:
+                                                                            {autoConfirmEvaluation.blockedReasons.length > 0 && (
                                                                                 <ul style={{ margin: '6px 0 0 16px', fontWeight: 500 }}>
                                                                                     {Array.from(new Set(autoConfirmEvaluation.blockedReasons)).slice(0, 6).map((reason) => (
                                                                                         <li key={`${job.id}-auto-block-${reason}`}>{reason}</li>

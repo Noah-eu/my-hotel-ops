@@ -19,6 +19,7 @@ Both endpoints must use `lib/previo-import-processing.js` so parse/overlay/previ
 ## Guarded Auto-confirm
 - Guard flag: `VITE_PREVIO_AUTO_CONFIRM=true` (or legacy fallback `VITE_AUTO_CONFIRM_STAV_IMPORTS=true`).
 - Disable switch: set `VITE_PREVIO_AUTO_CONFIRM=false`.
+- Legacy dry-run is supported only when `VITE_PREVIO_AUTO_CONFIRM` is unset and `VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN=true` is explicitly configured.
 - Auto-confirm only evaluates newest `previo-state-pdf` jobs from `source=email` with `status=needs_review`.
 - Mandatory guards:
 	- Preview payload exists (`preview`, `byDate`, `parsedTabDates`).
@@ -29,6 +30,7 @@ Both endpoints must use `lib/previo-import-processing.js` so parse/overlay/previ
 	- No operational merge inconsistency warnings.
 	- Job is not superseded, cancelled, confirmed, or test-like.
 - Auto-confirm and manual confirm must both call the same handler path (`handleConfirmImportJob`) so backup, merge, diagnostics, and write semantics stay identical.
+- Live UI mode is derived from the current frontend build config, not from stored `job.automation.autoConfirm.mode` metadata.
 - If any guard fails, UI shows `Automatické potvrzení blokováno` with reasons and manual confirm stays available.
 
 ## Fresh vs Regenerate Marker

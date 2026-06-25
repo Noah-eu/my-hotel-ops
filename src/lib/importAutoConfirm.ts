@@ -1,5 +1,22 @@
 import { ImportJob, ImportJobAutoConfirmMode, ImportJobSafetySummary } from '../types'
 
+type ResolveImportAutoConfirmConfigInput = {
+    explicitEnabledValue?: unknown
+    legacyEnabledValue?: unknown
+    legacyDryRunValue?: unknown
+}
+
+type ImportAutoConfirmConfigSource = 'VITE_PREVIO_AUTO_CONFIRM' | 'VITE_AUTO_CONFIRM_STAV_IMPORTS' | 'VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN' | 'default'
+
+export type ResolvedImportAutoConfirmConfig = {
+    mode: ImportJobAutoConfirmMode
+    enabled: boolean
+    source: ImportAutoConfirmConfigSource
+    explicitEnabled: boolean | null
+    legacyEnabled: boolean | null
+    legacyDryRun: boolean | null
+}
+
 type EvaluateImportAutoConfirmInput = {
     job: ImportJob
     mode: ImportJobAutoConfirmMode
@@ -9,6 +26,73 @@ type EvaluateImportAutoConfirmInput = {
     hasParsedTabDates: boolean
     safety: ImportJobSafetySummary | null
     likelyTestImport?: boolean
+}
+
+export function parseBooleanFlag(value: unknown) {
+    if (typeof value !== 'string' || !value.trim()) return null
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false
+    return null
+}
+
+export function resolveImportAutoConfirmConfig(input: ResolveImportAutoConfirmConfigInput): ResolvedImportAutoConfirmConfig {
+    const explicitEnabled = parseBooleanFlag(input.explicitEnabledValue)
+    const legacyEnabled = parseBooleanFlag(input.legacyEnabledValue)
+    const legacyDryRun = parseBooleanFlag(input.legacyDryRunValue)
+
+    if (explicitEnabled === true) {
+        return {
+            mode: 'enabled',
+            enabled: true,
+            source: 'VITE_PREVIO_AUTO_CONFIRM',
+            explicitEnabled,
+            legacyEnabled,
+            legacyDryRun
+        }
+    }
+
+    if (explicitEnabled === false) {
+        return {
+            mode: 'off',
+            enabled: false,
+            source: 'VITE_PREVIO_AUTO_CONFIRM',
+            explicitEnabled,
+            legacyEnabled,
+            legacyDryRun
+        }
+    }
+
+    if (legacyEnabled === true) {
+        return {
+            mode: 'enabled',
+            enabled: true,
+            source: 'VITE_AUTO_CONFIRM_STAV_IMPORTS',
+            explicitEnabled,
+            legacyEnabled,
+            legacyDryRun
+        }
+    }
+
+    if (legacyEnabled === false && legacyDryRun === true) {
+        return {
+            mode: 'dry-run',
+            enabled: false,
+            source: 'VITE_AUTO_CONFIRM_STAV_IMPORTS_DRY_RUN',
+            explicitEnabled,
+            legacyEnabled,
+            legacyDryRun
+        }
+    }
+
+    return {
+        mode: 'off',
+        enabled: false,
+        source: 'default',
+        explicitEnabled,
+        legacyEnabled,
+        legacyDryRun
+    }
 }
 
 function isSpreadsheetPrimaryImport(job: ImportJob) {
@@ -84,9 +168,9 @@ export function evaluateImportAutoConfirm(input: EvaluateImportAutoConfirmInput)
         blockedReasons.push('Chybí bezpečnostní kontrola importu.')
     } else if (safety.blocked || safety.status !== 'ok') {
         blockedReasons.push('Bezpečnostní kontrola import blokuje.')
-        ; (safety.blocks || []).slice(0, 3).forEach((reason) => {
-            if (!blockedReasons.includes(reason)) blockedReasons.push(reason)
-        })
+            ; (safety.blocks || []).slice(0, 3).forEach((reason) => {
+                if (!blockedReasons.includes(reason)) blockedReasons.push(reason)
+            })
     }
 
     const storedBlockedReasons = (job.automation?.autoConfirm?.blockedReasons || []).filter((reason) => !blockedReasons.includes(reason))
