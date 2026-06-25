@@ -24,6 +24,10 @@ Confirmation must persist merge counters in job metadata:
 - Plachta must not resurrect stale stayover / occupied guest data over a confirmed free operational room state.
 - Avoid synthetic cross-day occupancy interpolation that can resurrect moved/cancelled stays.
 
+## Date Tab Identity
+- Primary and extra operational day tabs must dedupe and sort by normalized ISO date (`YYYY-MM-DD`), not by rendered label text.
+- Relative labels (`Dnes`, `Zitra`, `Pozitri`, Ukrainian equivalents) are display-only; translated text must never affect date identity, sorting, or selection.
+
 ## Carry-over Invariant
 - `Nedokončeno z ...` is a UI-facing carry-over alert for an otherwise eligible room (no departure, no arrival, not occupied).
 - The alert must stay actionable even when the current room state is free.

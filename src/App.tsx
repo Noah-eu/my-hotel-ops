@@ -32,6 +32,7 @@ import {
     signOutFirebaseUser
 } from './lib/firebase'
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
+import { buildDateSelectorItems, getPrimaryTabDateIso, parseIsoDateForDisplay, resolveEffectiveDateIso, toLocalDateIso } from './lib/dateTabs'
 import {
     mergeImportedByDateWithExistingOperationalState,
     mergeImportedRoomDayWithExistingOperationalState,
@@ -1199,15 +1200,16 @@ export default function App() {
     const showInstallHint = isRealAdminUser && !isStandalone && !installHintDismissed
 
     const dayTitle = tab === 'Dnes' ? t('dates.today') : tab === 'Zitra' ? t('dates.tomorrow') : t('dates.dayAfterTomorrow')
-    const tabOffsetDays = tab === 'Dnes' ? 0 : tab === 'Zitra' ? 1 : 2
-    const fallbackTabDate = new Date(Date.now() + tabOffsetDays * 24 * 60 * 60 * 1000)
-    const selectedTabDateIso = importedTabDates[tab] || fallbackTabDate.toISOString().slice(0, 10)
-    const selectedTabDate = new Date(selectedTabDateIso)
+    const selectedTabDateIso = getPrimaryTabDateIso(tab, importedTabDates)
+    const selectedTabDate = parseIsoDateForDisplay(selectedTabDateIso)
     const isExtraImportedDay = Boolean(selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso])
-    const effectiveDateIso = selectedImportedDateIso && importedRoomsByDate[selectedImportedDateIso]
-        ? selectedImportedDateIso
-        : selectedTabDateIso
-    const effectiveDate = new Date(effectiveDateIso)
+    const effectiveDateIso = resolveEffectiveDateIso({
+        tab,
+        importedTabDates,
+        importedRoomsByDate,
+        selectedImportedDateIso
+    })
+    const effectiveDate = parseIsoDateForDisplay(effectiveDateIso)
     const showOrientationNote = tab !== 'Dnes' || isExtraImportedDay
     const dayLabelPrefix = isExtraImportedDay ? 'Další den' : dayTitle
     const dayLabel = `${dayLabelPrefix} • ${effectiveDate.toLocaleDateString(languageLocale, { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}`
@@ -1215,56 +1217,23 @@ export default function App() {
         ? importedRoomsByDate[selectedImportedDateIso]
         : roomsByDay[tab]
 
-    const dateSelectorItems = useMemo(() => {
-        const primaryTabs: Array<{ tab: OpsTab; label: string }> = [
-            { tab: 'Dnes', label: t('dates.today') },
-            { tab: 'Zitra', label: t('dates.tomorrow') },
-            { tab: 'Pozitri', label: t('dates.dayAfterTomorrow') }
-        ]
-
-        const primaryDateSet = new Set(
-            primaryTabs
-                .map(({ tab }) => importedTabDates[tab])
-                .filter((dateIso): dateIso is string => Boolean(dateIso))
-        )
-
-        // Only show extra imported dates that are strictly after Pozítří
-        const todayIso = new Date().toISOString().slice(0, 10)
-        const pozitriIso = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-
-        const extraImportedDates = Object.keys(importedRoomsByDate)
-            .filter((dateIso) => {
-                if (primaryDateSet.has(dateIso)) return false
-                // exclude any date that is before today
-                if (dateIso < todayIso) return false
-                // include only dates strictly after Pozítří
-                return dateIso > pozitriIso
-            })
-            .sort()
-
-        const primaryItems = primaryTabs.map(({ tab: tabKey, label }) => ({
-            key: `tab-${tabKey}`,
-            label,
-            kind: 'tab' as const,
-            tab: tabKey,
-            active: !selectedImportedDateIso && tabKey === tab
-        }))
-
-        const extraItems = extraImportedDates.map((dateIso) => ({
-            key: `date-${dateIso}`,
-            label: new Date(`${dateIso}T00:00:00`).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' }),
-            kind: 'date' as const,
-            dateIso,
-            active: selectedImportedDateIso === dateIso
-        }))
-
-        return [...primaryItems, ...extraItems]
-    }, [importedRoomsByDate, importedTabDates, selectedImportedDateIso, tab, t])
+    const dateSelectorItems = useMemo(() => buildDateSelectorItems({
+        importedTabDates,
+        importedRoomsByDate,
+        selectedImportedDateIso,
+        activeTab: tab,
+        primaryLabels: {
+            Dnes: t('dates.today'),
+            Zitra: t('dates.tomorrow'),
+            Pozitri: t('dates.dayAfterTomorrow')
+        },
+        locale: languageLocale
+    }), [importedRoomsByDate, importedTabDates, selectedImportedDateIso, tab, t, languageLocale])
 
     // Normalize selectedImportedDateIso if it points to a past date (never allow past selection)
     useEffect(() => {
         if (!selectedImportedDateIso) return
-        const todayIso = new Date().toISOString().slice(0, 10)
+        const todayIso = toLocalDateIso(new Date())
         if (selectedImportedDateIso < todayIso) {
             // Reset selection back to primary tabs (Dnes) to avoid showing past data in main selector
             setSelectedImportedDateIso(null)

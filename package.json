@@ -18,6 +18,7 @@
         "validate:previo-reimport-merge": "node scripts/validate-previo-reimport-merge.mjs",
         "validate:previo-import-determinism": "node scripts/validate-previo-import-determinism.mjs",
         "validate:previo-import-real-flow": "node scripts/validate-previo-import-real-flow.mjs",
+        "validate:date-tabs": "node scripts/validate-date-tabs.mjs",
         "validate:staff-i18n": "node scripts/validate-staff-i18n.mjs",
         "validate:team-availability": "node scripts/validate-team-availability.mjs",
         "validate:ui-visible-flows": "node scripts/validate-ui-visible-flows.mjs"
