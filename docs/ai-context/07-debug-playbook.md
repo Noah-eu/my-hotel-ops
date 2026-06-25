@@ -20,3 +20,4 @@
 ## Notes
 - If parser fixture files are unavailable locally, validators may skip by design.
 - Treat `validate:previo-state` parser failures as separate unless directly linked to current changes.
+- Admin import-card rendering must tolerate legacy `importJobs` with missing `warnings`, `automation`, `previewSummary`, or partial `backupSummary` fields; malformed diagnostics should degrade to fallback text, not crash the Admin view.

@@ -34,6 +34,7 @@ import {
 import { runRollbackBackupSanitizerSelfCheck, sanitizeForFirestore } from './lib/firestoreSanitizer'
 import { buildDateSelectorItems, getPrimaryTabDateIso, parseIsoDateForDisplay, resolveEffectiveDateIso, toLocalDateIso } from './lib/dateTabs'
 import { applyRoomOperationalPatch, buildOperationalStatusMeta, buildResetRoomToWaitingPatch } from './lib/roomOperationalState'
+import { buildImportJobAdminRenderState } from './lib/importJobAdminDiagnostics'
 import { evaluateImportAutoConfirm, resolveImportAutoConfirmConfig } from './lib/importAutoConfirm'
 import {
     mergeImportedByDateWithExistingOperationalState,
@@ -5382,6 +5383,7 @@ export default function App() {
                                                         ? (rowsExpanded ? inlinePreviewModel.rows : inlinePreviewModel.rows.slice(0, 20))
                                                         : []
                                                     const previewDiagnostics = getImportJobPreviewDiagnostics(job.previewSummary)
+                                                    const adminRenderState = buildImportJobAdminRenderState(job)
                                                     const latestPreviewResponse = lastPreviewRegenerateResponseByJobId[job.id]
                                                     const diagnosticsUseLatestResponse = Boolean(
                                                         latestPreviewResponse
@@ -5459,13 +5461,13 @@ export default function App() {
                                                                 <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
                                                                     Auto-confirm config: {importAutoConfirmModeLabel(AUTO_CONFIRM_STAV_IMPORTS_MODE)}
                                                                     {` • zdroj: ${importAutoConfirmConfigSourceLabel(AUTO_CONFIRM_STAV_IMPORTS_CONFIG.source)}`}
-                                                                    {job.automation?.autoConfirm?.mode ? ` • job metadata: ${job.automation.autoConfirm.mode}` : ''}
-                                                                    {job.automation?.autoConfirm?.decision ? `/${job.automation.autoConfirm.decision}` : ''}
+                                                                    {adminRenderState.autoConfirmMode ? ` • job metadata: ${adminRenderState.autoConfirmMode}` : ''}
+                                                                    {adminRenderState.autoConfirmDecision ? `/${adminRenderState.autoConfirmDecision}` : ''}
                                                                 </div>
-                                                                {job.automation?.autoConfirmedAt && (
+                                                                {adminRenderState.autoConfirmedAt && (
                                                                     <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
-                                                                        Automaticky potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
-                                                                        {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
+                                                                        Automaticky potvrzeno: {new Date(adminRenderState.autoConfirmedAt).toLocaleString('cs-CZ')}
+                                                                        {adminRenderState.autoConfirmReason ? ` • Důvod: ${adminRenderState.autoConfirmReason}` : ''}
                                                                     </div>
                                                                 )}
                                                                 {autoConfirmEvaluation.mode === 'off' && job.status !== 'confirmed' && (
@@ -5487,8 +5489,13 @@ export default function App() {
                                                                 )}
                                                                 {job.backupSummary && (
                                                                     <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                        Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
+                                                                        Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {adminRenderState.backupAffectedDates.length ? adminRenderState.backupAffectedDates.join(', ') : '—'} • Pokoje: {job.backupSummary.affectedRoomCount}
                                                                         {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                    </div>
+                                                                )}
+                                                                {adminRenderState.hasRenderIssues && (
+                                                                    <div className="room-meta" style={{ marginTop: 2, color: '#92400e' }}>
+                                                                        Starší import má neúplnou diagnostiku. Zobrazuji bezpečné fallback hodnoty.
                                                                     </div>
                                                                 )}
                                                                 {showLegacyRollbackHint && (
@@ -5516,9 +5523,9 @@ export default function App() {
                                                                         Náhled vytvořen, ale import je podezřelý.
                                                                     </div>
                                                                 )}
-                                                                {job.warnings.length > 0 && (
+                                                                {adminRenderState.warnings.length > 0 && (
                                                                     <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
-                                                                        {job.warnings.slice(0, 4).map((warning) => (
+                                                                        {adminRenderState.warnings.slice(0, 4).map((warning) => (
                                                                             <div key={`${job.id}-${warning}`}>{warning}</div>
                                                                         ))}
                                                                     </div>
@@ -5766,6 +5773,7 @@ export default function App() {
                                                                 ? (rowsExpanded ? inlinePreviewModel.rows : inlinePreviewModel.rows.slice(0, 20))
                                                                 : []
                                                             const previewDiagnostics = getImportJobPreviewDiagnostics(job.previewSummary)
+                                                            const adminRenderState = buildImportJobAdminRenderState(job)
                                                             const latestPreviewResponse = lastPreviewRegenerateResponseByJobId[job.id]
                                                             const diagnosticsUseLatestResponse = Boolean(
                                                                 latestPreviewResponse
@@ -5837,13 +5845,13 @@ export default function App() {
                                                                     <div className="room-meta" style={{ marginTop: 2, color: '#64748b' }}>
                                                                         Auto-confirm config: {importAutoConfirmModeLabel(AUTO_CONFIRM_STAV_IMPORTS_MODE)}
                                                                         {` • zdroj: ${importAutoConfirmConfigSourceLabel(AUTO_CONFIRM_STAV_IMPORTS_CONFIG.source)}`}
-                                                                        {job.automation?.autoConfirm?.mode ? ` • job metadata: ${job.automation.autoConfirm.mode}` : ''}
-                                                                        {job.automation?.autoConfirm?.decision ? `/${job.automation.autoConfirm.decision}` : ''}
+                                                                        {adminRenderState.autoConfirmMode ? ` • job metadata: ${adminRenderState.autoConfirmMode}` : ''}
+                                                                        {adminRenderState.autoConfirmDecision ? `/${adminRenderState.autoConfirmDecision}` : ''}
                                                                     </div>
-                                                                    {job.automation?.autoConfirmedAt && (
+                                                                    {adminRenderState.autoConfirmedAt && (
                                                                         <div className="room-meta" style={{ marginTop: 2, color: '#166534' }}>
-                                                                            Automaticky potvrzeno: {new Date(job.automation.autoConfirmedAt).toLocaleString('cs-CZ')}
-                                                                            {job.automation.autoConfirmReason ? ` • Důvod: ${job.automation.autoConfirmReason}` : ''}
+                                                                            Automaticky potvrzeno: {new Date(adminRenderState.autoConfirmedAt).toLocaleString('cs-CZ')}
+                                                                            {adminRenderState.autoConfirmReason ? ` • Důvod: ${adminRenderState.autoConfirmReason}` : ''}
                                                                         </div>
                                                                     )}
                                                                     {autoConfirmEvaluation.mode === 'off' && job.status !== 'confirmed' && (
@@ -5865,8 +5873,13 @@ export default function App() {
                                                                     )}
                                                                     {job.backupSummary && (
                                                                         <div className="room-meta" style={{ marginTop: 2 }}>
-                                                                            Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {job.backupSummary.affectedDates.join(', ')} • Pokoje: {job.backupSummary.affectedRoomCount}
+                                                                            Snapshot: {new Date(job.backupSummary.createdAt).toLocaleString('cs-CZ')} • Dny: {adminRenderState.backupAffectedDates.length ? adminRenderState.backupAffectedDates.join(', ') : '—'} • Pokoje: {job.backupSummary.affectedRoomCount}
                                                                             {job.backupSummary.rolledBackAt ? ` • Vráceno: ${new Date(job.backupSummary.rolledBackAt).toLocaleString('cs-CZ')}` : ''}
+                                                                        </div>
+                                                                    )}
+                                                                    {adminRenderState.hasRenderIssues && (
+                                                                        <div className="room-meta" style={{ marginTop: 2, color: '#92400e' }}>
+                                                                            Starší import má neúplnou diagnostiku. Zobrazuji bezpečné fallback hodnoty.
                                                                         </div>
                                                                     )}
                                                                     {showLegacyRollbackHint && (
@@ -5889,9 +5902,9 @@ export default function App() {
                                                                             PDF je přijaté, ale náhled ještě není dostupný. Import čeká na serverové zpracování PDF.
                                                                         </div>
                                                                     )}
-                                                                    {job.warnings.length > 0 && (
+                                                                    {adminRenderState.warnings.length > 0 && (
                                                                         <div style={{ marginTop: 6, fontSize: 12, color: '#92400e', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 6 }}>
-                                                                            {job.warnings.slice(0, 4).map((warning) => (
+                                                                            {adminRenderState.warnings.slice(0, 4).map((warning) => (
                                                                                 <div key={`${job.id}-${warning}`}>{warning}</div>
                                                                             ))}
                                                                         </div>

@@ -6,6 +6,7 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
+        "validate:admin-import-card-runtime": "node scripts/validate-admin-import-card-runtime.mjs",
         "validate:auto-confirm-mode": "node scripts/validate-auto-confirm-mode.mjs",
         "validate:import-auto-confirm-guarded": "node scripts/validate-import-auto-confirm-guarded.mjs",
         "validate:previo-gmail-importer": "node scripts/validate-previo-gmail-importer.mjs",
