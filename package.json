@@ -23,6 +23,7 @@
         "validate:date-tabs": "node scripts/validate-date-tabs.mjs",
         "validate:room-operational-state": "node scripts/validate-room-operational-state.mjs",
         "validate:maintenance-self-task": "node scripts/validate-maintenance-self-task.mjs",
+        "validate:manual-room-task-persistence": "node scripts/validate-manual-room-task-persistence.mjs",
         "validate:staff-i18n": "node scripts/validate-staff-i18n.mjs",
         "validate:team-availability": "node scripts/validate-team-availability.mjs",
         "validate:ui-visible-flows": "node scripts/validate-ui-visible-flows.mjs"

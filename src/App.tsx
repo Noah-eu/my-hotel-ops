@@ -43,7 +43,7 @@ import {
     summarizeOperationalMergeDiagnostics
 } from './lib/importOperationalMerge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from './lib/roles'
-import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolutionPatch, buildCustomSupplyChipKey, buildSupplyStatusPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus, type SupplyChipSection } from './lib/opsUiInvariants'
+import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolutionPatch, buildCustomSupplyChipKey, buildSupplyStatusPatch, canManageSupplyLifecycle, canSetSupplyStatus, isOpenSupplyStatus, isTaskVisibleForOperationalDate, type SupplyChipSection } from './lib/opsUiInvariants'
 import { AppLanguage, createTranslator, getLanguageLocale, LANGUAGE_STORAGE_KEY, resolveLanguage } from './i18n'
 import { canManageStaffAvailability, resolveStaffAvailabilityForDate, upsertStaffAvailabilityRecord } from './lib/teamAvailability'
 import { applyMaintenanceTaskStatus, canCreateMaintenanceSelfTask, createMaintenanceSelfTask } from './lib/maintenanceSelfTask'
@@ -608,8 +608,7 @@ function canViewTask(role: UserRole, task: Task) {
 }
 
 function matchesOperationalTaskDate(task: Task, effectiveDateIso: string, todayDateIso: string) {
-    if (task.taskDateIso) return task.taskDateIso === effectiveDateIso
-    return effectiveDateIso === todayDateIso
+    return isTaskVisibleForOperationalDate(task.taskDateIso, effectiveDateIso, todayDateIso)
 }
 
 function defaultAssigneeName(role: Task['assignedToRole']) {

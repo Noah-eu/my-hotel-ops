@@ -3,6 +3,13 @@ import { RoomPlan, SupplyRequest, UserRole } from '../types'
 import { isCleanerRole, isCleaningLeadRole, isAdminRole, isMaintenanceRole } from './roles'
 import { isTodayRoomEligibleForCarryOver } from './roomHelpers'
 
+export function isTaskVisibleForOperationalDate(taskDateIso: string | undefined, effectiveDateIso: string, todayDateIso: string) {
+    if (!taskDateIso) return effectiveDateIso === todayDateIso
+    // Keep unresolved manual tasks visible once their operational date starts,
+    // but do not reveal explicitly future-dated tasks too early.
+    return taskDateIso <= effectiveDateIso
+}
+
 type TabDateEntry = {
     tab: OpsTab
     dateIso: string

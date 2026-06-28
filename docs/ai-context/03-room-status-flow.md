@@ -38,6 +38,11 @@ Confirmation must persist merge counters in job metadata:
 - `Zpět na čeká` / Ukrainian equivalent is date-scoped and only clears the visible cleaning completion state for the selected room day.
 - Reset must not delete reservation facts, guest/box/Previo notes, manual tasks, supply requests, or maintenance tickets.
 
+## Manual Room Task Persistence Invariant
+- Unresolved manual room tasks are operational open work items for their room and must stay visible until explicitly completed/cancelled/resolved.
+- Unresolved manual room tasks must survive date changes, app refreshes, import confirmations, and auto-confirmed imports.
+- Tasks with an explicit future `taskDateIso` stay scheduled for that date; tasks from past/current dates carry forward until resolved.
+
 ## Maintenance Self-Task Flow
 - Maintenance (and admin) can create self-assigned maintenance tasks from the Maintenance screen; creators are stored in task metadata (`createdByUid`, `createdByName`, `createdByRole`, `createdSource=maintenance_self`).
 - Self-created maintenance tasks use the same task lifecycle as other maintenance tasks; when marked `done`, they move to the same `Hotovo` list and persist completion metadata (`completedAt`, `completedByUid`, `completedByName`).
