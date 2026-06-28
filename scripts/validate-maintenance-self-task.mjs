@@ -10,6 +10,27 @@ function assert(condition, message) {
     if (!condition) throw new Error(message)
 }
 
+async function simulateFocusLookup({ appearsAfterMs, maxWaitMs = 1800, retryDelayMs = 120 }) {
+    const startedAt = Date.now()
+
+    return await new Promise((resolve) => {
+        const check = () => {
+            const elapsed = Date.now() - startedAt
+            const found = elapsed >= appearsAfterMs
+            if (found) {
+                resolve(true)
+                return
+            }
+            if (elapsed >= maxWaitMs) {
+                resolve(false)
+                return
+            }
+            setTimeout(check, retryDelayMs)
+        }
+        check()
+    })
+}
+
 async function transpileModuleTree(relativePaths) {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'hotel-ops-maint-self-'))
 
@@ -74,7 +95,9 @@ async function main() {
         })
 
         assert(selfTask.assignedToRole === 'maintenance', 'Self-task must be maintenance-assigned')
+        assert(typeof selfTask.id === 'string' && selfTask.id.startsWith('t-'), 'Self-task creation must return a stable task ID')
         assert(selfTask.assignedToUid === 'uid-serhii', 'Self-task must be assigned to the same maintenance user UID')
+        assert(selfTask.createdByUid === 'uid-serhii', 'Self-task must persist creator UID')
         assert(selfTask.createdSource === 'maintenance_self', 'Self-task must store maintenance_self source')
         assert(selfTask.status === 'new', 'Self-task must start active/new')
         assert(selfTask.title === 'Oprava kliky', 'User title must remain unchanged')
@@ -83,8 +106,15 @@ async function main() {
         const tasks = [selfTask]
         const maintenanceVisible = tasks.filter((task) => task.assignedToRole === 'maintenance' || task.category === 'maintenance')
         const adminVisible = tasks.filter((task) => task.assignedToRole === 'maintenance' || task.category === 'maintenance')
+        const activeSelector = tasks.filter((task) => (task.assignedToRole === 'maintenance' || task.category === 'maintenance') && task.status !== 'done' && task.status !== 'cancelled')
         assert(maintenanceVisible.length === 1, 'Maintenance user should see self-task')
         assert(adminVisible.length === 1, 'Admin should see maintenance self-task')
+        assert(activeSelector.length === 1 && activeSelector[0].id === selfTask.id, 'Created self-task must appear in active maintenance selector')
+
+        const focusFoundWithDelay = await simulateFocusLookup({ appearsAfterMs: 600 })
+        assert(focusFoundWithDelay === true, 'Focus lookup should not trigger missing warning during short render/snapshot delay')
+        const focusMissingAfterTimeout = await simulateFocusLookup({ appearsAfterMs: 2200 })
+        assert(focusMissingAfterTimeout === false, 'Focus lookup should report missing only after a reasonable timeout')
 
         const doneTask = applyMaintenanceTaskStatus(selfTask, 'done', { uid: 'uid-serhii', name: 'Serhii' }, '2026-06-25T12:00:00.000Z')
         assert(doneTask.status === 'done', 'Marking task done should set status done')

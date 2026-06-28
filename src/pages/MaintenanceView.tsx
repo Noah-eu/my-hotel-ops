@@ -197,38 +197,61 @@ export default function MaintenanceView({
     useEffect(() => {
         if (!focusRequest) return
 
+        // Focus requests target unread maintenance entries, which are active items.
+        // Ensure an active filter is selected before attempting DOM focus.
+        setActiveFilter('active')
+
         const targetSelector = focusRequest.targetKind === 'item'
             ? `[data-maintenance-item-id="${focusRequest.targetId}"]`
             : `[data-maintenance-task-id="${focusRequest.targetId}"]`
 
-        const frameId = window.requestAnimationFrame(() => {
-            const target = document.querySelector(targetSelector) as HTMLElement | null
-            if (!target) {
-                onFocusResult?.({
-                    requestId: focusRequest.requestId,
-                    targetId: focusRequest.targetId,
-                    targetKind: focusRequest.targetKind,
-                    found: false
-                })
-                return
-            }
+        const startedAt = Date.now()
+        const maxWaitMs = 1800
+        const retryDelayMs = 120
+        let retryTimer: number | null = null
 
-            target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            setHighlightTargetKey(`${focusRequest.targetKind}:${focusRequest.targetId}`)
-            window.setTimeout(() => {
-                setHighlightTargetKey((prev) => (prev === `${focusRequest.targetKind}:${focusRequest.targetId}` ? null : prev))
-            }, 2600)
-
+        const reportMissing = () => {
             onFocusResult?.({
                 requestId: focusRequest.requestId,
                 targetId: focusRequest.targetId,
                 targetKind: focusRequest.targetKind,
-                found: true
+                found: false
             })
+        }
+
+        const tryFocusTarget = () => {
+            const target = document.querySelector(targetSelector) as HTMLElement | null
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                setHighlightTargetKey(`${focusRequest.targetKind}:${focusRequest.targetId}`)
+                window.setTimeout(() => {
+                    setHighlightTargetKey((prev) => (prev === `${focusRequest.targetKind}:${focusRequest.targetId}` ? null : prev))
+                }, 2600)
+
+                onFocusResult?.({
+                    requestId: focusRequest.requestId,
+                    targetId: focusRequest.targetId,
+                    targetKind: focusRequest.targetKind,
+                    found: true
+                })
+                return
+            }
+
+            if (Date.now() - startedAt >= maxWaitMs) {
+                reportMissing()
+                return
+            }
+
+            retryTimer = window.setTimeout(tryFocusTarget, retryDelayMs)
+        }
+
+        const frameId = window.requestAnimationFrame(() => {
+            tryFocusTarget()
         })
 
         return () => {
             window.cancelAnimationFrame(frameId)
+            if (retryTimer) window.clearTimeout(retryTimer)
         }
     }, [focusRequest])
 
