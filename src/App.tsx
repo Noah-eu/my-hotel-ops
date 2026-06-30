@@ -47,6 +47,7 @@ import { applyCarryOverResolution, applySupplyStatusUpdate, buildCarryOverResolu
 import { AppLanguage, createTranslator, getLanguageLocale, LANGUAGE_STORAGE_KEY, resolveLanguage } from './i18n'
 import { canManageStaffAvailability, resolveStaffAvailabilityForDate, upsertStaffAvailabilityRecord } from './lib/teamAvailability'
 import { applyMaintenanceTaskStatus, canCreateMaintenanceSelfTask, createMaintenanceSelfTask } from './lib/maintenanceSelfTask'
+import { canSeeRoomTaskForRole, getRoomTaskAlertsForViewer, isRoomTaskAlertActive } from './lib/roomTaskAlerts'
 import { createFirebaseOpsStore, createLocalOpsStore } from './services'
 import { OpsPersistedState, OpsTab } from './services/opsStore'
 import { ONLINE_HOTEL_ID } from './services/firebaseOpsStore'
@@ -146,15 +147,6 @@ type MaintenanceFocusRequest = {
     requestId: number
     targetId: string
     targetKind: 'task' | 'item'
-}
-
-function isRoomLikelyAlreadyTouched(room: RoomPlan) {
-    if (room.status === 'prevzato' || room.status === 'probihá' || room.status === 'odhad' || room.status === 'hotovo' || room.status === 'problem') return true
-    if (room.occupiedConfirmed || room.freeConfirmed) return true
-    if (Boolean(room.assigned)) return true
-    if (Boolean(room.estimatedReady || room.estimateSetAt)) return true
-    if (Boolean(room.checkoutException || room.statusNote)) return true
-    return false
 }
 
 type CreateSupplyRequestInput = {
@@ -597,14 +589,6 @@ function formatPreviewRowDate(dateIso: string) {
 
 function isCleaningDomain(category: SupplyRequest['category']) {
     return category !== 'maintenance'
-}
-
-function canViewTask(role: UserRole, task: Task) {
-    if (isAdminRole(role)) return true
-    if (isCleaningLeadRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'lead' || task.assignedToRole === 'cleaner'
-    if (isCleanerRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
-    if (isMaintenanceRole(role)) return task.assignedToRole === 'maintenance'
-    return false
 }
 
 function matchesOperationalTaskDate(task: Task, effectiveDateIso: string, todayDateIso: string) {
@@ -1303,7 +1287,7 @@ export default function App() {
     }, [currentImportJobs, pendingImportJobs])
 
     const visibleTodayTasks = useMemo(
-        () => tasks.filter((task) => canViewTask(effectiveRole, task)),
+        () => tasks.filter((task) => canSeeRoomTaskForRole(effectiveRole, task)),
         [tasks, effectiveRole]
     )
 
@@ -1405,15 +1389,7 @@ export default function App() {
     )
 
     const unacknowledgedLateTodayTasks = useMemo(() => (
-        visibleTodayTasks.filter((task) => (
-            task.taskDateIso === todayDateIso
-            && task.attentionRequired
-            && task.attentionReason === 'late_today_room_task'
-            && task.status !== 'read'
-            && task.status !== 'waiting_material'
-            && task.status !== 'done'
-            && task.status !== 'cancelled'
-        ))
+        visibleTodayTasks.filter((task) => isRoomTaskAlertActive(task, todayDateIso))
     ), [visibleTodayTasks, todayDateIso])
 
     const orderedLateRoomNumbers = useMemo(() => {
@@ -3699,17 +3675,13 @@ export default function App() {
     function handleAcknowledgeRoomLateTasks(roomNumber: string) {
         const now = new Date().toISOString()
         const actor = currentUser?.name || currentUser?.id || 'staff'
-        const targetIds = tasks
-            .filter((task) => (
-                task.roomNumber === roomNumber
-                && task.taskDateIso === todayDateIso
-                && task.attentionRequired
-                && task.attentionReason === 'late_today_room_task'
-                && task.status !== 'read'
-                && task.status !== 'waiting_material'
-                && task.status !== 'done'
-                && task.status !== 'cancelled'
-            ))
+        const targetIds = getRoomTaskAlertsForViewer({
+            tasks,
+            role: effectiveRole,
+            roomNumber,
+            effectiveDateIso,
+            todayDateIso
+        })
             .map((task) => task.id)
 
         if (targetIds.length === 0) return
@@ -3878,7 +3850,7 @@ export default function App() {
         const createdAt = formatNowHHmm(new Date())
         const todayIso = formatLocalDateIso(new Date())
         const isTodayTask = tab === 'Dnes' && selectedTabDateIso === todayIso
-        const lateTodayRoomTask = isTodayTask && isRoomLikelyAlreadyTouched(room)
+        const lateTodayRoomTask = isTodayTask
         const manualOriginMeta = buildManualOriginMeta()
 
         // TODO: Hook push notification trigger here when backend notification pipeline is ready.
@@ -5203,6 +5175,8 @@ export default function App() {
                                 <DashboardToday
                                     rooms={displayedRooms}
                                     tasks={visibleDashboardTasks}
+                                    todayDateIso={todayDateIso}
+                                    effectiveDateIso={effectiveDateIso}
                                     maintenanceItems={maintenanceItems}
                                     onAction={handleAction}
                                     onCreateTask={handleCreateTask}

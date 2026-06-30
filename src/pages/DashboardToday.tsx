@@ -4,6 +4,7 @@ import { TranslateFn } from '../i18n'
 import OriginBadge from '../components/OriginBadge'
 import { isAdminRole, isCleanerRole, isCleaningLeadRole, isCleaningStaffRole, isMaintenanceRole, roleLabel } from '../lib/roles'
 import { isTodayRoomEligibleForCarryOver } from '../lib/roomHelpers'
+import { getRoomTaskAlertsForViewer, getVisibleRoomTasksForViewer, isRoomTaskUnresolved } from '../lib/roomTaskAlerts'
 
 type RoomActionPayload = {
     estimateTime?: string
@@ -127,14 +128,6 @@ function displayNotesWithoutDuplicateBox(box?: string, notes?: string[]) {
     }
 }
 
-function canSeeTask(role: UserRole, task: Task) {
-    if (isAdminRole(role)) return true
-    if (isCleaningLeadRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'lead' || task.assignedToRole === 'cleaner'
-    if (isCleanerRole(role)) return task.category === 'cleaning' || task.assignedToRole === 'cleaner'
-    if (isMaintenanceRole(role)) return task.assignedToRole === 'maintenance'
-    return false
-}
-
 function normalizeIdentity(value?: string) {
     if (!value) return ''
     return value
@@ -229,6 +222,8 @@ export default function DashboardToday({
     onReportProblem,
     role,
     dayLabel,
+    todayDateIso,
+    effectiveDateIso,
     t,
     currentUserId,
     currentUserName,
@@ -249,6 +244,8 @@ export default function DashboardToday({
     onReportProblem: (roomId: string, input: ReportRoomProblemInput) => void
     role: UserRole
     dayLabel: string
+    todayDateIso: string
+    effectiveDateIso: string
     t: TranslateFn
     currentUserId: string
     currentUserName?: string
@@ -582,17 +579,22 @@ export default function DashboardToday({
                     const stateOnlyRoom = isStateOnlyRoom(room)
                     const workflowDisabled = readOnly || stateOnlyRoom
                     const taskAndProblemDisabled = readOnly
-                    const roomTasks = tasks.filter((t) => t.roomNumber === room.number && canSeeTask(role, t))
-                    const activeRoomTasks = roomTasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled')
+                    const roomTasks = getVisibleRoomTasksForViewer({
+                        tasks,
+                        role,
+                        roomNumber: room.number,
+                        effectiveDateIso,
+                        todayDateIso
+                    })
+                    const activeRoomTasks = roomTasks.filter((task) => isRoomTaskUnresolved(task))
                     const arrivalPrepTasks = activeRoomTasks.filter((t) => arrivalPreparationTitles.has(t.title))
-                    const lateAttentionTasks = activeRoomTasks.filter((task) => (
-                        task.attentionRequired
-                        && task.attentionReason === 'late_today_room_task'
-                        && task.status !== 'read'
-                        && task.status !== 'waiting_material'
-                        && task.status !== 'done'
-                        && task.status !== 'cancelled'
-                    ))
+                    const lateAttentionTasks = getRoomTaskAlertsForViewer({
+                        tasks,
+                        role,
+                        roomNumber: room.number,
+                        effectiveDateIso,
+                        todayDateIso
+                    })
                     const hasLateTaskAlert = lateAttentionTasks.length > 0
                     const arrivalPrepChips = arrivalPrepChipsFromNotes(room.arrival?.notes)
                     const arrivalDisplay = displayNotesWithoutDuplicateBox(room.arrival?.box, room.arrival?.notes)

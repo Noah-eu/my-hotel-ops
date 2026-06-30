@@ -30,6 +30,24 @@ function buildVisibleActiveRoomTasks(tasks, roomNumber, effectiveDateIso, todayD
     ))
 }
 
+function buildRoomTaskAlert(params) {
+    return {
+        id: `t-alert-${params.status}`,
+        roomNumber: params.roomNumber,
+        title: 'Doplnit ručníky',
+        note: 'Nový pokyn',
+        category: 'cleaning',
+        priority: 'normal',
+        assignedToRole: 'cleaner',
+        status: 'new',
+        createdBy: 'David',
+        createdAt: '10:30',
+        taskDateIso: params.taskDateIso,
+        attentionRequired: true,
+        attentionReason: 'late_today_room_task'
+    }
+}
+
 async function transpileModuleTree(relativePaths) {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'hotel-ops-manual-task-'))
 
@@ -57,6 +75,7 @@ async function withTranspiledModules(run) {
         'src/lib/opsUiInvariants.ts',
         'src/lib/importOperationalMerge.ts',
         'src/lib/roomHelpers.ts',
+        'src/lib/roomTaskAlerts.ts',
         'src/lib/roles.ts',
         'src/services/opsStore.ts',
         'src/types.ts'
@@ -65,16 +84,23 @@ async function withTranspiledModules(run) {
     try {
         const uiInvariants = require(path.join(tempRoot, 'src/lib/opsUiInvariants.js'))
         const merge = require(path.join(tempRoot, 'src/lib/importOperationalMerge.js'))
-        await run({ uiInvariants, merge })
+        const roomTaskAlerts = require(path.join(tempRoot, 'src/lib/roomTaskAlerts.js'))
+        await run({ uiInvariants, merge, roomTaskAlerts })
     } finally {
         await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => { })
     }
 }
 
 async function main() {
-    await withTranspiledModules(async ({ uiInvariants, merge }) => {
+    await withTranspiledModules(async ({ uiInvariants, merge, roomTaskAlerts }) => {
         const { isTaskVisibleForOperationalDate } = uiInvariants
         const { mergeImportedByDateWithExistingOperationalState } = merge
+        const {
+            canSeeRoomTaskForRole,
+            getRoomTaskAlertsForViewer,
+            getVisibleRoomTasksForViewer,
+            isRoomTaskUnresolved
+        } = roomTaskAlerts
 
         const roomNumber = '101'
         const createdTask = {
@@ -141,11 +167,90 @@ async function main() {
         // 9) Title/note must remain unchanged.
         assert(createdTask.title === 'Otevrit sejf', 'Task title must remain unchanged')
         assert(createdTask.note === 'Host asks before 10:00', 'Task note must remain unchanged')
+
+        // 10) Alert eligibility must be independent of room cleaning status.
+        const todayDateIso = '2026-06-25'
+        const effectiveDateIso = todayDateIso
+        const roomNumberForAlerts = '203'
+        const coveredStatuses = ['ceka', 'prevzato', 'odhad', 'problem', 'hotovo']
+
+        coveredStatuses.forEach((status) => {
+            const alertTask = buildRoomTaskAlert({ status, roomNumber: roomNumberForAlerts, taskDateIso: todayDateIso })
+            const alertsForCleaner = getRoomTaskAlertsForViewer({
+                tasks: [alertTask],
+                role: 'cleaner',
+                roomNumber: roomNumberForAlerts,
+                effectiveDateIso,
+                todayDateIso
+            })
+            assert(alertsForCleaner.length === 1, `Cleaner alert must be shown for room status ${status}`)
+        })
+
+        // 11) Resolving/completing/cancelling must remove alert while task visibility follows unresolved state.
+        const baseAlertTask = buildRoomTaskAlert({ status: 'ceka', roomNumber: roomNumberForAlerts, taskDateIso: todayDateIso })
+        const doneAlert = getRoomTaskAlertsForViewer({
+            tasks: [{ ...baseAlertTask, id: 't-alert-done', status: 'done' }],
+            role: 'cleaner',
+            roomNumber: roomNumberForAlerts,
+            effectiveDateIso,
+            todayDateIso
+        })
+        const cancelledAlert = getRoomTaskAlertsForViewer({
+            tasks: [{ ...baseAlertTask, id: 't-alert-cancelled', status: 'cancelled' }],
+            role: 'cleaner',
+            roomNumber: roomNumberForAlerts,
+            effectiveDateIso,
+            todayDateIso
+        })
+        assert(doneAlert.length === 0, 'Done task must not keep room alert active')
+        assert(cancelledAlert.length === 0, 'Cancelled task must not keep room alert active')
+
+        // 12) Same task id must not duplicate alerts.
+        const duplicateTask = buildRoomTaskAlert({ status: 'ceka', roomNumber: roomNumberForAlerts, taskDateIso: todayDateIso })
+        const duplicateAlerts = getRoomTaskAlertsForViewer({
+            tasks: [duplicateTask, duplicateTask],
+            role: 'cleaner',
+            roomNumber: roomNumberForAlerts,
+            effectiveDateIso,
+            todayDateIso
+        })
+        assert(duplicateAlerts.length === 1 && duplicateAlerts[0].id === duplicateTask.id, 'Same task must not produce duplicate room alerts')
+
+        // 13) Role visibility stays enforced.
+        const cleanerTask = {
+            ...baseAlertTask,
+            id: 't-alert-role-cleaner',
+            assignedToRole: 'cleaner',
+            category: 'cleaning'
+        }
+        const maintenanceTask = {
+            ...baseAlertTask,
+            id: 't-alert-role-maintenance',
+            assignedToRole: 'maintenance',
+            category: 'maintenance'
+        }
+
+        assert(canSeeRoomTaskForRole('cleaner', cleanerTask), 'Cleaner should see cleaner cleaning task')
+        assert(!canSeeRoomTaskForRole('cleaner', maintenanceTask), 'Cleaner should not see maintenance task')
+        assert(canSeeRoomTaskForRole('admin', maintenanceTask), 'Admin should see all tasks')
+
+        const visibleForCleaner = getVisibleRoomTasksForViewer({
+            tasks: [cleanerTask, maintenanceTask],
+            role: 'cleaner',
+            roomNumber: roomNumberForAlerts,
+            effectiveDateIso,
+            todayDateIso
+        })
+        assert(visibleForCleaner.length === 1 && visibleForCleaner[0].id === cleanerTask.id, 'Cleaner room task list must hide unrelated role task')
+
+        assert(isRoomTaskUnresolved(cleanerTask), 'New cleaner task should be unresolved')
+        assert(!isRoomTaskUnresolved({ ...cleanerTask, status: 'done' }), 'Done task should be resolved')
     })
 
     console.info('[validate:manual-room-task-persistence] PASS')
     console.info('- Unresolved manual room tasks remain visible across day changes and import merges')
     console.info('- Future-dated tasks stay scheduled, done tasks stay out of active cards, and no duplicates are introduced')
+    console.info('- Room-task alerts now apply for all active room statuses and clear when task is resolved')
 }
 
 main().catch((error) => {

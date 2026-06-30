@@ -9,6 +9,7 @@
 - Room number normalization is required where number formatting differs.
 - Operational cleaning state is date-scoped; a previous-day `hotovo` state must not be reused for a new operational date.
 - Unresolved manual room tasks are room-scoped open operational state and must not be hidden or dropped by date-tab changes or import merges.
+- Room-task alerts must be computed from unresolved/alert-eligible tasks plus role/date/room filters, never from `room.status === hotovo` gating.
 
 ## Processing Invariants
 - Fresh ingest and regeneration must share the same parser + preview artifact builder.

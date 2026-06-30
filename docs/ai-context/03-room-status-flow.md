@@ -42,6 +42,9 @@ Confirmation must persist merge counters in job metadata:
 - Unresolved manual room tasks are operational open work items for their room and must stay visible until explicitly completed/cancelled/resolved.
 - Unresolved manual room tasks must survive date changes, app refreshes, import confirmations, and auto-confirmed imports.
 - Tasks with an explicit future `taskDateIso` stay scheduled for that date; tasks from past/current dates carry forward until resolved.
+- New room-task alerts for cleaning staff are independent of room cleaning status (`ceka`, `prevzato`, `odhad`, `problem`, `hotovo`).
+- Room-task alert visibility must resolve from the same task source/filter as room-task visibility (role + operational date + room identity), not a separate room-status gate.
+- Room-task alerts clear only when acknowledged/read or when the task is resolved (`done` / `cancelled`), while the task itself stays visible until resolved.
 
 ## Maintenance Self-Task Flow
 - Maintenance (and admin) can create self-assigned maintenance tasks from the Maintenance screen; creators are stored in task metadata (`createdByUid`, `createdByName`, `createdByRole`, `createdSource=maintenance_self`).
